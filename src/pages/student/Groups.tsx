@@ -12,7 +12,7 @@ interface MyGroup {
   description: string | null;
   created_at: string;
   members: GroupMember[];
-  users: { full_name: string } | null;
+  teacher: { full_name: string } | null;
 }
 
 export default function MyGroups() {
@@ -32,7 +32,7 @@ export default function MyGroups() {
 
       const { data } = await supabase
         .from('groups')
-        .select('*, users(full_name), members:group_members(users(full_name, email, role))')
+        .select('*, teacher:users!teacher_id(full_name), members:group_members(users(full_name, email, role))')
         .in('id', groupIds)
         .order('created_at', { ascending: false });
 
@@ -69,7 +69,7 @@ export default function MyGroups() {
                 <div>
                   <h3 className="font-bold text-gray-900">{g.name}</h3>
                   {g.description && <p className="text-sm text-gray-400 mt-0.5">{g.description}</p>}
-                  <p className="text-xs text-gray-300 mt-1">Created by {g.users?.full_name}</p>
+                  <p className="text-xs text-gray-300 mt-1">Created by {g.teacher?.full_name}</p>
                 </div>
               </div>
 

@@ -39,7 +39,7 @@ export default function GroupManagement() {
   const [addingStudent, setAddingStudent] = useState('');
 
   async function load() {
-    const { data } = await supabase.from('groups').select('*').eq('created_by', user!.id).order('created_at', { ascending: false });
+    const { data } = await supabase.from('groups').select('*').eq('teacher_id', user!.id).order('created_at', { ascending: false });
     const groups = data || [];
     const withCounts = await Promise.all(groups.map(async g => {
       const { count } = await supabase.from('group_members').select('*', { count: 'exact', head: true }).eq('group_id', g.id);
@@ -65,7 +65,7 @@ export default function GroupManagement() {
   async function createGroup(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    await supabase.from('groups').insert({ ...form, created_by: user!.id });
+    await supabase.from('groups').insert({ ...form, teacher_id: user!.id });
     setSaving(false);
     setShowCreate(false);
     setForm({ name: '', description: '' });

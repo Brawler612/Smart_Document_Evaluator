@@ -12,8 +12,8 @@ interface Document {
   file_url: string | null;
   file_name: string | null;
   created_at: string;
-  uploaded_by: string;
-  users: { full_name: string } | null;
+  uploader_id: string;
+  uploader: { full_name: string } | null;
 }
 
 const DOC_COLORS: Record<string, string> = {
@@ -39,7 +39,7 @@ export default function TeacherDocuments() {
   async function load() {
     const { data } = await supabase
       .from('documents')
-      .select('*, users(full_name)')
+      .select('*, uploader:users!uploader_id(full_name)')
       .order('created_at', { ascending: false });
     setDocuments((data || []) as Document[]);
     setLoading(false);
@@ -50,7 +50,7 @@ export default function TeacherDocuments() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    await supabase.from('documents').insert({ ...form, uploaded_by: user!.id });
+    await supabase.from('documents').insert({ ...form, uploader_id: user!.id, file_name: form.title });
     setSaving(false);
     setShowModal(false);
     setForm({ title: '', description: '', document_type: 'SRS' });
@@ -131,7 +131,7 @@ export default function TeacherDocuments() {
                 {d.description && <p className="text-sm text-gray-400 mb-3 line-clamp-2">{d.description}</p>}
                 <div className="flex items-center justify-between mt-auto pt-3 border-t border-gray-50">
                   <div>
-                    <p className="text-xs text-gray-400">{d.users?.full_name}</p>
+                    <p className="text-xs text-gray-400">{d.uploader?.full_name}</p>
                     <p className="text-xs text-gray-300">{new Date(d.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
