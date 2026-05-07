@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Search, ClipboardList, Upload, Calendar, X, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import UserBadge from '../../components/UserBadge';
 
 interface Assignment {
   id: string;
@@ -68,9 +69,12 @@ export default function StudentAssignments() {
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
-        <p className="text-gray-400 text-sm mt-0.5">View and submit your assignments</p>
+      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
+          <p className="text-gray-400 text-sm mt-0.5">View and submit your assignments</p>
+        </div>
+        <UserBadge />
       </div>
 
       <div className="relative mb-6">

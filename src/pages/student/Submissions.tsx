@@ -3,6 +3,7 @@ import { Search, FileText, Star, MessageSquare, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { SubStatus } from '../../types';
+import UserBadge from '../../components/UserBadge';
 
 interface Submission {
   id: string;
@@ -56,9 +57,12 @@ export default function MySubmissions() {
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">My Submissions</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Track all your submitted documents</p>
+      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">My Submissions</h1>
+          <p className="text-gray-400 text-sm mt-0.5">Track all your submitted documents</p>
+        </div>
+        <UserBadge />
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">

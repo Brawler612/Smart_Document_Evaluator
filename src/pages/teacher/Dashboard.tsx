@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ClipboardList, CheckSquare, Users, FileText, Clock, ChevronRight, TrendingUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import UserBadge from '../../components/UserBadge';
 
 export default function TeacherDashboard() {
   const { user } = useAuth();
@@ -32,9 +33,12 @@ export default function TeacherDashboard() {
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">{greeting}, {user?.full_name?.split(' ')[0]}!</h1>
-        <p className="text-gray-400 text-sm">Here's what's happening in your workspace today.</p>
+      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{greeting}, {user?.full_name?.split(' ')[0]}!</h1>
+          <p className="text-gray-400 text-sm">Here's what's happening in your workspace today.</p>
+        </div>
+        <UserBadge />
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[

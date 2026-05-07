@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { User, Lock, Save, CheckCircle, AlertCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import UserBadge from '../../components/UserBadge';
 
 export default function Settings() {
   const { user } = useAuth();
@@ -41,9 +42,12 @@ export default function Settings() {
 
   return (
     <div className="p-6 md:p-8 max-w-2xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Manage your account preferences</p>
+      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+          <p className="text-gray-400 text-sm mt-0.5">Manage your account preferences</p>
+        </div>
+        <UserBadge />
       </div>
 
       <div className="space-y-6">
