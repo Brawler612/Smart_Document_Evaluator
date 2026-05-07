@@ -59,7 +59,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
       </nav>
       <div className="px-3 pb-6 pt-4 border-t border-white/10 space-y-2">
         <button onClick={handleSignOut}
-          className="w-full flex items-center gap-3 px-4 py-3 bg-white/10 rounded-xl hover:bg-white/20 transition-all duration-200 text-sm font-medium text-white/70 hover:text-white group">
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white/10 rounded-xl hover:bg-white/20 transition-all duration-200 text-sm font-medium text-white/70 hover:text-white group">
           <LogOut className="w-[18px] h-[18px] text-white/40 group-hover:text-white transition-colors flex-shrink-0" />Logout
         </button>
         <div className="text-center pt-1">
