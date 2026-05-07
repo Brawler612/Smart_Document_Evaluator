@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Users, ChevronRight, X, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Search, Users, ChevronRight, X, Trash2, UserPlus, ChevronLeft } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import Modal from '../../components/Modal';
 
 interface Group {
   id: string;
@@ -22,11 +23,14 @@ interface Member {
   users: { full_name: string; email: string } | null;
 }
 
+const PAGE_SIZE = 9;
+
 export default function GroupManagement() {
   const { user } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -94,23 +98,31 @@ export default function GroupManagement() {
   const memberIds = members.map(m => m.user_id);
   const availableStudents = students.filter(s => !memberIds.includes(s.id));
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function handleSearchChange(val: string) { setSearch(val); setPage(1); }
+
   return (
+    <>
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Group Management</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Organize students into groups</p>
-        </div>
-        <button onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors shadow-sm">
-          <Plus className="w-4 h-4" />New Group
-        </button>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Group Management</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Organize students into groups</p>
       </div>
 
-      <div className="relative mb-6">
+      <div className="relative mb-3">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search groups..."
+        <input value={search} onChange={e => handleSearchChange(e.target.value)} placeholder="Search groups..."
           className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]" />
+      </div>
+
+      <div className="mb-5">
+        <button onClick={() => setShowCreate(true)}
+          className="flex items-center gap-1.5 bg-[#84001B] text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#6b0016] transition-colors shadow-sm">
+          <Plus className="w-3.5 h-3.5" />New Group
+        </button>
       </div>
 
       {loading ? (
@@ -122,33 +134,61 @@ export default function GroupManagement() {
           <p className="text-sm text-gray-300 mt-1">Create a group to organize students</p>
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(g => (
-            <div key={g.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-md hover:border-gray-200 transition-all">
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-12 h-12 bg-[#84001B]/10 rounded-xl flex items-center justify-center">
-                  <Users className="w-6 h-6 text-[#84001B]" />
+        <>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paginated.map(g => (
+              <div key={g.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-md hover:border-gray-200 transition-all">
+                <div className="flex items-start justify-between mb-4">
+                  <div className="w-12 h-12 bg-[#84001B]/10 rounded-xl flex items-center justify-center">
+                    <Users className="w-6 h-6 text-[#84001B]" />
+                  </div>
+                  <button onClick={() => deleteGroup(g.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button onClick={() => deleteGroup(g.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <h3 className="font-semibold text-gray-900 mb-1">{g.name}</h3>
+                {g.description && <p className="text-sm text-gray-400 mb-3 line-clamp-2">{g.description}</p>}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
+                  <span className="text-sm text-gray-400">{g.member_count} student{g.member_count !== 1 ? 's' : ''}</span>
+                  <button onClick={() => openGroup(g)}
+                    className="flex items-center gap-1 text-sm font-medium text-[#84001B] hover:underline">
+                    Manage <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-              <h3 className="font-semibold text-gray-900 mb-1">{g.name}</h3>
-              {g.description && <p className="text-sm text-gray-400 mb-3 line-clamp-2">{g.description}</p>}
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
-                <span className="text-sm text-gray-400">{g.member_count} student{g.member_count !== 1 ? 's' : ''}</span>
-                <button onClick={() => openGroup(g)}
-                  className="flex items-center gap-1 text-sm font-medium text-[#84001B] hover:underline">
-                  Manage <ChevronRight className="w-3.5 h-3.5" />
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
+              <p className="text-xs text-gray-400">
+                Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
+                  <button key={n} onClick={() => setPage(n)}
+                    className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${n === safePage ? 'bg-[#84001B] text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
+                    {n}
+                  </button>
+                ))}
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
+    </div>
+
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <Modal onClose={() => setShowCreate(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <h2 className="font-bold text-gray-900 text-lg">Create Group</h2>
@@ -175,11 +215,11 @@ export default function GroupManagement() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
       {selectedGroup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <Modal onClose={() => setSelectedGroup(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-gray-100 sticky top-0 bg-white">
               <div>
@@ -223,8 +263,8 @@ export default function GroupManagement() {
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
-    </div>
+    </>
   );
 }

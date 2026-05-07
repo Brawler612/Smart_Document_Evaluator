@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, ClipboardList, Calendar, Tag, MoreVertical, X, ChevronDown } from 'lucide-react';
+import { Plus, Search, ClipboardList, Calendar, Tag, MoreVertical, X, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { DocType, AStatus } from '../../types';
+import Modal from '../../components/Modal';
 
 interface Assignment {
   id: string;
@@ -27,12 +28,15 @@ const DOC_COLORS: Record<string, string> = {
   Other: 'bg-gray-100 text-gray-600',
 };
 
+const PAGE_SIZE = 10;
+
 export default function TeacherAssignments() {
   const { user } = useAuth();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<AStatus | 'all'>('all');
+  const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -74,33 +78,42 @@ export default function TeacherAssignments() {
     (a.title.toLowerCase().includes(search.toLowerCase()) || a.document_type.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  function handleSearchChange(val: string) { setSearch(val); setPage(1); }
+  function handleFilterChange(val: AStatus | 'all') { setFilter(val); setPage(1); }
+
   return (
+    <>
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Manage and track all assignments</p>
-        </div>
-        <button onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors shadow-sm">
-          <Plus className="w-4 h-4" />New Assignment
-        </button>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Manage and track all assignments</p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row gap-3 mb-3">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search assignments..."
+          <input value={search} onChange={e => handleSearchChange(e.target.value)} placeholder="Search assignments..."
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]" />
         </div>
         <div className="flex gap-2">
           {(['all', 'active', 'draft', 'closed'] as const).map(s => (
-            <button key={s} onClick={() => setFilter(s)}
+            <button key={s} onClick={() => handleFilterChange(s)}
               className={`px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors capitalize ${filter === s ? 'bg-[#84001B] text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               {s}
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mb-5">
+        <button onClick={() => setShowModal(true)}
+          className="flex items-center gap-1.5 bg-[#84001B] text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#6b0016] transition-colors shadow-sm">
+          <Plus className="w-3.5 h-3.5" />New Assignment
+        </button>
       </div>
 
       {loading ? (
@@ -112,64 +125,93 @@ export default function TeacherAssignments() {
           <p className="text-sm text-gray-300 mt-1">Create one to get started</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map(a => (
-            <div key={a.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-sm hover:border-gray-200 transition-all">
-              <div className="flex items-start gap-4">
-                <div className="w-10 h-10 bg-[#ffd21a]/30 rounded-xl flex items-center justify-center flex-shrink-0">
-                  <span className="text-[10px] font-bold text-[#84001B]">{a.document_type}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">{a.title}</h3>
-                      {a.description && <p className="text-sm text-gray-400 mt-0.5 truncate">{a.description}</p>}
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${STATUS_COLORS[a.status]}`}>{a.status}</span>
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${DOC_COLORS[a.document_type]}`}>{a.document_type}</span>
-                      <div className="relative">
-                        <button onClick={() => setOpenMenu(openMenu === a.id ? null : a.id)}
-                          className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                        {openMenu === a.id && (
-                          <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-xl shadow-lg z-10 py-1 w-44">
-                            {(['active', 'draft', 'closed'] as AStatus[]).filter(s => s !== a.status).map(s => (
-                              <button key={s} onClick={() => updateStatus(a.id, s)}
-                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 capitalize">
-                                Mark as {s}
+        <>
+          <div className="space-y-3">
+            {paginated.map(a => (
+              <div key={a.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-sm hover:border-gray-200 transition-all">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 bg-[#ffd21a]/30 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-bold text-[#84001B]">{a.document_type}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-gray-900 truncate">{a.title}</h3>
+                        {a.description && <p className="text-sm text-gray-400 mt-0.5 truncate">{a.description}</p>}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${STATUS_COLORS[a.status]}`}>{a.status}</span>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${DOC_COLORS[a.document_type]}`}>{a.document_type}</span>
+                        <div className="relative">
+                          <button onClick={() => setOpenMenu(openMenu === a.id ? null : a.id)}
+                            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                          {openMenu === a.id && (
+                            <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-xl shadow-lg z-10 py-1 w-44">
+                              {(['active', 'draft', 'closed'] as AStatus[]).filter(s => s !== a.status).map(s => (
+                                <button key={s} onClick={() => updateStatus(a.id, s)}
+                                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 capitalize">
+                                  Mark as {s}
+                                </button>
+                              ))}
+                              <div className="border-t border-gray-100 my-1" />
+                              <button onClick={() => deleteAssignment(a.id)}
+                                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                                Delete
                               </button>
-                            ))}
-                            <div className="border-t border-gray-100 my-1" />
-                            <button onClick={() => deleteAssignment(a.id)}
-                              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
-                              Delete
-                            </button>
-                          </div>
-                        )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-4 mt-2">
-                    {a.due_date && (
+                    <div className="flex items-center gap-4 mt-2">
+                      {a.due_date && (
+                        <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                          <Calendar className="w-3.5 h-3.5" />Due {new Date(a.due_date).toLocaleDateString()}
+                        </span>
+                      )}
                       <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                        <Calendar className="w-3.5 h-3.5" />Due {new Date(a.due_date).toLocaleDateString()}
+                        <Tag className="w-3.5 h-3.5" />Created {new Date(a.created_at).toLocaleDateString()}
                       </span>
-                    )}
-                    <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                      <Tag className="w-3.5 h-3.5" />Created {new Date(a.created_at).toLocaleDateString()}
-                    </span>
+                    </div>
                   </div>
                 </div>
               </div>
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
+              <p className="text-xs text-gray-400">
+                Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
+                  <button key={n} onClick={() => setPage(n)}
+                    className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${n === safePage ? 'bg-[#84001B] text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
+                    {n}
+                  </button>
+                ))}
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
+      {openMenu && <div className="fixed inset-0 z-[5]" onClick={() => setOpenMenu(null)} />}
+    </div>
+
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <Modal onClose={() => setShowModal(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <h2 className="font-bold text-gray-900 text-lg">New Assignment</h2>
@@ -227,10 +269,8 @@ export default function TeacherAssignments() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
-
-      {openMenu && <div className="fixed inset-0 z-[5]" onClick={() => setOpenMenu(null)} />}
-    </div>
+    </>
   );
 }

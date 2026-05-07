@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, BookOpen, FileText, BarChart3, Users, Settings, LogOut, ClipboardList, FolderOpen, CheckSquare, UserCheck, GraduationCap } from 'lucide-react';
+import { Home, FileText, BarChart3, Users, Settings, LogOut, ClipboardList, FolderOpen, CheckSquare, UserCheck, GraduationCap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import BookIcon from './BookIcon';
 
 const TEACHER_NAV = [
   { to: '/dashboard', icon: Home, label: 'Home' },
@@ -35,7 +36,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
       <div className="px-5 pt-7 pb-5 border-b border-white/10">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-[#ffd21a] rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
-            <BookOpen className="w-6 h-6 text-[#84001B]" />
+            <BookIcon size={24} color="#84001B" />
           </div>
           <div>
             <div className="font-bold text-white text-[15px] leading-tight">Smart Document</div>

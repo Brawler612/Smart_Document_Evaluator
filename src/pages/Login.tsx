@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { DEMO_ACCOUNTS } from '../types';
 
@@ -37,9 +37,6 @@ export default function Login() {
       <div className="absolute bottom-0 left-0 w-[400px] h-[400px] rounded-full bg-white/[0.03] translate-y-1/2 -translate-x-1/2" />
       <div className="relative w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-[#ffd21a] rounded-2xl mb-4 shadow-2xl">
-            <BookOpen className="w-10 h-10 text-[#84001B]" />
-          </div>
           <h1 className="text-3xl font-bold text-white">Smart Document</h1>
           <h1 className="text-3xl font-bold text-[#ffd21a]">Evaluator</h1>
           <p className="text-white/50 text-xs mt-2 tracking-[0.2em] uppercase">CIT University LMS</p>
