@@ -19,8 +19,8 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Fixed top-right user badge — sits above scroll area, never moves */}
-      <div className="fixed top-4 right-5 z-40 hidden md:flex items-center gap-2.5 bg-gray-100 border border-gray-200 rounded-[9px] px-3 py-1.5 shadow-sm">
+      {/* Fixed top-right user badge — always stationary, never scrolls */}
+      <div className="fixed top-4 right-5 z-40 hidden md:flex items-center gap-2.5 bg-white border border-gray-200 rounded-[9px] px-3 py-1.5 shadow-sm">
         <div className="w-7 h-7 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0 text-gray-600 text-[11px] font-bold select-none">
           {initials}
         </div>
