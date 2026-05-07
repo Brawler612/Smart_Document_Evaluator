@@ -22,7 +22,7 @@ export default function Layout() {
       </div>
     </div>
 
-    <div className="flex h-screen overflow-hidden bg-white">
+    <div className="flex h-screen bg-white">
       <div className="hidden md:flex"><Sidebar /></div>
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden flex">
