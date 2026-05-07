@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { BarChart3, TrendingUp, Users, FileText, CheckCircle, Clock, Award } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
-import UserBadge from '../../components/UserBadge';
-
 interface Stats {
   totalAssignments: number;
   activeAssignments: number;
@@ -66,12 +64,9 @@ export default function Analytics() {
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Overview of assignments, submissions, and performance</p>
-        </div>
-        <UserBadge />
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Overview of assignments, submissions, and performance</p>
       </div>
 
       {loading ? (

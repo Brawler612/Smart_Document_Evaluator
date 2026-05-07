@@ -4,8 +4,6 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { DocType, AStatus } from '../../types';
 import Modal from '../../components/Modal';
-import UserBadge from '../../components/UserBadge';
-
 interface Assignment {
   id: string;
   title: string;
@@ -89,12 +87,9 @@ export default function TeacherAssignments() {
   return (
     <>
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
-          <p className="text-gray-400 text-sm mt-0.5">Manage and track all assignments</p>
-        </div>
-        <UserBadge />
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Manage and track all assignments</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3">

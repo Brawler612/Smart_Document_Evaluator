@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { Search, UserCheck, Shield, GraduationCap, Mail, Calendar } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { AppUser } from '../../types';
-import UserBadge from '../../components/UserBadge';
-
 export default function UserManagement() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,12 +27,9 @@ export default function UserManagement() {
 
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between sticky top-0 bg-white z-10 pt-6 pb-4 -mx-8 px-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-          <p className="text-gray-400 text-sm mt-0.5">View all registered users in the system</p>
-        </div>
-        <UserBadge />
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
+        <p className="text-gray-400 text-sm mt-0.5">View all registered users in the system</p>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-8">
