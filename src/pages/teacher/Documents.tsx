@@ -63,10 +63,11 @@ export default function TeacherDocuments() {
     load();
   }
 
-  const filtered = documents.filter(d =>
-    (typeFilter === 'all' || d.document_type === typeFilter) &&
-    (d.title.toLowerCase().includes(search.toLowerCase()) ||
-      d.users?.full_name?.toLowerCase().includes(search.toLowerCase()) || false)
+  const q = search.toLowerCase();
+  const filtered = documents.filter(
+    (d) =>
+      (typeFilter === 'all' || d.document_type === typeFilter) &&
+      (d.title.toLowerCase().includes(q) || (d.uploader?.full_name ?? '').toLowerCase().includes(q))
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -80,8 +81,9 @@ export default function TeacherDocuments() {
     <>
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Reference materials and templates</p>
+        <p className="text-xs font-semibold tracking-wide uppercase text-[#84001B]">Team 7</p>
+        <h1 className="text-2xl font-bold text-gray-900 mt-1">Team 7</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Team workspace files, references, and shared materials.</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3">

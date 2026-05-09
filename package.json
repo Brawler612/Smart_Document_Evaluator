@@ -4,11 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "vite",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "verify:env": "node scripts/check-env.mjs",
+    "supabase:setup": "node scripts/prompt-supabase-setup.mjs",
+    "supabase:fix-rls": "node scripts/prompt-supabase-fix-rls.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

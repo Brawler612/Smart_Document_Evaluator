@@ -17,7 +17,20 @@ export default function StudentDashboard() {
         supabase.from('submissions').select('id, file_name, status, score, submitted_at, assignments(title)').eq('student_id', user!.id).order('submitted_at', { ascending: false }),
       ]);
 
-      const subsData = (subs.data || []) as typeof recentSubs;
+      const subsData: typeof recentSubs = (subs.data || []).map((row: Record<string, unknown>) => {
+        let a = row.assignments;
+        if (Array.isArray(a)) a = a[0];
+        const assignments =
+          a && typeof a === 'object' ? { title: String((a as { title?: unknown }).title ?? '') } : null;
+        return {
+          id: String(row.id ?? ''),
+          file_name: String(row.file_name ?? ''),
+          status: String(row.status ?? ''),
+          score: typeof row.score === 'number' ? row.score : row.score != null ? Number(row.score) : null,
+          submitted_at: String(row.submitted_at ?? ''),
+          assignments,
+        };
+      });
       const reviewed = subsData.filter(s => s.status === 'reviewed');
       const avgScore = reviewed.length > 0 && reviewed.some(s => s.score != null)
         ? Math.round(reviewed.filter(s => s.score != null).reduce((acc, s) => acc + (s.score || 0), 0) / reviewed.filter(s => s.score != null).length)

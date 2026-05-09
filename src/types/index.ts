@@ -1,4 +1,4 @@
-export type UserRole = 'teacher' | 'student';
+export type UserRole = 'teacher' | 'admin' | 'student';
 export interface AppUser { id: string; email: string; full_name: string; role: UserRole; created_at: string; }
 export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'Other';
 export type AStatus = 'active' | 'closed' | 'draft';

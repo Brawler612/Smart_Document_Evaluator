@@ -3,18 +3,15 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import TeacherDashboard from './pages/teacher/Dashboard';
-import TeacherAssignments from './pages/teacher/Assignments';
 import ReviewQueue from './pages/teacher/ReviewQueue';
+import TeacherStudentSubmissions from './pages/teacher/StudentSubmissions';
 import TeacherDocuments from './pages/teacher/Documents';
 import Analytics from './pages/teacher/Analytics';
-import GroupManagement from './pages/teacher/Groups';
-import UserManagement from './pages/teacher/Users';
-import StudentDashboard from './pages/student/Dashboard';
+import ClassList from './pages/teacher/Users';
+import Instructions from './pages/teacher/Instructions';
+import TeacherSettings from './pages/teacher/Settings';
 import StudentAssignments from './pages/student/Assignments';
 import MySubmissions from './pages/student/Submissions';
-import StudentDocuments from './pages/student/Documents';
-import Grades from './pages/student/Grades';
-import MyGroups from './pages/student/Groups';
 import Settings from './pages/student/Settings';
 
 function Spinner() {
@@ -28,7 +25,8 @@ function Spinner() {
   );
 }
 
-function AppRoutes() {
+/** Teacher shell: pathless `<Route element={<Layout />}>` + segment paths (`grading` → `/grading`). Avoid `path="/"` on the layout and avoid `[<Route/>]` arrays — both can yield an empty `<Outlet />` in RR7. */
+function AuthenticatedRoutes() {
   const { session, user, loading } = useAuth();
 
   if (loading) return <Spinner />;
@@ -42,33 +40,35 @@ function AppRoutes() {
     );
   }
 
-  const isTeacher = user?.role === 'teacher';
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
 
   return (
     <Routes>
       <Route element={<Layout />}>
-        {isTeacher ? (
-          <>
-            <Route path="/dashboard" element={<TeacherDashboard />} />
-            <Route path="/assignments" element={<TeacherAssignments />} />
-            <Route path="/review-queue" element={<ReviewQueue />} />
-            <Route path="/documents" element={<TeacherDocuments />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/groups" element={<GroupManagement />} />
-            <Route path="/users" element={<UserManagement />} />
-          </>
-        ) : (
-          <>
-            <Route path="/dashboard" element={<StudentDashboard />} />
-            <Route path="/assignments" element={<StudentAssignments />} />
-            <Route path="/my-submissions" element={<MySubmissions />} />
-            <Route path="/documents" element={<StudentDocuments />} />
-            <Route path="/grades" element={<Grades />} />
-            <Route path="/my-groups" element={<MyGroups />} />
-            <Route path="/settings" element={<Settings />} />
-          </>
-        )}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {isTeacher && <Route path="dashboard" element={<TeacherDashboard />} />}
+        {isTeacher && <Route path="grading" element={<ReviewQueue />} />}
+        {isTeacher && <Route path="schedule" element={<Navigate to="/grading" replace />} />}
+        {isTeacher && <Route path="assignments" element={<Navigate to="/grading" replace />} />}
+        {isTeacher && <Route path="student-submissions" element={<TeacherStudentSubmissions />} />}
+        {isTeacher && <Route path="review-queue" element={<ReviewQueue />} />}
+        {isTeacher && <Route path="reports" element={<Analytics />} />}
+        {isTeacher && <Route path="documents" element={<TeacherDocuments />} />}
+        {isTeacher && <Route path="analytics" element={<Analytics />} />}
+        {isTeacher && <Route path="teacher-settings" element={<TeacherSettings />} />}
+        {isTeacher && <Route path="class-list" element={<ClassList />} />}
+        {isTeacher && <Route path="inbox" element={<Instructions />} />}
+        {isTeacher && <Route path="instructions" element={<Instructions />} />}
+        {isTeacher && <Route path="deliverables" element={<Navigate to="/grading" replace />} />}
+        {isTeacher && <Route path="rubrics" element={<Navigate to="/analytics" replace />} />}
+        {isTeacher && <Route path="groups" element={<Navigate to="/class-list" replace />} />}
+        {isTeacher && <Route path="users" element={<Navigate to="/teacher-settings" replace />} />}
+        {!isTeacher && <Route path="assignments" element={<StudentAssignments />} />}
+        {!isTeacher && <Route path="my-submissions" element={<MySubmissions />} />}
+        {!isTeacher && <Route path="settings" element={<Settings />} />}
+        <Route
+          path="*"
+          element={<Navigate to={isTeacher ? '/dashboard' : '/assignments'} replace />}
+        />
       </Route>
     </Routes>
   );
@@ -78,7 +78,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <div className="flex min-h-dvh w-full flex-1 flex-col min-h-0">
+          <AuthenticatedRoutes />
+        </div>
       </AuthProvider>
     </BrowserRouter>
   );

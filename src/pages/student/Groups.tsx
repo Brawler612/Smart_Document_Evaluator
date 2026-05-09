@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Users, BookOpen } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 interface GroupMember {

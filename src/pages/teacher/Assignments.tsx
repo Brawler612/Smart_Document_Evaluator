@@ -88,8 +88,9 @@ export default function TeacherAssignments() {
     <>
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Assignments</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Manage and track all assignments</p>
+        <p className="text-xs font-semibold tracking-wide uppercase text-[#84001B]">Schedule</p>
+        <h1 className="text-2xl font-bold text-gray-900 mt-1">Schedule</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Plan deadlines, document tasks, and class workload.</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-3">

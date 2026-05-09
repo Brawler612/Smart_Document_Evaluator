@@ -1,23 +1,34 @@
 import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { DEMO_ACCOUNTS } from '../types';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { getOAuthRedirectTo } from '../lib/oauthRedirect';
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  async function handleDemo(acc: typeof DEMO_ACCOUNTS[0]) {
-    setError(''); setLoading(true);
-    const { error: signInErr } = await supabase.auth.signInWithPassword({ email: acc.email, password: acc.password });
-    if (signInErr) {
-      const { data: su } = await supabase.auth.signUp({ email: acc.email, password: acc.password, options: { data: { full_name: acc.full_name, role: acc.role } } });
-      if (su.user) {
-        await supabase.from('users').upsert({ id: su.user.id, email: acc.email, full_name: acc.full_name, role: acc.role });
-        await supabase.auth.signInWithPassword({ email: acc.email, password: acc.password });
-      } else { setError('Could not load demo account.'); }
+  async function handleGoogle() {
+    setError('');
+    if (!isSupabaseConfigured()) {
+      setError(
+        'Google sign-in needs a real Supabase project. In the project folder, create `.env` with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from Supabase → Project Settings → API, then restart the dev server (npm start).'
+      );
+      return;
     }
-    setLoading(false);
+    setLoading(true);
+    const { data, error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: getOAuthRedirectTo(),
+      },
+    });
+    if (oauthErr) {
+      setError(oauthErr.message);
+      setLoading(false);
+      return;
+    }
+    if (data.url) window.location.href = data.url;
+    else setLoading(false);
   }
 
   return (
@@ -37,7 +48,7 @@ export default function Login() {
           {/* Label pill */}
           <div className="inline-block mb-10">
             <span className="text-[11px] tracking-[0.18em] uppercase text-[#e8c8a0] border border-[#e8c8a0]/40 rounded-full px-4 py-1.5 bg-white/5 backdrop-blur-sm">
-              Smart Document Evaluator
+              Smart Docs Validator
             </span>
           </div>
 
@@ -48,7 +59,7 @@ export default function Login() {
           </h1>
 
           <p className="text-white/55 text-base leading-relaxed max-w-[380px]">
-            Sign in with your approved university Google account to access assignments, review student documents, and manage your workspace.
+            Sign in with Google to continue to your workspace.
           </p>
         </div>
 
@@ -56,7 +67,7 @@ export default function Login() {
         <div className="w-full md:w-[420px] flex-shrink-0">
           <div className="bg-[#f7f3ee] rounded-2xl shadow-2xl p-8">
             <h2 className="text-xl font-bold text-[#5a000f] mb-1">University Sign-In</h2>
-            <p className="text-gray-500 text-sm mb-6">Use your <span className="font-medium text-gray-600">@cit.edu.ph</span> account to continue</p>
+            <p className="text-gray-500 text-sm mb-6">Google sign-in for all users</p>
 
             {error && (
               <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-5 text-sm text-red-600">
@@ -64,70 +75,38 @@ export default function Login() {
               </div>
             )}
 
-            {/* Info box */}
             <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 text-sm text-gray-600 leading-relaxed">
-              Access is limited to <span className="font-medium">@cit.edu.ph</span> accounts. Sign in using the demo credentials below to explore the platform.
+              Use your Google account to sign in and access your workspace tools.
             </div>
 
-            {/* Google-style CTA (non-functional, just visual) */}
+            {!isSupabaseConfigured() && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-950 leading-relaxed">
+                <span className="font-semibold">Google needs a real Supabase project.</span> Copy{' '}
+                <code className="bg-white px-1 rounded border border-amber-200/80">.env.example</code> to{' '}
+                <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>, paste your Project URL and anon key from the Supabase dashboard, then restart <code className="bg-white px-1 rounded border border-amber-200/80">npm start</code>.
+              </div>
+            )}
+
             <button
-              disabled
-              className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-500 cursor-not-allowed opacity-60 mb-2"
+              type="button"
+              onClick={handleGoogle}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 mb-2 shadow-sm"
             >
               <GoogleIcon />
               Continue with Google
             </button>
-            <p className="text-center text-[11px] text-gray-400 mb-6">Google Sign-In is not configured for this demo</p>
-
-            {/* Divider */}
-            <div className="relative mb-5">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
-              <div className="relative flex justify-center"><span className="bg-[#f7f3ee] px-3 text-xs text-gray-400">Or use a demo account</span></div>
-            </div>
-
-            {/* Demo account buttons */}
-            <div className="space-y-3">
-              {DEMO_ACCOUNTS.map(acc => (
-                <button key={acc.email} onClick={() => handleDemo(acc)} disabled={loading}
-                  className="w-full flex items-center gap-3 border border-gray-200 rounded-xl p-3.5 bg-white hover:border-[#84001B]/30 hover:bg-[#84001B]/[0.03] transition-all disabled:opacity-60 group text-left shadow-sm">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold ${acc.role === 'teacher' ? 'bg-[#84001B] text-white' : 'bg-[#ffd21a] text-[#84001B]'}`}>
-                    {acc.role === 'teacher' ? 'T' : 'S'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 group-hover:text-[#84001B] transition-colors truncate">{acc.full_name}</p>
-                    <p className="text-xs text-gray-400 truncate">{acc.email}</p>
-                  </div>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${acc.role === 'teacher' ? 'bg-[#84001B]/10 text-[#84001B]' : 'bg-amber-100 text-amber-800'}`}>
-                    {acc.role === 'teacher' ? 'Teacher' : 'Student'}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <p className="text-center text-[11px] text-gray-400 mb-2">
+              Trouble signing in? Check Google provider settings and redirect URLs in Supabase Authentication.
+            </p>
 
             {loading && (
-              <div className="flex items-center justify-center gap-2 mt-5 text-sm text-gray-400">
+              <div className="flex items-center justify-center gap-2 mt-4 text-sm text-gray-400">
                 <Spinner /> Signing in...
               </div>
             )}
           </div>
         </div>
-      </div>
-
-      {/* Demo account badges — fixed bottom-right */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2">
-        <p className="text-[10px] text-white/40 text-right tracking-wide uppercase mb-0.5">Demo Accounts</p>
-        {DEMO_ACCOUNTS.map(acc => (
-          <button key={acc.email} onClick={() => handleDemo(acc)} disabled={loading}
-            className="flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-3 py-2 hover:bg-black/50 hover:border-white/20 transition-all disabled:opacity-50 text-left shadow-lg">
-            <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-[11px] font-bold ${acc.role === 'teacher' ? 'bg-[#84001B] text-white' : 'bg-[#ffd21a] text-[#84001B]'}`}>
-              {acc.role === 'teacher' ? 'T' : 'S'}
-            </div>
-            <div className="leading-tight">
-              <p className="text-xs font-semibold text-white/90">{acc.full_name}</p>
-              <p className="text-[10px] text-white/45">{acc.email}</p>
-            </div>
-          </button>
-        ))}
       </div>
     </div>
   );

@@ -4,7 +4,29 @@
 
 @layer base {
   * { -webkit-font-smoothing: antialiased; }
-  body { @apply text-gray-800 bg-white; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+
+  /*
+   Fill the visible viewport (100vh can sit short vs the real window on some browsers/OS zoom).
+   #root participates in layout so routed shells reliably reach the bottom edge.
+   */
+  html {
+    height: 100%;
+  }
+
+  body {
+    @apply text-gray-800 bg-white antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    min-height: 100%;
+    min-height: 100dvh;
+  }
+
+  #root {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    min-height: 100dvh;
+    width: 100%;
+  }
 }
 
 @keyframes fadeSlideIn {

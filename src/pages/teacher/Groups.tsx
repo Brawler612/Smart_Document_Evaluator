@@ -59,7 +59,19 @@ export default function GroupManagement() {
   async function openGroup(g: Group) {
     setSelectedGroup(g);
     const { data } = await supabase.from('group_members').select('user_id, users(full_name, email)').eq('group_id', g.id);
-    setMembers((data || []) as Member[]);
+    const normalized: Member[] = (data || []).map((raw: Record<string, unknown>) => {
+      let u = raw.users;
+      if (Array.isArray(u)) u = u[0];
+      const users =
+        u && typeof u === 'object'
+          ? {
+              full_name: String((u as { full_name?: unknown }).full_name ?? ''),
+              email: String((u as { email?: unknown }).email ?? ''),
+            }
+          : null;
+      return { user_id: String(raw.user_id ?? ''), users };
+    });
+    setMembers(normalized);
   }
 
   async function createGroup(e: React.FormEvent) {
