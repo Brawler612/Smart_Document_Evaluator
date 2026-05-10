@@ -1,12 +1,26 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardList, FileText, GraduationCap, Clock, ChevronRight, Star } from 'lucide-react';
+import {
+  ClipboardList,
+  FileText,
+  GraduationCap,
+  Clock,
+  ChevronRight,
+  Star,
+  AlertTriangle,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 export default function StudentDashboard() {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ assignments: 0, submissions: 0, reviewed: 0, avgScore: 0 });
+  const [stats, setStats] = useState({
+    assignments: 0,
+    submissions: 0,
+    reviewed: 0,
+    resubmit: 0,
+    avgScore: 0,
+  });
   const [recentSubs, setRecentSubs] = useState<{ id: string; file_name: string; status: string; score: number | null; submitted_at: string; assignments: { title: string } | null }[]>([]);
   const [pendingAsgn, setPendingAsgn] = useState<{ id: string; title: string; document_type: string; due_date: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,11 +49,18 @@ export default function StudentDashboard() {
         };
       });
       const reviewed = subsData.filter(s => s.status === 'reviewed');
+      const resubmitN = subsData.filter((s) => s.status === 'resubmit').length;
       const avgScore = reviewed.length > 0 && reviewed.some(s => s.score != null)
         ? Math.round(reviewed.filter(s => s.score != null).reduce((acc, s) => acc + (s.score || 0), 0) / reviewed.filter(s => s.score != null).length)
         : 0;
 
-      setStats({ assignments: asgn.data?.length || 0, submissions: subsData.length, reviewed: reviewed.length, avgScore });
+      setStats({
+        assignments: asgn.data?.length || 0,
+        submissions: subsData.length,
+        reviewed: reviewed.length,
+        resubmit: resubmitN,
+        avgScore,
+      });
       setRecentSubs(subsData.slice(0, 5));
       setPendingAsgn(asgn.data || []);
       setLoading(false);
@@ -62,6 +83,31 @@ export default function StudentDashboard() {
         <h1 className="text-2xl font-bold text-gray-900">{greeting}, {user?.full_name?.split(' ')[0]}!</h1>
         <p className="text-gray-400 text-sm">Welcome to your student portal.</p>
       </div>
+
+      {!loading && stats.resubmit > 0 && (
+        <div
+          role="alert"
+          className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 flex gap-3 items-start"
+        >
+          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" aria-hidden />
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-semibold text-red-950">
+              Your instructor requested a revised upload ({stats.resubmit} file{stats.resubmit !== 1 ? 's' : ''})
+            </p>
+            <p className="text-red-900/90 mt-1">
+              Likely causes: empty, incomplete, or not ready for grading. Open My submissions to read feedback and submit
+              again.
+            </p>
+            <Link
+              to="/my-submissions"
+              className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-red-900 underline hover:text-red-950"
+            >
+              Go to My submissions
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
@@ -98,7 +144,11 @@ export default function StudentDashboard() {
                     <p className="text-xs text-gray-400 truncate">{s.assignments?.title}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {s.score != null && <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">{s.score}%</span>}
+                    {s.status === 'reviewed' && s.score != null && (
+                      <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                        {s.score}%
+                      </span>
+                    )}
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SC[s.status] || 'bg-gray-100 text-gray-600'}`}>{s.status.replace('_', ' ')}</span>
                   </div>
                 </div>

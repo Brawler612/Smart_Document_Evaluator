@@ -1,5 +1,22 @@
 export type UserRole = 'teacher' | 'admin' | 'student';
-export interface AppUser { id: string; email: string; full_name: string; role: UserRole; created_at: string; }
+export interface AppUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  created_at: string;
+  /** When synced from SSO optional claims mapped into OAuth metadata. See `oauthRosterClaims`. */
+  student_number?: string | null;
+  course_year?: string | null;
+  /** Scholastic school year label (e.g. 2025–2026) when sourced from cohort roster. */
+  school_year?: string | null;
+  /** IT332 team formation code from the class roster (e.g. 2526-sem2-it332-01). */
+  team_code?: string | null;
+  /** Member # on the team sheet; 1 = team lead. */
+  roster_member_number?: number | null;
+  /** No Supabase profile yet — row is from the sheet until the student signs in with this campus email. */
+  roster_pending?: boolean;
+}
 export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'STD' | 'Other';
 export type AStatus = 'active' | 'closed' | 'draft';
 export type SubStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';

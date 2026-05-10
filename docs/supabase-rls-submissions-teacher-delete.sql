@@ -26,6 +26,16 @@ revoke all on function public.app_user_is_staff() from public;
 grant execute on function public.app_user_is_staff() to anon;
 grant execute on function public.app_user_is_staff() to authenticated;
 
+grant delete on table public.submissions to authenticated;
+
 drop policy if exists "submissions_delete_teacher" on public.submissions;
 create policy "submissions_delete_teacher" on public.submissions
-  for delete using (public.app_user_is_staff());
+  for delete to authenticated
+  using (public.app_user_is_staff());
+
+-- Optional: only if you have public.submission (singular) instead of public.submissions:
+-- grant delete on table public.submission to authenticated;
+-- drop policy if exists "submission_delete_teacher" on public.submission;
+-- create policy "submission_delete_teacher" on public.submission
+--   for delete to authenticated
+--   using (public.app_user_is_staff());

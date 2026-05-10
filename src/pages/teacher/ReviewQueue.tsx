@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  Search,
   FileText,
   CheckCircle,
   X,
@@ -16,6 +15,7 @@ import {
   Inbox,
   ArrowRight,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import {
   fetchTeacherSubmissionRows,
@@ -37,63 +37,22 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubStatus } from '../../types';
+import { formatStackedDateTime, rosterStatusChip, studentIdBadge } from '../../lib/submissionRosterPresentation';
+import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
+import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import {
+  TeacherAmberCue,
+  TeacherPageHeader,
+  TeacherSearchSurface,
+  TeacherWorkspaceShell,
+  teacherMaroonTheadClasses,
+  teacherRoundedTableShell,
+} from '../../components/teacher/TeacherWorkspaceChrome';
 
 type Submission = TeacherSubmission;
 
 interface AICriterion { name: string; score: number; max: number; comment: string; }
 interface ReadinessResult { ready: boolean; missing: string[]; message: string; }
-
-const STATUS_COLORS: Record<SubStatus, string> = {
-  submitted: 'bg-blue-100 text-blue-700',
-  under_review: 'bg-amber-100 text-amber-700',
-  reviewed: 'bg-green-100 text-green-700',
-  resubmit: 'bg-red-100 text-red-700',
-};
-
-function formatStackedDateTime(iso: string | null | undefined): { line1: string; line2: string } {
-  if (!iso) return { line1: '—', line2: '' };
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { line1: '—', line2: '' };
-  return {
-    line1: d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: 'numeric' }),
-    line2: d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
-  };
-}
-
-function dueWindowEndMs(dueIso: string): number {
-  const t = dueIso.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-    const [y, m, day] = t.split('-').map(Number);
-    return new Date(y, m - 1, day, 23, 59, 59, 999).getTime();
-  }
-  return new Date(t).getTime();
-}
-
-function rosterStatusChip(s: TeacherSubmission): { label: string; className: string; showCheck?: boolean } {
-  const due = s.assignments?.due_date?.trim();
-  const subMs = new Date(s.submitted_at).getTime();
-  if (due) {
-    const end = dueWindowEndMs(due);
-    if (!Number.isNaN(subMs) && !Number.isNaN(end)) {
-      return subMs <= end
-        ? { label: 'ON TIME', className: 'bg-emerald-100 text-emerald-800', showCheck: true }
-        : { label: 'LATE', className: 'bg-rose-100 text-rose-800' };
-    }
-  }
-  return {
-    label: s.status.replace('_', ' ').toUpperCase(),
-    className: STATUS_COLORS[s.status],
-  };
-}
-
-function studentIdBadge(s: TeacherSubmission): string {
-  const num = s.users?.student_number?.trim();
-  if (num) return `# ${num}`;
-  const id = s.student_id?.trim();
-  if (!id) return '—';
-  if (id.length > 10) return `# ${id.slice(0, 8)}…`;
-  return `# ${id}`;
-}
 
 function scoreByKeywords(content: string, keywords: string[], max: number): number {
   if (!content.trim()) return 0;
@@ -466,6 +425,7 @@ export default function ReviewQueue() {
   const [saving, setSaving] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
+  const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
   const [fileOpenHref, setFileOpenHref] = useState<string | null>(null);
   const [fileLoadHint, setFileLoadHint] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -505,25 +465,17 @@ export default function ReviewQueue() {
 
     setDeleting(true);
     try {
-      const table = await resolveSubmissionTableName();
-      const dbIds = ids.filter((id) => !id.startsWith('local_'));
-      if (table && dbIds.length > 0) {
-        const { error } = await supabase.from(table).delete().in('id', dbIds);
-        if (error) {
-          alert(
-            `Could not delete from database: ${error.message}\n\nIf permission was denied, add a teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).\n\nLocal-only rows are still removed in this browser.`
-          );
-        }
-      }
-      const raw = localStorage.getItem(TEACHER_LOCAL_SUBMISSION_KEY);
-      if (raw) {
-        try {
-          const rows = JSON.parse(raw) as LocalSubmissionRow[];
-          const drop = new Set(ids);
-          localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(rows.filter((r) => !drop.has(r.id))));
-        } catch {
-          /* ignore */
-        }
+      const hintRows = submissions.filter((sub) => ids.includes(sub.id));
+      const purgeLocalDuplicatesOf = hintRows.map((sub) => ({
+        student_id: sub.student_id,
+        file_name: sub.file_name,
+        file_url: sub.file_url,
+      }));
+      const result = await deleteTeacherSubmissionsByIds(ids, { purgeLocalDuplicatesOf });
+      if (!result.ok) {
+        alert(
+          `Could not delete from database: ${result.message}\n\nIf permission was denied, add a teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).\n\nLocal-only rows are still removed in this browser.`
+        );
       }
       if (selected && ids.includes(selected.id)) closeGradingModal();
       setSelectedRowIds((prev) => {
@@ -651,8 +603,29 @@ export default function ReviewQueue() {
     const draft = aiDraftSnapshotRef.current;
     const ai_draft_score = draft?.score ?? null;
     const ai_draft_summary = draft?.summary ?? null;
-    const basePayload = { status: nextStatus, feedback, score };
-    const fullPayload = { ...basePayload, ai_draft_score, ai_draft_summary };
+    const feedbackOut =
+      nextStatus === 'resubmit' && !feedback.trim()
+        ? DEFAULT_TEACHER_RESUBMIT_FEEDBACK
+        : feedback;
+    /** No published scores or AI drafts until a real graded publish — avoids confusing learners. */
+    const basePayload =
+      nextStatus === 'resubmit'
+        ? {
+            status: nextStatus as SubStatus,
+            feedback: feedbackOut,
+            score: null as number | null,
+            ai_draft_score: null as number | null,
+            ai_draft_summary: null as string | null,
+          }
+        : { status: nextStatus, feedback: feedbackOut, score };
+    const fullPayload =
+      nextStatus === 'resubmit'
+        ? basePayload
+        : {
+            ...(basePayload as { status: SubStatus; feedback: string; score: number | null }),
+            ai_draft_score,
+            ai_draft_summary,
+          };
     const table = await resolveSubmissionTableName();
     if (table) {
       const { error } = await supabase.from(table).update(fullPayload).eq('id', selected.id);
@@ -674,16 +647,43 @@ export default function ReviewQueue() {
     } else if (selected.id.startsWith('local_')) {
       const localRaw = localStorage.getItem(TEACHER_LOCAL_SUBMISSION_KEY);
       const localRows = localRaw ? (JSON.parse(localRaw) as LocalSubmissionRow[]) : [];
-      const updated = localRows.map((row) =>
-        row.id === selected.id
-          ? { ...row, status: nextStatus, feedback, score, ai_draft_score, ai_draft_summary }
-          : row
-      );
+      const updated = localRows.map((row) => {
+        if (row.id !== selected.id) return row;
+        if (nextStatus === 'resubmit') {
+          return {
+            ...row,
+            status: nextStatus,
+            feedback: feedbackOut,
+            score: null,
+            ai_draft_score: null,
+            ai_draft_summary: null,
+          };
+        }
+        return { ...row, status: nextStatus, feedback: feedbackOut, score, ai_draft_score, ai_draft_summary };
+      });
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
     setSaving(false);
     closeGradingModal();
     load();
+  }
+
+  async function quickRequestResubmission(sub: Submission) {
+    const msg = `Request resubmission for “${sub.file_name}”?\n\nThe student will see an alert on their dashboard and submissions list asking them to upload a revised file (e.g. empty or incomplete work). No grade will be shown until they submit again and staff publish a score.`;
+    if (!window.confirm(msg)) return;
+
+    setResubmitSavingId(sub.id);
+    try {
+      const result = await performTeacherResubmitRequest({ id: sub.id, feedback: sub.feedback });
+      if (!result.ok) {
+        alert(result.message);
+        return;
+      }
+      if (selected?.id === sub.id) closeGradingModal();
+      await load();
+    } finally {
+      setResubmitSavingId(null);
+    }
   }
 
   const filtered = useMemo(() => {
@@ -765,48 +765,53 @@ export default function ReviewQueue() {
   const submissionFileOpenUrl = selected?.file_url?.trim() || '';
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold tracking-wide uppercase text-[#84001B]">Grading System</p>
-          <h1 className="text-2xl font-bold text-gray-900 mt-1">Grading workspace</h1>
-          <p className="text-gray-400 text-sm mt-0.5 max-w-xl">
-            AI drafts scores and feedback; you review, adjust, then publish to students. Work the queue below in spreadsheet
-            view for speed.
-          </p>
-          <p className="mt-3 text-xs text-gray-500">
-            Prefer a learner-first inbox?{' '}
-            <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
-              Open submission roster
+    <TeacherWorkspaceShell>
+      <TeacherPageHeader
+        eyebrow="Grading system"
+        title="Grading workspace"
+        icon={ClipboardList}
+        description={
+          <>
+            AI drafts scores and feedback; you review, adjust, then publish. Rows use the same{' '}
+            <span className="font-semibold text-slate-800">Grade · Redo · Delete</span> tools as{' '}
+            <Link className="font-semibold text-[#84001B] hover:underline" to="/class-list">
+              Class list
             </Link>{' '}
-            (grouped by submission—then jump back here to score).
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
-          >
-            Refresh queue
-          </button>
-          <button
-            type="button"
-            onClick={exportReviewedCsv}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export grades CSV
-          </button>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
-          >
-            <Printer className="w-3.5 h-3.5" />Print
-          </button>
-        </div>
-      </div>
+            and{' '}
+            <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
+              Submission roster
+            </Link>
+            .
+          </>
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              Refresh queue
+            </button>
+            <button
+              type="button"
+              onClick={exportReviewedCsv}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <Download className="w-3.5 h-3.5" aria-hidden />
+              Export grades CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <Printer className="w-3.5 h-3.5" aria-hidden />
+              Print
+            </button>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
         {[
@@ -816,45 +821,66 @@ export default function ReviewQueue() {
           { label: 'Published', value: stats.reviewed },
           { label: 'Resubmit', value: stats.resubmit },
         ].map((row) => (
-          <div key={row.label} className="bg-white border border-gray-100 rounded-xl px-4 py-3">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{row.label}</p>
-            <p className="text-xl font-bold text-gray-900 mt-0.5">{loading ? '—' : row.value}</p>
+          <div
+            key={row.label}
+            className="bg-white border border-slate-200/90 rounded-xl px-4 py-3 shadow-sm"
+          >
+            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{row.label}</p>
+            <p className="text-xl font-bold text-slate-900 mt-0.5 tabular-nums">{loading ? '—' : row.value}</p>
           </div>
         ))}
       </div>
 
       <div className="mb-6 grid md:grid-cols-4 gap-3">
-        <div className="md:col-span-4 flex flex-wrap items-center gap-2 text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-4 py-3">
-          <span className="font-semibold text-gray-700">Workflow:</span>
-          <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700">1. Open row</span>
-          <ArrowRight className="w-3 h-3 text-gray-300 shrink-0" />
-          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">2. AI inspect</span>
-          <ArrowRight className="w-3 h-3 text-gray-300 shrink-0" />
-          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">3. Teacher adjust</span>
-          <ArrowRight className="w-3 h-3 text-gray-300 shrink-0" />
-          <span className="px-2 py-0.5 rounded-md bg-[#84001B]/10 text-[#84001B]">4. Publish</span>
+        <div className="md:col-span-4 flex flex-wrap items-center gap-2 text-xs text-slate-600 bg-amber-50/60 border border-amber-100/90 rounded-xl px-4 py-3">
+          <span className="font-semibold text-amber-950">Workflow</span>
+          <span className="text-amber-800/80">—</span>
+          <span className="px-2 py-0.5 rounded-md bg-white/90 border border-amber-100 text-amber-900">1. Open row</span>
+          <ArrowRight className="w-3 h-3 text-amber-300 shrink-0" aria-hidden />
+          <span className="px-2 py-0.5 rounded-md bg-white/90 border border-amber-100 text-amber-900">2. AI inspect</span>
+          <ArrowRight className="w-3 h-3 text-amber-300 shrink-0" aria-hidden />
+          <span className="px-2 py-0.5 rounded-md bg-white/90 border border-amber-100 text-amber-900">3. Teacher adjust</span>
+          <ArrowRight className="w-3 h-3 text-amber-300 shrink-0" aria-hidden />
+          <span className="px-2 py-0.5 rounded-md bg-[#84001B]/15 text-[#84001B] font-semibold border border-[#84001B]/20">
+            4. Publish
+          </span>
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search student name, email, or file…"
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
-          />
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          {(['all', 'submitted', 'under_review', 'reviewed', 'resubmit'] as const).map(s => (
-            <button key={s} onClick={() => setFilter(s)}
-              className={`px-3 py-2.5 rounded-xl text-xs font-medium transition-colors capitalize whitespace-nowrap ${filter === s ? 'bg-[#84001B] text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-              {s.replace('_', ' ')}
-            </button>
-          ))}
-        </div>
-      </div>
+      <TeacherSearchSurface
+        value={search}
+        onChange={setSearch}
+        placeholder="Search student name, email, file name, or title…"
+        footer={
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex gap-2 flex-wrap">
+              {(['all', 'submitted', 'under_review', 'reviewed', 'resubmit'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setFilter(s)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold transition-colors capitalize whitespace-nowrap ${
+                    filter === s
+                      ? 'bg-[#84001B] text-white shadow-sm'
+                      : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  {s.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              {loading ? (
+                '…'
+              ) : (
+                <>
+                  Showing <span className="font-semibold text-slate-700 tabular-nums">{filtered.length}</span> in this view
+                </>
+              )}
+            </p>
+          </div>
+        }
+      />
 
       {!loading && filtered.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -867,7 +893,13 @@ export default function ReviewQueue() {
             <Trash2 className="w-3.5 h-3.5" />
             Delete selected ({selectedQueueIds.length})
           </button>
-          <span className="text-[11px] text-gray-400">Select rows with the checkboxes, or use the header box to select all in this view.</span>
+          <span className="text-[11px] text-slate-500">
+            Select rows for bulk delete, or use Grade / Redo / Delete per row — same submission actions as{' '}
+            <Link to="/class-list" className="font-semibold text-[#84001B] hover:underline">
+              Class list
+            </Link>{' '}
+            and Submission roster.
+          </span>
         </div>
       )}
 
@@ -922,32 +954,35 @@ export default function ReviewQueue() {
       ) : (
         <>
           {/* spreadsheet-style desktop (roster columns) */}
-          <div className="hidden md:block bg-white border border-gray-100 rounded-2xl overflow-hidden">
+          <div className={`hidden md:block ${teacherRoundedTableShell}`}>
+            <TeacherAmberCue title="Submission queue">
+              Maroon header matches Class list. Scroll sideways on small screens; checkboxes support bulk delete.
+            </TeacherAmberCue>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1200px] text-sm border-collapse">
                 <thead>
-                  <tr className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                    <th className="w-10 px-2 py-3 text-center align-middle">
+                  <tr className={teacherMaroonTheadClasses}>
+                    <th className="w-10 px-2 py-3 text-center align-middle text-white/95">
                       <input
                         ref={headerSelectAllRef}
                         type="checkbox"
-                        className="h-4 w-4 rounded border-gray-300 text-[#84001B] focus:ring-[#84001B]/30"
+                        className="h-4 w-4 rounded border-white/40 bg-white/10 text-[#ffd21a] focus:ring-[#ffd21a]/40"
                         aria-label="Select all in view"
                         onChange={() => toggleSelectAllFiltered()}
                       />
                     </th>
-                    <th className="px-3 py-3 text-left min-w-[96px]">Title</th>
-                    <th className="px-3 py-3 text-left min-w-[140px]">File name</th>
-                    <th className="px-3 py-3 text-left min-w-[120px]">Student ID</th>
-                    <th className="px-3 py-3 text-left min-w-[140px]">Student name</th>
-                    <th className="px-3 py-3 text-left min-w-[112px]">Date submitted</th>
-                    <th className="px-3 py-3 text-left min-w-[112px]">Last modified</th>
-                    <th className="px-3 py-3 text-left min-w-[100px]">Course & year</th>
-                    <th className="px-3 py-3 text-left min-w-[72px]">Team code</th>
-                    <th className="px-3 py-3 text-left min-w-[72px]">SY</th>
-                    <th className="px-3 py-3 text-left min-w-[72px]">Semester</th>
-                    <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
-                    <th className="px-3 py-3 text-right min-w-[88px]">Actions</th>
+                    <th className="px-3 py-3 text-left min-w-[96px] text-white">Title</th>
+                    <th className="px-3 py-3 text-left min-w-[140px] text-white">File name</th>
+                    <th className="px-3 py-3 text-left min-w-[120px] text-white">Student ID</th>
+                    <th className="px-3 py-3 text-left min-w-[140px] text-white">Student name</th>
+                    <th className="px-3 py-3 text-left min-w-[112px] text-white">Date submitted</th>
+                    <th className="px-3 py-3 text-left min-w-[112px] text-white">Last modified</th>
+                    <th className="px-3 py-3 text-left min-w-[100px] text-white">Course & year</th>
+                    <th className="px-3 py-3 text-left min-w-[72px] text-white">Team code</th>
+                    <th className="px-3 py-3 text-left min-w-[72px] text-white">SY</th>
+                    <th className="px-3 py-3 text-left min-w-[72px] text-white">Semester</th>
+                    <th className="px-3 py-3 text-left min-w-[100px] text-white">Status</th>
+                    <th className="px-3 py-3 text-right min-w-[220px] text-white">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -1040,24 +1075,35 @@ export default function ReviewQueue() {
                           </span>
                         </td>
                         <td className="px-3 py-3 align-middle text-right">
-                          <div className="flex justify-end items-center gap-1">
+                          <div className="inline-flex flex-wrap justify-end gap-1.5">
                             <button
                               type="button"
+                              disabled={deleting || resubmitSavingId === s.id}
                               onClick={() => void openReview(s)}
-                              className="inline-flex items-center justify-center p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-[#84001B]"
-                              aria-label={s.status === 'reviewed' ? 'Edit grading' : 'Open grading'}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors disabled:opacity-50"
                               title={s.status === 'reviewed' ? 'Edit grading' : 'Open grading'}
                             >
-                              <ChevronRight className="w-4 h-4" aria-hidden />
+                              Grade
+                              <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
                             </button>
                             <button
                               type="button"
-                              disabled={deleting}
-                              onClick={() => void deleteByIds([s.id])}
-                              className="inline-flex items-center justify-center p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-50"
-                              aria-label={`Delete ${s.file_name}`}
+                              disabled={deleting || resubmitSavingId === s.id}
+                              onClick={() => void quickRequestResubmission(s)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
+                              title="Request resubmission"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                              Redo
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deleting || resubmitSavingId === s.id}
+                              onClick={() => void deleteByIds([s.id])}
+                              className="inline-flex items-center rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 shadow-sm"
+                              title="Delete submission"
+                            >
+                              Delete
                             </button>
                           </div>
                         </td>
@@ -1130,24 +1176,36 @@ export default function ReviewQueue() {
                             </span>
                           );
                         })()}
-                        <div className="flex gap-1">
+                        <div className="flex flex-wrap gap-1.5 justify-end max-w-[14rem]">
                           <button
                             type="button"
-                            disabled={deleting}
-                            onClick={() => void deleteByIds([s.id])}
-                            className="flex items-center justify-center p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-red-50 hover:text-red-700"
-                            aria-label="Delete"
+                            disabled={deleting || resubmitSavingId === s.id}
+                            onClick={() => void quickRequestResubmission(s)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
+                            title="Redo"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Undo2 className="w-3 h-3 shrink-0" aria-hidden />
+                            Redo
                           </button>
                           <button
                             type="button"
+                            disabled={deleting || resubmitSavingId === s.id}
+                            onClick={() => void deleteByIds([s.id])}
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3 h-3 shrink-0" aria-hidden />
+                            Del
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deleting || resubmitSavingId === s.id}
                             onClick={() => void openReview(s)}
-                            className="flex items-center justify-center bg-[#84001B] text-white text-xs w-10 h-9 rounded-lg hover:bg-[#6b0016] transition-colors font-medium"
-                            aria-label={s.status === 'reviewed' ? 'Edit grading' : 'Open grading'}
+                            className="inline-flex items-center gap-0.5 rounded-lg bg-[#84001B] text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50"
                             title={s.status === 'reviewed' ? 'Edit' : 'Grade'}
                           >
-                            <ChevronRight className="w-4 h-4" aria-hidden />
+                            Grade
+                            <ChevronRight className="w-3 h-3" aria-hidden />
                           </button>
                         </div>
                       </div>
@@ -1387,6 +1445,6 @@ export default function ReviewQueue() {
           </div>,
           document.body
         )}
-    </div>
+    </TeacherWorkspaceShell>
   );
 }

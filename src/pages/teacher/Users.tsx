@@ -8,11 +8,35 @@ import {
   ChevronRight,
   RefreshCw,
   Users,
+  ClipboardList,
+  FileText,
+  Undo2,
+  UserMinus,
 } from 'lucide-react';
+import {
+  isStudentHiddenFromTeacherDirectory,
+  isSubmissionHiddenFromTeacherDirectory,
+  loadDirectoryRemovalLedger,
+  persistRemoveStudentFromDirectory,
+  resetDirectoryRemovalLedger,
+  type DirectoryRemovalLedger,
+} from '../../lib/classDirectoryRemoval';
 import { getClassRosterCacheStudents, mergeStudentRosterPreferDb } from '../../lib/classRosterCache';
 import { supabase, getSupabaseProjectHost } from '../../lib/supabase';
 import { isUsersTableMissingError } from '../../lib/supabaseUsersSetupHint';
-import type { AppUser } from '../../types';
+import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
+import {
+  fetchTeacherSubmissionRows,
+  submissionQueueTitle,
+  type TeacherSubmission,
+} from '../../lib/teacherSubmissionLoad';
+import { performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
+import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
+import TeacherSubmissionRosterTable from '../../components/teacher/TeacherSubmissionRosterTable';
+import { mergeIt332Sem2RosterWithDatabase } from '../../lib/mergeIt332Sem2Roster';
+import { IT332_COHORT_DESCRIPTOR } from '../../data/it332Sem2ClassRoster';
+import type { AppUser, SubStatus } from '../../types';
 
 function initials(name: string, fallback: string): string {
   const src = name.trim() || fallback.trim();
@@ -22,12 +46,58 @@ function initials(name: string, fallback: string): string {
   return src.slice(0, 1).toUpperCase() || '?';
 }
 
+function looksLikeUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
+}
+
+function it332TeamGroupLabel(teamCode: string | null | undefined): string | null {
+  const m = teamCode?.match(/2526-sem2-it332-(\d{2})$/);
+  if (!m) return null;
+  return `IT332 G${Number(m[1])}`;
+}
+
+function formatClassListDateTime(iso: string | null | undefined): string {
+  if (!iso?.trim()) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(d);
+  } catch {
+    return d.toLocaleString();
+  }
+}
+
 export default function UserManagement() {
   const [students, setStudents] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [usersTableMissing, setUsersTableMissing] = useState(false);
   const [search, setSearch] = useState('');
+
+  const [subRows, setSubRows] = useState<TeacherSubmission[]>([]);
+  const [subLoading, setSubLoading] = useState(true);
+  const [submissionSearch, setSubmissionSearch] = useState('');
+  const [submissionFilter, setSubmissionFilter] = useState<SubStatus | 'all'>('all');
+  const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  const [removedLedger, setRemovedLedger] = useState<DirectoryRemovalLedger>(() => loadDirectoryRemovalLedger());
+  const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
+
+  const studentsVisibleInDirectory = useMemo(
+    () => students.filter((u) => !isStudentHiddenFromTeacherDirectory(u, removedLedger)),
+    [students, removedLedger]
+  );
+
+  const subRowsNotLedgerHidden = useMemo(
+    () => subRows.filter((s) => !isSubmissionHiddenFromTeacherDirectory(s, removedLedger)),
+    [subRows, removedLedger]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,38 +115,215 @@ export default function UserManagement() {
       const missingTbl = isUsersTableMissingError(error.message);
       setUsersTableMissing(missingTbl);
       setLoadError(error.message);
-      setStudents(mergeStudentRosterPreferDb([], cachedStudents));
+      setStudents(
+        mergeIt332Sem2RosterWithDatabase(mergeStudentRosterPreferDb([], cachedStudents))
+      );
     } else {
       setLoadError(null);
-      setStudents(mergeStudentRosterPreferDb((data ?? []) as AppUser[], cachedStudents));
+      setStudents(
+        mergeIt332Sem2RosterWithDatabase(
+          mergeStudentRosterPreferDb((data ?? []) as AppUser[], cachedStudents)
+        )
+      );
     }
     setLoading(false);
   }, []);
+
+  const refreshSubmissions = useCallback(async () => {
+    setSubLoading(true);
+    try {
+      await syncAllLocalSubmissionsToSupabase();
+      setSubRows(await fetchTeacherSubmissionRows());
+    } catch (e) {
+      console.error('[class-list] submissions:', e);
+      setSubRows([]);
+    } finally {
+      setSubLoading(false);
+    }
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([load(), refreshSubmissions()]);
+  }, [load, refreshSubmissions]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    void refreshSubmissions();
+  }, [refreshSubmissions]);
+
+  useEffect(() => {
     const refresh = () => {
-      if (document.visibilityState === 'visible') void load();
+      if (document.visibilityState === 'visible') void refreshAll();
     };
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
-  }, [load]);
+  }, [refreshAll]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return students.filter((u) => {
+    return studentsVisibleInDirectory.filter((u) => {
       const name = (u.full_name || '').toLowerCase();
       const mail = (u.email || '').toLowerCase();
-      return !q || name.includes(q) || mail.includes(q);
+      const sid = String(u.student_number ?? '')
+        .toLowerCase()
+        .replace(/\s/g, '');
+      const team = (u.team_code || '').toLowerCase();
+      const coy = String(u.course_year ?? '').toLowerCase();
+      const sy = String(u.school_year ?? '').toLowerCase();
+      return (
+        !q ||
+        name.includes(q) ||
+        mail.includes(q) ||
+        sid.includes(q.replace(/\s/g, '')) ||
+        team.includes(q) ||
+        coy.includes(q) ||
+        sy.includes(q)
+      );
     });
-  }, [students, search]);
+  }, [studentsVisibleInDirectory, search]);
+
+  const subFiltered = useMemo(() => {
+    const q = submissionSearch.toLowerCase().trim();
+    return subRowsNotLedgerHidden.filter((s) => {
+      if (!(submissionFilter === 'all' || s.status === submissionFilter)) return false;
+      if (!q) return true;
+      const hay = [
+        s.file_name ?? '',
+        s.users?.full_name ?? '',
+        s.users?.email ?? '',
+        s.users?.student_number ?? '',
+        s.student_id ?? '',
+        submissionQueueTitle(s),
+        s.assignments?.title ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [subRowsNotLedgerHidden, submissionSearch, submissionFilter]);
+
+  const submissionTableRows = useMemo(
+    () =>
+      [...subFiltered].sort(
+        (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
+      ),
+    [subFiltered]
+  );
+
+  /** One row per student: their most recently submitted file (by `submitted_at`). */
+  const latestSubmissionByStudentId = useMemo(() => {
+    const m = new Map<string, TeacherSubmission>();
+    for (const s of subRowsNotLedgerHidden) {
+      const sid = s.student_id?.trim();
+      if (!sid) continue;
+      const prev = m.get(sid);
+      if (!prev || new Date(s.submitted_at).getTime() > new Date(prev.submitted_at).getTime()) {
+        m.set(sid, s);
+      }
+    }
+    return m;
+  }, [subRowsNotLedgerHidden]);
+
+  async function requestResubmitFromClassList(s: TeacherSubmission) {
+    const msg = `Request resubmission for “${s.file_name}”?\n\nStudents get an alert to upload a revised file (e.g. empty or incomplete work).`;
+    if (!window.confirm(msg)) return;
+    setResubmitSavingId(s.id);
+    try {
+      const result = await performTeacherResubmitRequest({ id: s.id, feedback: s.feedback });
+      if (!result.ok) {
+        alert(result.message);
+        return;
+      }
+      await refreshSubmissions();
+    } finally {
+      setResubmitSavingId(null);
+    }
+  }
+
+  async function deleteSubmissionRow(s: TeacherSubmission) {
+    if (!window.confirm(`Delete "${s.file_name}" permanently? This cannot be undone.`)) return;
+    setDeleteBusyId(s.id);
+    try {
+      const result = await deleteTeacherSubmissionsByIds([s.id], {
+        purgeLocalDuplicatesOf: [
+          { student_id: s.student_id, file_name: s.file_name, file_url: s.file_url },
+        ],
+      });
+      if (!result.ok) {
+        alert(
+          `Could not delete from database: ${result.message}\n\nIf permission was denied, add the teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).\nLocal copies are still removed in this browser.`
+        );
+      }
+      await refreshSubmissions();
+    } finally {
+      setDeleteBusyId(null);
+    }
+  }
+
+  async function removeStudentFromClassList(u: AppUser) {
+    const label = u.full_name?.trim() || u.email || 'this learner';
+    if (
+      !window.confirm(
+        `Remove "${label}" from your class directory on this browser?\n\nSubmission rows are deleted when Supabase allows. Their profile row may need docs/supabase-rls-users-teacher-delete-student.sql. Hidden roster slots return if you choose Show everyone again.`
+      )
+    )
+      return;
+    setRemoveBusyId(u.id);
+    try {
+      const studentSubs = subRows.filter((s) => String(s.student_id).trim() === String(u.id).trim());
+      if (studentSubs.length > 0) {
+        const purgeLocalDuplicatesOf = studentSubs.map((s) => ({
+          student_id: s.student_id,
+          file_name: s.file_name,
+          file_url: s.file_url,
+        }));
+        const result = await deleteTeacherSubmissionsByIds(studentSubs.map((s) => s.id), {
+          purgeLocalDuplicatesOf,
+        });
+        if (!result.ok) {
+          alert(
+            `Some submission rows could not be deleted:\n${result.message}\n\nThe learner will still be hidden from your directory on this browser.`
+          );
+        }
+      }
+
+      if (looksLikeUuid(u.id) && !u.roster_pending) {
+        const { error } = await supabase.from('users').delete().eq('id', u.id).eq('role', 'student');
+        if (error && import.meta.env.DEV) console.warn('[class-list] remove profile:', error.message);
+      }
+
+      setRemovedLedger((prev) => persistRemoveStudentFromDirectory(prev, u));
+      await refreshSubmissions();
+      await load();
+    } finally {
+      setRemoveBusyId(null);
+    }
+  }
+
+  const DIRECTORY_STATUS_CHIP: Record<SubStatus, string> = {
+    submitted: 'bg-blue-50 text-blue-800 border border-blue-100',
+    under_review: 'bg-amber-50 text-amber-900 border border-amber-100',
+    reviewed: 'bg-emerald-50 text-emerald-900 border border-emerald-100',
+    resubmit: 'bg-red-50 text-red-800 border border-red-100',
+  };
+
+  const DIRECTORY_STATUS_LABEL: Record<SubStatus, string> = {
+    submitted: 'Submitted',
+    under_review: 'In review',
+    reviewed: 'Graded',
+    resubmit: 'Redo needed',
+  };
+
+  function directoryRowExtras(u: AppUser) {
+    return latestSubmissionByStudentId.get(u.id) ?? null;
+  }
 
   return (
     <div className="min-h-full bg-gradient-to-b from-slate-100/95 via-[#faf8f8] to-slate-100/85">
-      <div className="p-6 md:p-8 max-w-5xl mx-auto pb-16">
+      <div className="p-6 md:p-8 max-w-7xl mx-auto pb-16">
         <header className="mb-10">
           <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
             <div>
@@ -87,18 +334,27 @@ export default function UserManagement() {
                 </span>
                 Class list
               </h1>
-              <p className="text-slate-600 text-sm mt-2 max-w-xl leading-relaxed">
-                Student accounts only. Search by name or email and cross-check uploads from the submission roster.
+              <p className="text-slate-600 text-sm mt-2 max-w-2xl leading-relaxed">
+                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> (G1–G7) first, then everyone else.
+                <span className="font-medium text-slate-800"> Awaiting sign-in</span> — roster only until Google matches email or ID.
+                <span className="font-medium text-slate-800"> Uploaded files</span> — grade, resubmit, or delete like grading. Groups:{' '}
+                <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
+                  Student Submissions
+                </Link>
+                .
               </p>
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => void load()}
-                disabled={loading}
+                onClick={() => void refreshAll()}
+                disabled={loading || subLoading}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${loading || subLoading ? 'animate-spin' : ''}`}
+                  aria-hidden
+                />
                 Sync
               </button>
               <Link
@@ -211,17 +467,37 @@ export default function UserManagement() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search students by name or email…"
+              placeholder="Search by name, email, student ID, team code…"
               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]/40 bg-white"
               disabled={loading}
             />
           </div>
           {!loading && students.length > 0 && (
-            <p className="text-[11px] text-slate-500 mt-3">
-              Showing{' '}
-              <span className="font-semibold text-slate-700 tabular-nums">{filtered.length}</span> of{' '}
-              <span className="tabular-nums">{students.length}</span> student{students.length !== 1 ? 's' : ''}
-            </p>
+            <div className="mt-3 space-y-1.5 text-[11px] text-slate-500">
+              <p>
+                Showing{' '}
+                <span className="font-semibold text-slate-700 tabular-nums">{filtered.length}</span> of{' '}
+                <span className="tabular-nums">{studentsVisibleInDirectory.length}</span>{' '}
+                {studentsVisibleInDirectory.length === 1 ? 'learner shown' : 'learners shown'}
+                {studentsVisibleInDirectory.length < students.length ? (
+                  <span className="text-slate-400">
+                    {' '}
+                    ({students.length - studentsVisibleInDirectory.length} hidden via Remove on this browser)
+                  </span>
+                ) : null}
+              </p>
+              <p>
+                <span className="font-semibold text-slate-600">Submitted</span> /{' '}
+                <span className="font-semibold text-slate-600">modified</span> /
+                <span className="font-semibold text-slate-600"> status</span> /{' '}
+                <span className="font-semibold text-slate-600">actions</span> refer to each learner&apos;s{' '}
+                <span className="italic">most recent</span> upload. Older files stay in{' '}
+                <a href="#uploaded-files-section" className="font-semibold text-[#84001B] hover:underline">
+                  Uploaded files
+                </a>{' '}
+                below.
+              </p>
+            </div>
           )}
         </div>
 
@@ -254,11 +530,27 @@ export default function UserManagement() {
             </p>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => void refreshAll()}
               className="inline-flex items-center gap-2 mt-6 text-xs font-semibold text-[#84001B] hover:underline"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3.5 h-3.5" aria-hidden />
               Try syncing again
+            </button>
+          </div>
+        ) : studentsVisibleInDirectory.length === 0 ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-6 py-14 text-center max-w-xl mx-auto">
+            <GraduationCap className="w-12 h-12 text-amber-700/70 mx-auto mb-3" aria-hidden />
+            <p className="text-lg font-semibold text-amber-950">Everyone is hidden from your directory</p>
+            <p className="text-sm text-amber-900/85 mt-2 leading-relaxed">
+              You used <span className="font-semibold">Remove</span> for every learner on this browser. Nothing is wrong with
+              the roster — open <span className="font-semibold">Show everyone again</span> to restore the full list.
+            </p>
+            <button
+              type="button"
+              onClick={() => setRemovedLedger(resetDirectoryRemovalLedger())}
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#84001B] px-4 py-2.5 text-xs font-semibold text-white shadow-md hover:bg-[#6b0016]"
+            >
+              Show everyone again
             </button>
           </div>
         ) : filtered.length === 0 ? (
@@ -276,40 +568,281 @@ export default function UserManagement() {
           </div>
         ) : (
           <div className="rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
-            <div className="hidden md:grid grid-cols-12 gap-3 px-5 py-3 border-b border-slate-100 bg-slate-50/80 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-              <div className="col-span-5">Student</div>
-              <div className="col-span-6">Email</div>
-              <div className="col-span-1 text-right pr-1">Joined</div>
+            <p className="px-4 py-2.5 md:px-5 text-[12px] text-slate-800 bg-amber-50/80 border-b border-amber-100/90 leading-relaxed">
+              <span className="font-semibold text-amber-950">Directory</span>: name and team/group tags on the left; columns
+              to the right — ID, team code, course, school year, email,{' '}
+              <span className="font-semibold">date submitted</span> and{' '}
+              <span className="font-semibold">last modified</span> (from their latest file), live status, and actions (
+              <span className="font-semibold">Remove</span> on every row;{' '}
+              <span className="font-semibold">Grade / Redo / Delete</span> when they have uploaded a file). Scroll sideways on small
+              screens.
+            </p>
+            <div className="max-h-[min(560px,65vh)] overflow-auto">
+              <table className="w-full min-w-[1180px] border-collapse text-left antialiased [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,'Helvetica Neue',Arial,sans-serif] text-[13px] leading-snug tracking-tight">
+                <thead>
+                  <tr className="border-b border-[#5c0013] bg-[#84001B] text-[11px] font-semibold uppercase tracking-[0.06em] text-white shadow-sm">
+                    <th className="px-5 py-3.5 align-bottom font-semibold">Student</th>
+                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap text-center font-semibold">Student ID</th>
+                    <th className="px-3 py-3.5 align-bottom min-w-[8.75rem] font-semibold">Team code</th>
+                    <th className="px-3 py-3.5 align-bottom min-w-[7rem] font-semibold">Course / term</th>
+                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold">School yr</th>
+                    <th className="px-3 py-3.5 align-bottom min-w-[11rem] font-semibold">Email</th>
+                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold tabular-nums">
+                      Date submitted
+                    </th>
+                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold tabular-nums">
+                      Last modified
+                    </th>
+                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold">Status</th>
+                    <th className="px-5 py-3.5 align-bottom text-right whitespace-nowrap font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filtered.map((u) => {
+                    const latest = directoryRowExtras(u);
+                    const teamG = it332TeamGroupLabel(u.team_code);
+                    const submittedAt =
+                      latest && latest.submitted_at?.trim() !== ''
+                        ? formatClassListDateTime(latest.submitted_at)
+                        : '—';
+                    const modifiedAt = latest
+                      ? formatClassListDateTime(latest.updated_at ?? latest.submitted_at)
+                      : '—';
+                    return (
+                      <tr key={u.id} className="group hover:bg-[#fff8f9] align-middle bg-white border-b border-slate-100/90 transition-colors">
+                        <td className="px-5 py-3 min-w-[10rem]">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[11px] font-bold bg-gradient-to-br from-[#ffd21a] to-[#f5c400] text-[#84001B]">
+                              {initials(u.full_name, u.email)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-[15px] text-slate-950 truncate tracking-tight">
+                                {u.full_name?.trim() || 'Unnamed'}
+                              </p>
+                              {teamG && (
+                                <p className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                  <span className="font-medium">{teamG}</span>
+                                  {u.roster_member_number === 1 && (
+                                    <span className="text-[9px] font-semibold uppercase tracking-wide text-[#84001B]/90">
+                                      Lead
+                                    </span>
+                                  )}
+                                  {u.roster_pending && (
+                                    <span className="text-[9px] font-medium text-amber-900 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded">
+                                      Awaiting sign-in
+                                    </span>
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-2 py-3 text-[11px] font-mono text-slate-800 tabular-nums text-center">
+                          <span className="inline-block max-w-[5.5rem] truncate align-middle" title={u.student_number ?? ''}>
+                            {u.student_number?.trim() || '—'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-3 text-[11px] font-mono text-slate-800">
+                          <span className="line-clamp-2 break-all" title={u.team_code ?? ''}>
+                            {u.team_code?.trim() || '—'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-3 text-[11px] text-slate-800">
+                          <span className="line-clamp-2" title={u.course_year ?? ''}>
+                            {u.course_year?.trim() || '—'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-3 text-[11px] text-slate-800 whitespace-nowrap">
+                          {u.school_year?.trim() || '—'}
+                        </td>
+                        <td className="px-3 py-3 min-w-[10rem]">
+                          <span className="flex items-start gap-2 text-slate-700">
+                            <Mail className="w-4 h-4 text-[#84001B]/50 shrink-0 mt-0.5" aria-hidden />
+                            <span className="truncate">{u.email || '—'}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-[12px] text-slate-800 tabular-nums whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
+                            <span title={latest?.submitted_at}>{submittedAt}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-[12px] text-slate-800 tabular-nums whitespace-nowrap">
+                          <span title={latest?.updated_at ?? latest?.submitted_at}>{modifiedAt}</span>
+                        </td>
+                        <td className="px-3 py-3">
+                          {latest ? (
+                            <span
+                              className={`inline-flex text-[11px] font-semibold px-2.5 py-1 rounded-full shadow-sm ${DIRECTORY_STATUS_CHIP[latest.status]}`}
+                            >
+                              {DIRECTORY_STATUS_LABEL[latest.status]}
+                            </span>
+                          ) : (
+                            <span className="inline-flex text-[11px] font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200/90">
+                              No submission
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <div className="inline-flex flex-col items-end gap-1.5 max-w-[13rem]">
+                            <button
+                              type="button"
+                              disabled={
+                                removeBusyId === u.id ||
+                                (!!latest && deleteBusyId === latest.id) ||
+                                (!!latest && resubmitSavingId === latest.id)
+                              }
+                              onClick={() => void removeStudentFromClassList(u)}
+                              className="inline-flex w-full justify-center items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 hover:border-slate-400 disabled:opacity-50 shadow-sm"
+                              title="Hide from your directory here and delete their submissions when permitted"
+                            >
+                              <UserMinus className="w-3.5 h-3.5 shrink-0 opacity-70" aria-hidden />
+                              Remove
+                            </button>
+                            {latest ? (
+                              <div className="inline-flex flex-wrap justify-end gap-1.5">
+                                <Link
+                                  to={gradingLinkForSubmission(latest.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors"
+                                  title={latest.file_name ? `Open grading · ${latest.file_name}` : 'Open grading'}
+                                >
+                                  Grade
+                                  <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
+                                </Link>
+                                <button
+                                  type="button"
+                                  disabled={resubmitSavingId === latest.id || deleteBusyId === latest.id}
+                                  onClick={() => void requestResubmitFromClassList(latest)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
+                                  title="Ask student to resubmit"
+                                >
+                                  <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                  Redo
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deleteBusyId === latest.id || resubmitSavingId === latest.id}
+                                  onClick={() => void deleteSubmissionRow(latest)}
+                                  className="inline-flex items-center rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 shadow-sm"
+                                  title="Remove latest submission row only"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">Awaiting upload</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-            <ul className="divide-y divide-slate-100 max-h-[min(560px,65vh)] overflow-y-auto">
-              {filtered.map((u) => (
-                <li key={u.id}>
-                  <div className="grid md:grid-cols-12 gap-2 md:gap-3 items-center px-4 md:px-5 py-3.5 hover:bg-red-50/40 transition-colors">
-                    <div className="md:col-span-5 flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[11px] font-bold bg-gradient-to-br from-[#ffd21a] to-[#f5c400] text-[#84001B]">
-                        {initials(u.full_name, u.email)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm truncate">
-                          {u.full_name?.trim() || 'Unnamed'}
-                        </p>
-                        <p className="text-[11px] text-slate-400 md:hidden truncate">{u.email}</p>
-                      </div>
-                    </div>
-                    <div className="md:col-span-6 hidden md:flex items-center gap-2 text-sm text-slate-600 min-w-0">
-                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
-                      <span className="truncate">{u.email || '—'}</span>
-                    </div>
-                    <div className="md:col-span-1 flex items-center md:justify-end gap-1.5 text-[11px] text-slate-500 tabular-nums">
-                      <Calendar className="w-3.5 h-3.5 text-slate-300 hidden md:block" aria-hidden />
-                      {u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
           </div>
         )}
+
+        <section
+          id="uploaded-files-section"
+          className="mt-14 pt-10 border-t border-slate-200/90 scroll-mt-6"
+          aria-labelledby="class-list-uploads-heading"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
+            <div>
+              <p className="text-xs font-semibold tracking-[0.12em] uppercase text-[#84001B]">Files on record</p>
+              <h2
+                id="class-list-uploads-heading"
+                className="text-xl md:text-2xl font-bold text-slate-900 mt-1.5 flex items-center gap-2"
+              >
+                <FileText className="w-6 h-6 text-[#84001B] shrink-0" aria-hidden />
+                Uploaded files
+              </h2>
+              <p className="text-sm text-slate-600 mt-2 max-w-2xl">
+                Same columns as the grading workspace. Status shows on-time vs late when the assignment has a due date;
+                otherwise it shows review state. Use the arrow to grade, undo to request a redo, trash to remove the row.
+              </p>
+            </div>
+            <Link
+              to="/grading"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#84001B] px-3.5 py-2 text-xs font-semibold text-white shadow-md hover:bg-[#6b0016] shrink-0"
+            >
+              Open grading workspace
+              <ChevronRight className="w-3.5 h-3.5" aria-hidden />
+            </Link>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/90 bg-white/80 backdrop-blur-sm shadow-sm p-4 sm:p-5 mb-6">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden />
+                <input
+                  value={submissionSearch}
+                  onChange={(e) => setSubmissionSearch(e.target.value)}
+                  placeholder="Search title, student, email, file name…"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]/40 bg-white"
+                  disabled={subLoading}
+                />
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {(['all', 'submitted', 'under_review', 'reviewed', 'resubmit'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setSubmissionFilter(st)}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold capitalize transition-colors ${
+                      submissionFilter === st
+                        ? 'bg-[#84001B] text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    {st.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!subLoading && subRows.length > 0 && (
+              <p className="text-[11px] text-slate-500 mt-3">
+                Showing <span className="font-semibold text-slate-700">{subFiltered.length}</span> of {subRows.length}{' '}
+                file{subRows.length !== 1 ? 's' : ''}
+                {submissionFilter !== 'all' && (
+                  <span>
+                    {' '}
+                    · <span className="text-[#84001B] font-medium">{submissionFilter.replace('_', ' ')}</span>
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+
+          {subLoading ? (
+            <div className="space-y-3">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-16 rounded-2xl bg-slate-100 animate-pulse" />
+              ))}
+            </div>
+          ) : submissionTableRows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-14 text-center">
+              <ClipboardList className="w-14 h-14 text-slate-300 mx-auto mb-4" aria-hidden />
+              <p className="text-lg font-semibold text-slate-800">No files match</p>
+              <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
+                {subRows.length === 0
+                  ? 'When learners submit work, each upload appears here with actions — try Sync after new uploads.'
+                  : 'Try another status filter or clear the search box.'}
+              </p>
+            </div>
+          ) : (
+            <TeacherSubmissionRosterTable
+              rows={submissionTableRows}
+              resubmitSavingId={resubmitSavingId}
+              gradeHref={gradingLinkForSubmission}
+              onRequestResubmit={(s) => void requestResubmitFromClassList(s)}
+              onDeleteRow={(s) => void deleteSubmissionRow(s)}
+              deleteBusyId={deleteBusyId}
+              labeledActions
+            />
+          )}
+        </section>
       </div>
     </div>
   );

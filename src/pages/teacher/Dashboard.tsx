@@ -13,6 +13,13 @@ import {
   GraduationCap,
   Clock,
 } from 'lucide-react';
+import {
+  TeacherWorkspaceShell,
+  TeacherPageHeader,
+  TeacherAmberCue,
+  teacherMaroonTheadClasses,
+  teacherRoundedTableShell,
+} from '../../components/teacher/TeacherWorkspaceChrome';
 import { supabase } from '../../lib/supabase';
 import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import { useAuth } from '../../context/AuthContext';
@@ -155,31 +162,33 @@ export default function TeacherDashboard() {
   const totalTracked = Object.values(statusSummary).reduce((a, b) => a + b, 0);
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-slate-100/95 via-[#faf8f8] to-slate-100/85">
-      <div className="p-6 md:p-8 max-w-6xl mx-auto pb-16">
-        <header className="mb-8 md:mb-10">
-          <p className="text-xs font-semibold tracking-[0.14em] uppercase text-[#84001B]">Dashboard</p>
-          <div className="mt-2 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-slate-900 tracking-tight">
-                {greeting}, {firstName}!
-              </h1>
-              <p className="text-slate-500 text-sm mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
-                <span>{weekday}</span>
-                <span className="text-slate-300">·</span>
-                <span>Queue snapshot and quickest paths into grading.</span>
-              </p>
-            </div>
-            <Link
-              to="/grading"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#84001B] text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-[#84001B]/25 hover:bg-[#6b0016] shrink-0"
-            >
-              Open grading
-              <ChevronRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </header>
+    <TeacherWorkspaceShell maxWidthClass="max-w-6xl">
+      <TeacherPageHeader
+        eyebrow="Dashboard"
+        title={
+          <>
+            {greeting}, {firstName}!
+          </>
+        }
+        icon={Sparkles}
+        description={
+          <p className="text-slate-500 text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
+            <span>{weekday}</span>
+            <span className="text-slate-300">·</span>
+            <span>Queue snapshot and quickest paths into grading.</span>
+          </p>
+        }
+        actions={
+          <Link
+            to="/grading"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#84001B] text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-[#84001B]/25 hover:bg-[#6b0016] shrink-0"
+          >
+            Open grading
+            <ChevronRight className="w-4 h-4" />
+          </Link>
+        }
+      />
 
         <section className="mb-8 rounded-2xl overflow-hidden border border-[#84001B]/20 shadow-lg shadow-[#84001B]/10">
           <div className="bg-gradient-to-r from-[#84001B] via-[#720018] to-[#5c0014] px-5 py-5 md:px-7 md:py-6 text-white">
@@ -335,9 +344,13 @@ export default function TeacherDashboard() {
             </div>
 
             {!loading && recentSubs.length > 0 && (
-              <div className="rounded-2xl border border-slate-200/90 bg-white p-5 md:p-6 shadow-sm">
-                <div className="flex items-center justify-between gap-2 mb-4">
-                  <h2 className="font-semibold text-slate-900">Latest activity</h2>
+              <div className={teacherRoundedTableShell}>
+                <TeacherAmberCue title="Latest activity">
+                  Recent uploads from your database sample—same maroon spreadsheet header as Class list. Tap a row to open
+                  grading.
+                </TeacherAmberCue>
+                <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-100 bg-white">
+                  <h2 className="font-semibold text-slate-900 text-sm">Turn-ins</h2>
                   <Link
                     to="/student-submissions"
                     className="text-xs font-semibold text-[#84001B] hover:underline inline-flex items-center gap-0.5"
@@ -346,38 +359,64 @@ export default function TeacherDashboard() {
                     <ChevronRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
-                <ul className="divide-y divide-slate-100">
-                  {recentSubs.map((row) => (
-                    <li key={row.id}>
-                      <Link
-                        to={gradingLinkForSubmission(row.id)}
-                        className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 hover:bg-red-50/50 -mx-2 px-2 rounded-xl transition-colors"
-                      >
-                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#84001B] to-[#5c0014] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
-                          {(row.file_name || '?').slice(0, 1).toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-900 truncate">{row.file_name}</p>
-                          <p className="text-[11px] text-slate-500">{relativeTime(row.submitted_at)}</p>
-                        </div>
-                        <span
-                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${
-                            row.status === 'submitted'
-                              ? 'bg-rose-100 text-[#84001B]'
-                              : row.status === 'under_review'
-                                ? 'bg-[#ffd21a]/30 text-[#5c0014]'
-                                : row.status === 'reviewed'
-                                  ? 'bg-[#84001B]/10 text-[#84001B]'
-                                  : 'bg-red-100 text-red-800'
-                          }`}
-                        >
-                          {row.status.replace('_', ' ')}
-                        </span>
-                        <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left min-w-[520px]">
+                    <thead>
+                      <tr className={teacherMaroonTheadClasses}>
+                        <th className="px-4 py-3 font-semibold">File</th>
+                        <th className="px-4 py-3 font-semibold whitespace-nowrap">Submitted</th>
+                        <th className="px-4 py-3 font-semibold">Status</th>
+                        <th className="px-4 py-3 font-semibold text-right w-24">Open</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {recentSubs.map((row) => (
+                        <tr key={row.id} className="bg-white hover:bg-red-50/40">
+                          <td className="px-4 py-3">
+                            <Link
+                              to={gradingLinkForSubmission(row.id)}
+                              className="flex items-center gap-2 min-w-0 group"
+                            >
+                              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#84001B] to-[#5c0014] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                                {(row.file_name || '?').slice(0, 1).toUpperCase()}
+                              </div>
+                              <span className="font-medium text-slate-900 truncate group-hover:text-[#84001B]">
+                                {row.file_name}
+                              </span>
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">
+                            {relativeTime(row.submitted_at)}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full inline-block ${
+                                row.status === 'submitted'
+                                  ? 'bg-rose-100 text-[#84001B]'
+                                  : row.status === 'under_review'
+                                    ? 'bg-[#ffd21a]/30 text-[#5c0014]'
+                                    : row.status === 'reviewed'
+                                      ? 'bg-[#84001B]/10 text-[#84001B]'
+                                      : 'bg-red-100 text-red-800'
+                              }`}
+                            >
+                              {row.status.replace('_', ' ')}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Link
+                              to={gradingLinkForSubmission(row.id)}
+                              className="inline-flex items-center gap-0.5 text-xs font-semibold text-[#84001B] hover:underline"
+                            >
+                              Grade
+                              <ChevronRight className="w-3.5 h-3.5 opacity-70" />
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -427,7 +466,6 @@ export default function TeacherDashboard() {
             </Link>
           </div>
         </section>
-      </div>
-    </div>
+    </TeacherWorkspaceShell>
   );
 }

@@ -3,6 +3,12 @@ import { Session, User } from '@supabase/supabase-js';
 import { mergeProfileIntoClassRosterCache } from '../lib/classRosterCache';
 import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
 import { supabase } from '../lib/supabase';
+import { rosterFieldsFromOAuthMetadata } from '../lib/oauthRosterClaims';
+import {
+  emailMatchesCampusDomains,
+  getConfiguredStudentDomains,
+  STUDENT_EMAIL_REJECT_STORAGE_KEY,
+} from '../lib/studentEmailPolicy';
 import { AppUser, UserRole } from '../types';
 
 interface Ctx {
@@ -87,11 +93,25 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     (typeof meta.name === 'string' && meta.name.trim()) ||
     (email ? email.split('@')[0] : '');
 
+  const roster = rosterFieldsFromOAuthMetadata(meta as Record<string, unknown>);
+
   if (existing) {
-    const patch: { role?: UserRole; email?: string; full_name?: string } = {};
+    const patch: {
+      role?: UserRole;
+      email?: string;
+      full_name?: string;
+      student_number?: string | null;
+      course_year?: string | null;
+    } = {};
     if (existing.role !== roleFromConfig) patch.role = roleFromConfig;
     if (email && existing.email !== email) patch.email = email;
     if (resolvedFullName && existing.full_name !== resolvedFullName) patch.full_name = resolvedFullName;
+    if (roster.student_number && roster.student_number !== existing.student_number) {
+      patch.student_number = roster.student_number;
+    }
+    if (roster.course_year && roster.course_year !== existing.course_year) {
+      patch.course_year = roster.course_year;
+    }
 
     if (Object.keys(patch).length > 0) {
       const { data, error } = await supabase.from('users').update(patch).eq('id', existing.id).select().maybeSingle();
@@ -104,9 +124,18 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
 
   const full_name = resolvedFullName || email.split('@')[0] || 'User';
 
+  const insertRow: Record<string, unknown> = {
+    id: authUser.id,
+    email,
+    full_name,
+    role: roleFromConfig,
+  };
+  if (roster.student_number) insertRow.student_number = roster.student_number;
+  if (roster.course_year) insertRow.course_year = roster.course_year;
+
   const { data, error } = await supabase
     .from('users')
-    .upsert({ id: authUser.id, email, full_name, role: roleFromConfig }, { onConflict: 'id' })
+    .upsert(insertRow, { onConflict: 'id' })
     .select()
     .maybeSingle();
 
@@ -134,6 +163,19 @@ async function ensureUserProfileOrFallback(authUser: User): Promise<AppUser> {
   return fallbackProfile(authUser);
 }
 
+function rejectStudentIfWrongCampusEmail(profile: AppUser): boolean {
+  const domains = getConfiguredStudentDomains();
+  if (domains.length === 0) return false;
+  if (profile.role !== 'student') return false;
+  if (emailMatchesCampusDomains(profile.email, domains)) return false;
+  const hint = domains.map((d) => `@${d}`).join(', ');
+  sessionStorage.setItem(
+    STUDENT_EMAIL_REJECT_STORAGE_KEY,
+    `Students must use a campus email (${hint}). Sign in with Google using that address.`
+  );
+  return true;
+}
+
 const SESSION_BOOT_MS = 8_000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -157,8 +199,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const fb = fallbackProfile(next.user);
         mergeProfileIntoClassRosterCache(fb);
         setUser(fb);
-        void ensureUserProfileOrFallback(next.user).then(profile => {
+        void ensureUserProfileOrFallback(next.user).then(async (profile) => {
           if (!alive) return;
+          if (rejectStudentIfWrongCampusEmail(profile)) {
+            await supabase.auth.signOut();
+            return;
+          }
           mergeProfileIntoClassRosterCache(profile);
           setUser(profile);
         });

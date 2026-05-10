@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, FileText, Settings, LogOut, ClipboardList, CheckSquare, Inbox, Users } from 'lucide-react';
+import { Home, FileText, Settings, LogOut, ClipboardList, CheckSquare, Inbox, Users, UsersRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import SmartDocsLogo from './SmartDocsLogo';
 
@@ -9,6 +9,7 @@ const TEACHER_NAV = [
   { to: '/class-list', icon: Users, label: 'Class list' },
   { to: '/student-submissions', icon: FileText, label: 'Student Submissions' },
   { to: '/grading', icon: ClipboardList, label: 'Grading System' },
+  { to: '/team-14', icon: UsersRound, label: 'Team 14' },
   { to: '/reports', icon: CheckSquare, label: 'Reports' },
   { to: '/teacher-settings', icon: Settings, label: 'Settings' },
 ];

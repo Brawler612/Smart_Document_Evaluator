@@ -9,7 +9,9 @@ import {
   BarChart3,
   Inbox,
   FileText,
+  Settings as SettingsIcon,
 } from 'lucide-react';
+import { TeacherWorkspaceShell, TeacherPageHeader } from '../../components/teacher/TeacherWorkspaceChrome';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 
@@ -82,19 +84,17 @@ export default function TeacherSettings() {
   ];
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-slate-100/95 via-[#faf8f8] to-slate-100/85">
-      <div className="p-6 md:p-8 max-w-4xl mx-auto pb-16">
-        <header className="mb-10">
-          <p className="text-xs font-semibold tracking-[0.14em] uppercase text-[#84001B]">Settings</p>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 mt-1.5 tracking-tight">Teacher workspace</h1>
-          <p className="text-slate-600 text-sm mt-2 max-w-xl leading-relaxed">
-            Your signed-in profile, a quick read on backlog, and shortcuts into the tools you use every day.
-          </p>
-        </header>
+    <TeacherWorkspaceShell maxWidthClass="max-w-4xl">
+      <TeacherPageHeader
+        eyebrow="Settings"
+        title="Teacher workspace"
+        icon={SettingsIcon}
+        description="Your signed-in profile, a quick read on backlog, and shortcuts into the tools you use every day—same shell and maroon accent as Class list."
+      />
 
         <section className="mb-8">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Account</h2>
-          <div className="rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
+          <div className="rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden border-l-[4px] border-l-[#ffd21a]">
             <div className="p-6 md:p-7 flex flex-col sm:flex-row gap-6 sm:items-center">
               <div className="flex items-center gap-4 flex-1 min-w-0">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#84001B] to-[#5c0014] text-white flex items-center justify-center text-xl font-bold shrink-0 shadow-lg shadow-[#84001B]/25">
@@ -126,7 +126,7 @@ export default function TeacherSettings() {
         <section className="mb-8">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Backlog</h2>
           <div className="grid sm:grid-cols-2 gap-4">
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm flex gap-4">
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm flex gap-4 border-l-[4px] border-l-[#ffd21a]/90">
               <div className="w-12 h-12 rounded-xl bg-[#ffd21a]/35 flex items-center justify-center shrink-0">
                 <Bell className="w-6 h-6 text-[#84001B]" aria-hidden />
               </div>
@@ -140,7 +140,7 @@ export default function TeacherSettings() {
                 </p>
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm flex gap-4">
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm flex gap-4 border-l-[4px] border-l-[#84001B]/35">
               <div className="w-12 h-12 rounded-xl bg-[#84001B]/10 flex items-center justify-center shrink-0">
                 <Users className="w-6 h-6 text-[#84001B]" aria-hidden />
               </div>
@@ -187,7 +187,6 @@ export default function TeacherSettings() {
         <p className="text-center text-[11px] text-slate-400 mt-12">
           Smart Docs Validator · Teacher workspace · Data from your live Supabase project
         </p>
-      </div>
-    </div>
+    </TeacherWorkspaceShell>
   );
 }

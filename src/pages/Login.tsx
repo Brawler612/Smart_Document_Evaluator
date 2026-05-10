@@ -3,8 +3,14 @@ import { AlertCircle } from 'lucide-react';
 import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getOAuthRedirectTo } from '../lib/oauthRedirect';
+import {
+  getConfiguredStudentDomains,
+  STUDENT_EMAIL_REJECT_STORAGE_KEY,
+} from '../lib/studentEmailPolicy';
 
 const CALLBACK_WAIT_MS = 10_000;
+
+const campusStudentDomains = getConfiguredStudentDomains();
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
@@ -22,7 +28,7 @@ export default function Login() {
       u.searchParams.delete('state');
       window.history.replaceState({}, '', u.pathname + u.search + u.hash);
       setOauthBusy(false);
-      setError('Google sign-in took too long. Please click “Continue with Google” again.');
+      setError('Sign-in took too long. Try “Continue with Google” again.');
     }, CALLBACK_WAIT_MS);
 
     void (async () => {
@@ -44,7 +50,7 @@ export default function Login() {
             `${window.location.origin}/login` +
             ' and set Site URL to ' +
             window.location.origin +
-            ' . Then try “Continue with Google” again (do not bookmark a URL that still has ?code=).'
+            ' . Enable the Google provider, then try again (do not bookmark a URL that still has ?code=).'
         );
       } finally {
         window.clearTimeout(callbackTimer);
@@ -52,6 +58,13 @@ export default function Login() {
       }
     })();
     return () => window.clearTimeout(callbackTimer);
+  }, []);
+
+  useEffect(() => {
+    const msg = sessionStorage.getItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
+    if (!msg) return;
+    sessionStorage.removeItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
+    setError(msg);
   }, []);
 
   async function handleGoogle() {
@@ -108,7 +121,7 @@ export default function Login() {
           </h1>
 
           <p className="text-white/55 text-base leading-relaxed max-w-[380px]">
-            Sign in with Google to continue to your workspace.
+            Sign in with your <span className="text-white/80 font-medium">campus Google</span> account.
           </p>
         </div>
 
@@ -116,7 +129,7 @@ export default function Login() {
         <div className="w-full md:w-[420px] flex-shrink-0">
           <div className="bg-[#f7f3ee] rounded-2xl shadow-2xl p-8">
             <h2 className="text-xl font-bold text-[#5a000f] mb-1">University Sign-In</h2>
-            <p className="text-gray-500 text-sm mb-6">Google sign-in for all users</p>
+            <p className="text-gray-500 text-sm mb-6">Continue with Google.</p>
 
             {error && (
               <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-5 text-sm text-red-600">
@@ -124,8 +137,22 @@ export default function Login() {
               </div>
             )}
 
+            {campusStudentDomains.length > 0 && (
+              <div className="bg-[#84001B]/8 border border-[#84001B]/20 rounded-xl p-3 mb-4 text-xs text-[#5a000f] leading-relaxed">
+                <span className="font-semibold">Students:</span> use campus Google (
+                {campusStudentDomains.map((d) => (
+                  <code key={d} className="mx-0.5 rounded bg-white/80 px-1.5 py-0.5 border border-[#84001B]/15">
+                    @{d}
+                  </code>
+                ))}
+                ). Personal Gmail is not accepted for the student role when domains are enforced.
+              </div>
+            )}
+
             <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 text-sm text-gray-600 leading-relaxed">
-              Use your Google account to sign in and access your workspace tools.
+              Choose <strong>Continue with Google</strong> and pick your school account (e.g.{' '}
+              <code className="text-[12px] bg-gray-100 px-1 rounded">@cit.edu</code>
+              ) if your organization uses Google Workspace.
             </div>
 
             {!isSupabaseConfigured() && (
@@ -138,7 +165,7 @@ export default function Login() {
                   </>
                 ) : (
                   <>
-                    <span className="font-semibold">Google needs a real Supabase project.</span> Copy{' '}
+                    <span className="font-semibold">Supabase project required.</span> Copy{' '}
                     <code className="bg-white px-1 rounded border border-amber-200/80">.env.example</code> to{' '}
                     <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>, paste your Project URL and anon key from the Supabase dashboard, then restart{' '}
                     <code className="bg-white px-1 rounded border border-amber-200/80">npm run dev</code>.
@@ -149,26 +176,27 @@ export default function Login() {
 
             {oauthBusy && (
               <div className="flex items-center justify-center gap-2 mb-4 text-sm text-[#5a000f]/80 bg-white/90 border border-[#84001B]/15 rounded-xl py-3 px-3">
-                <Spinner /> Completing Google sign-in…
+                <Spinner /> Completing sign-in…
               </div>
             )}
 
             <button
               type="button"
-              onClick={handleGoogle}
+              onClick={() => void handleGoogle()}
               disabled={loading || oauthBusy}
-              className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 mb-2 shadow-sm"
+              className="w-full flex items-center justify-center gap-3 border-2 border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-800 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 mb-2 shadow-sm"
             >
               <GoogleIcon />
-              Continue with Google
+              <span>Continue with Google</span>
             </button>
+
             <p className="text-center text-[11px] text-gray-400 mb-2">
-              Trouble signing in? Check Google provider settings and redirect URLs in Supabase Authentication.
+              Supabase: enable the Google provider and add this app&apos;s URLs under Authentication → URL Configuration.
             </p>
 
             {loading && (
               <div className="flex items-center justify-center gap-2 mt-4 text-sm text-gray-400">
-                <Spinner /> Signing in...
+                <Spinner /> Signing in with Google…
               </div>
             )}
           </div>

@@ -10,6 +10,7 @@ import Analytics from './pages/teacher/Analytics';
 import ClassList from './pages/teacher/Users';
 import Instructions from './pages/teacher/Instructions';
 import TeacherSettings from './pages/teacher/Settings';
+import Team14 from './pages/teacher/Team14';
 import StudentAssignments from './pages/student/Assignments';
 import MySubmissions from './pages/student/Submissions';
 import Settings from './pages/student/Settings';
@@ -40,6 +41,7 @@ function AuthenticatedRoutes() {
       <Route element={<Layout />}>
         {isTeacher && <Route path="dashboard" element={<TeacherDashboard />} />}
         {isTeacher && <Route path="grading" element={<ReviewQueue />} />}
+        {isTeacher && <Route path="team-14" element={<Team14 />} />}
         {isTeacher && <Route path="schedule" element={<Navigate to="/grading" replace />} />}
         {isTeacher && <Route path="assignments" element={<Navigate to="/grading" replace />} />}
         {isTeacher && <Route path="student-submissions" element={<TeacherStudentSubmissions />} />}

@@ -66,6 +66,36 @@ export async function resolveStudentSubmissionFileUrl(params: {
  * Storage bucket for submission binaries. Defaults to `student-submissions` (see docs SQL).
  * Set `VITE_SUBMISSION_STORAGE_BUCKET=` empty or `off` to disable Storage and use inline data URLs only.
  */
+/** Extract object path after `.../storage/v1/object/public/{bucket}/` for delete operations. */
+export function parseSubmissionPublicStoragePath(publicUrl: string, bucket: string): string | null {
+  try {
+    const u = new URL(publicUrl);
+    const prefixes = [`/storage/v1/object/public/${bucket}/`, `/storage/v1/object/public/${encodeURIComponent(bucket)}/`];
+    for (const marker of prefixes) {
+      const idx = u.pathname.indexOf(marker);
+      if (idx >= 0) {
+        const slice = u.pathname.slice(idx + marker.length).replace(/^\/+/, '');
+        return slice ? decodeURIComponent(slice) : null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort remove Storage object referenced by `file_url`. Ignores non-storage URLs or missing bucket. */
+export async function removeSubmissionStorageObjectIfPresent(fileUrl: string | null | undefined): Promise<void> {
+  const url = fileUrl?.trim();
+  if (!url || !/^https:\/\//i.test(url)) return;
+  const bucket = getSubmissionStorageBucket();
+  if (!bucket) return;
+  const path = parseSubmissionPublicStoragePath(url, bucket);
+  if (!path) return;
+  const { error } = await supabase.storage.from(bucket).remove([path]);
+  if (error && import.meta.env.DEV) console.warn('[submissionStorage] remove failed:', path, error.message);
+}
+
 export function getSubmissionStorageBucket(): string | undefined {
   const raw = import.meta.env[ENV_BUCKET];
   if (typeof raw === 'string') {

@@ -11,6 +11,7 @@ import {
   ClipboardList,
   RefreshCw,
   Inbox,
+  AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
@@ -310,6 +311,35 @@ export default function MySubmissions() {
           </div>
         </header>
 
+        {!loading && counts.resubmit > 0 && (
+          <div
+            role="alert"
+            className="mb-6 rounded-2xl border border-red-200 bg-red-50/95 px-4 py-4 text-sm text-red-950 shadow-sm"
+          >
+            <div className="flex gap-3">
+              <div className="shrink-0 pt-0.5">
+                <AlertTriangle className="w-5 h-5 text-red-600" aria-hidden />
+              </div>
+              <div className="min-w-0 space-y-2">
+                <p className="font-bold text-red-950">Action required: resubmit your work</p>
+                <p className="leading-relaxed text-red-900/90">
+                  Your instructor marked {counts.resubmit === 1 ? 'one upload' : `${counts.resubmit} uploads`} as empty,
+                  incomplete, or not ready to grade. Open each item below (or filter &quot;Redo&quot;) to read their comments,
+                  then upload a revised file from Submit work.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setFilter('resubmit')}
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-red-800"
+                >
+                  Show redo items
+                  <ChevronRight className="w-3.5 h-3.5" aria-hidden />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {!loading && submissions.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3 mb-6">
             {(
@@ -501,13 +531,26 @@ export default function MySubmissions() {
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-4">
+                  {selPv.normalized === 'resubmit' && (
+                    <div className="rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm text-red-950">
+                      <p className="font-bold flex items-center gap-2 mb-1">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" aria-hidden />
+                        Revision needed
+                      </p>
+                      <p className="leading-relaxed text-red-900/95">
+                        This file was flagged as empty, incomplete, or not acceptable for grading. Please read the staff
+                        message below and upload a complete replacement from Submit work.
+                      </p>
+                    </div>
+                  )}
                   {selPv.normalized === 'reviewed' && selected.score != null && (
                     <div className="flex items-center justify-between rounded-xl bg-[#ffd21a]/25 border border-[#ffd21a]/40 px-4 py-3">
                       <span className="text-sm font-semibold text-slate-800">Final score (staff)</span>
                       <span className="text-2xl font-bold text-[#84001B] tabular-nums">{selected.score}%</span>
                     </div>
                   )}
-                  {(selected.ai_draft_score != null || (selected.ai_draft_summary ?? '').trim()) && (
+                  {selPv.normalized === 'reviewed' &&
+                    (selected.ai_draft_score != null || (selected.ai_draft_summary ?? '').trim()) && (
                     <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3">
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
                         AI preliminary (automated draft)
