@@ -53,7 +53,7 @@ That means the CDN did not find `index.html` for that path — almost always **w
    - **Output Directory:** **`dist`** (required for Vite — not `public`, not `.`).
 2. Save, then **Deployments → Redeploy** the latest commit.
 
-The repo’s `vercel.json` sets `outputDirectory` and SPA rewrites so every route serves `dist/index.html`.
+The repo’s `vercel.json` sets `outputDirectory`, **`cleanUrls: false`** (required so rewrites to `/index.html` work — if `cleanUrls` is true, use destination `/index` instead), and SPA rewrites so every route serves `dist/index.html`.
 
 ### B. Create a Vercel account and import the repo
 
