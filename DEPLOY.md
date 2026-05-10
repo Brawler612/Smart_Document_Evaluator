@@ -42,6 +42,19 @@ Redeploy after changing env vars (`VITE_*` are baked in at **build** time).
 
    If `git add .` tries to add `.env`, stop and fix `.gitignore` before committing.
 
+### Vercel shows `404 NOT_FOUND` on `/login` or `/assignments`
+
+That means the CDN did not find `index.html` for that path — almost always **wrong Output Directory** or the SPA rewrite not applied.
+
+1. **Vercel → Project → Settings → General → Build & Development**
+   - **Framework Preset:** Vite (or “Other” with build `npm run build`, output **`dist`**).
+   - **Root Directory:** `.` (repo root with `package.json`).
+   - **Build Command:** `npm run build`
+   - **Output Directory:** **`dist`** (required for Vite — not `public`, not `.`).
+2. Save, then **Deployments → Redeploy** the latest commit.
+
+The repo’s `vercel.json` sets `outputDirectory` and SPA rewrites so every route serves `dist/index.html`.
+
 ### B. Create a Vercel account and import the repo
 
 1. Open [vercel.com](https://vercel.com) and sign in (GitHub login is easiest).
