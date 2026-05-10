@@ -41,13 +41,10 @@ export function isSupabaseConfigured(): boolean {
   return urlOk && keyOk;
 }
 
-/**
- * PKCE: we exchange `?code=` in AuthProvider (explicit `exchangeCodeForSession`) so production hosts
- * match localhost reliability — `detectSessionInUrl` alone can race and leave session null on Vercel.
- */
 export const supabase = createClient(url, anonKey, {
   auth: {
     flowType: 'pkce',
+    // URL exchange runs once in AuthContext (exchangeCodeForSession) — avoids double-parse + Strict Mode consuming the PKCE code twice.
     detectSessionInUrl: false,
     persistSession: true,
     autoRefreshToken: true,

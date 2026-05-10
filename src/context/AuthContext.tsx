@@ -1,11 +1,22 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { mergeProfileIntoClassRosterCache } from '../lib/classRosterCache';
+import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
 import { supabase } from '../lib/supabase';
 import { AppUser, UserRole } from '../types';
 
-interface Ctx { session: Session | null; user: AppUser | null; loading: boolean; signOut: () => Promise<void>; }
-const AuthContext = createContext<Ctx>({ session: null, user: null, loading: true, signOut: async () => {} });
+interface Ctx {
+  session: Session | null;
+  user: AppUser | null;
+  loading: boolean;
+  signOut: () => Promise<void>;
+}
+const AuthContext = createContext<Ctx>({
+  session: null,
+  user: null,
+  loading: true,
+  signOut: async () => {},
+});
 
 function parseEmailList(value: string | undefined): Set<string> {
   return new Set(
@@ -34,7 +45,6 @@ function resolveRole(email: string, metaRole: unknown, existingRole?: UserRole):
   const lowered = email.toLowerCase();
   if (ADMIN_EMAILS.has(lowered)) return 'admin';
   if (TEACHER_EMAILS.has(lowered)) return 'teacher';
-  // Keep DB staff rows when env lists are empty — otherwise sign-in can downgrade teacher → student and RLS hides other submissions.
   if (existingRole === 'teacher' || existingRole === 'admin') return existingRole;
   return normalizeRole(metaRole);
 }
@@ -57,7 +67,6 @@ function fallbackProfile(authUser: User): AppUser {
   };
 }
 
-/** Loads or creates `public.users` row for any authenticated user. */
 async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
   const email = authUser.email ?? '';
   if (!email) return fallbackProfile(authUser);
@@ -125,19 +134,7 @@ async function ensureUserProfileOrFallback(authUser: User): Promise<AppUser> {
   return fallbackProfile(authUser);
 }
 
-async function exchangeOAuthCodeIfPresent(): Promise<void> {
-  try {
-    const u = new URL(window.location.href);
-    if (!u.searchParams.has('code')) return;
-    const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-    if (error && import.meta.env.DEV) console.warn('[auth] exchangeCodeForSession:', error.message);
-    if (!error) {
-      window.history.replaceState({}, '', u.pathname + u.hash);
-    }
-  } catch (e) {
-    if (import.meta.env.DEV) console.warn('[auth] OAuth PKCE exchange:', e);
-  }
-}
+const SESSION_BOOT_MS = 8_000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -145,61 +142,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
+    let subscription: { unsubscribe: () => void } | undefined;
 
-    async function bootstrap() {
-      await exchangeOAuthCodeIfPresent();
-      if (cancelled) return;
+    const safetyTimer = window.setTimeout(() => {
+      console.warn('[auth] Session init slow — unlocking UI.');
+      setLoading(false);
+    }, SESSION_BOOT_MS);
 
-      const { data: { session: s }, error } = await supabase.auth.getSession();
-      if (cancelled) return;
-      if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
-      setSession(s ?? null);
-      try {
-        if (s?.user) {
-          const profile = await ensureUserProfileOrFallback(s.user);
+    function apply(next: Session | null) {
+      window.clearTimeout(safetyTimer);
+      setSession(next);
+      if (next?.user) {
+        const fb = fallbackProfile(next.user);
+        mergeProfileIntoClassRosterCache(fb);
+        setUser(fb);
+        void ensureUserProfileOrFallback(next.user).then(profile => {
+          if (!alive) return;
           mergeProfileIntoClassRosterCache(profile);
           setUser(profile);
-        } else setUser(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void bootstrap();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      if (s?.user) {
-        void (async () => {
-          try {
-            const profile = await ensureUserProfileOrFallback(s.user);
-            mergeProfileIntoClassRosterCache(profile);
-            setUser(profile);
-          } catch (e) {
-            if (import.meta.env.DEV) console.warn('[auth] ensureUserProfile:', e);
-            const fb = fallbackProfile(s.user);
-            mergeProfileIntoClassRosterCache(fb);
-            setUser(fb);
-          } finally {
-            setLoading(false);
-          }
-        })();
+        });
       } else {
         setUser(null);
-        setLoading(false);
       }
-    });
+      setLoading(false);
+    }
+
+    void (async () => {
+      await exchangeOAuthCodeOnce();
+
+      const { data: { session: stored }, error } = await supabase.auth.getSession();
+      if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
+
+      apply(stored ?? null);
+
+      const nextSub = supabase.auth.onAuthStateChange((_event, next) => {
+        apply(next ?? null);
+      });
+      subscription = nextSub.data.subscription;
+    })();
+
     return () => {
-      cancelled = true;
-      subscription.unsubscribe();
+      alive = false;
+      window.clearTimeout(safetyTimer);
+      subscription?.unsubscribe();
     };
   }, []);
 
-  async function signOut() { await supabase.auth.signOut(); setSession(null); setUser(null); }
+  async function signOut() {
+    await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
+  }
+
   return <AuthContext.Provider value={{ session, user, loading, signOut }}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() { return useContext(AuthContext); }
+export function useAuth() {
+  return useContext(AuthContext);
+}

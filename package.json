@@ -9,9 +9,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json",
     "verify:env": "node scripts/check-env.mjs",
     "db:apply": "node scripts/apply-supabase-schema.mjs",
+    "db:fix-rls": "node scripts/apply-supabase-schema.mjs docs/supabase-fix-users-rls-recursion.sql",
     "supabase:setup": "node scripts/prompt-supabase-setup.mjs",
     "supabase:fix-rls": "node scripts/prompt-supabase-fix-rls.mjs"
   },

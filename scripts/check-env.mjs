@@ -78,8 +78,10 @@ console.log('\nNext (Google OAuth):');
 console.log('  1) Supabase → Authentication → Providers → Google ON + Client ID/Secret from Google Cloud');
 console.log('  2) Google Cloud → OAuth client → Authorized redirect URIs must include YOUR Supabase callback:');
 console.log('     https://<project-ref>.supabase.co/auth/v1/callback');
-console.log('  3) Supabase → Authentication → URL Configuration → add Redirect URL:');
-console.log('     http://localhost:5173/login   (and your production URL when deployed)');
+console.log('  3) Supabase → Authentication → URL Configuration → Redirect URLs must include the full return path, e.g.:');
+console.log('     http://localhost:5173/login   or   http://localhost:5173/**   (origin alone is not enough for /login)');
+console.log('     Site URL is usually http://localhost:5173 (origin only), not /login');
+console.log('     plus your production URL when deployed');
 console.log('  4) Restart dev server after any .env change.\n');
 
 const bucket = env.VITE_SUBMISSION_STORAGE_BUCKET?.trim()?.toLowerCase();
@@ -118,9 +120,14 @@ try {
     if (tableMissing) {
       console.warn('  → Run docs/supabase-bootstrap-public-users.sql in Supabase SQL Editor for this project URL.\n');
     } else if (rlsRecursion) {
-      console.warn(
-        '  → RLS loop on public.users: run docs/supabase-fix-users-rls-recursion.sql (or re-run docs/supabase-setup-all-in-one.sql with the app_user_is_staff helper).\n'
-      );
+      const dbUrl = (env.DATABASE_URL || env.SUPABASE_DB_URL || '').trim();
+      if (dbUrl && !dbUrl.startsWith('postgresql://YOUR_')) {
+        console.warn('  → Fix from your machine: npm run db:fix-rls   (needs DATABASE_URL in .env)\n');
+      } else {
+        console.warn(
+          '  → RLS loop on public.users: npm run supabase:fix-rls (paste SQL) or add DATABASE_URL and run npm run db:fix-rls\n'
+        );
+      }
     } else {
       console.warn('');
     }

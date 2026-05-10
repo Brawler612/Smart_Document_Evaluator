@@ -114,4 +114,5 @@ const copied = copySqlToClipboard(sqlPath);
 if (copied) console.log('\n✓ Fix SQL copied — Ctrl+V in editor → Run → wait a few seconds.');
 else console.log('\n⚠ Copy manually:', sqlPath);
 
+console.log('Or with DATABASE_URL in .env: npm run db:fix-rls');
 console.log('Then: npm run verify:env\n');

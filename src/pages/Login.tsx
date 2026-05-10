@@ -1,18 +1,65 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertCircle } from 'lucide-react';
+import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getOAuthRedirectTo } from '../lib/oauthRedirect';
 
+const CALLBACK_WAIT_MS = 10_000;
+
 export default function Login() {
   const [loading, setLoading] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('code')
+  );
   const [error, setError] = useState('');
+
+  /** Finish OAuth return: exchange ?code=, then full reload into an authed route (avoids stuck “Completing…” if React state lags). */
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('code')) return;
+    const callbackTimer = window.setTimeout(() => {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('code');
+      u.searchParams.delete('state');
+      window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+      setOauthBusy(false);
+      setError('Google sign-in took too long. Please click “Continue with Google” again.');
+    }, CALLBACK_WAIT_MS);
+
+    void (async () => {
+      setOauthBusy(true);
+      setError('');
+      let navigated = false;
+      try {
+        const exchanged = await exchangeOAuthCodeOnce();
+        const { data: { session }, error: se } = await supabase.auth.getSession();
+        if (se) console.warn('[auth] Login callback getSession:', se.message);
+        if (exchanged?.user || session?.user) {
+          navigated = true;
+          window.clearTimeout(callbackTimer);
+          window.location.replace(`${window.location.origin}/`);
+          return;
+        }
+        setError(
+          'Sign-in did not complete. In Supabase → Authentication → URL Configuration add Redirect URL ' +
+            `${window.location.origin}/login` +
+            ' and set Site URL to ' +
+            window.location.origin +
+            ' . Then try “Continue with Google” again (do not bookmark a URL that still has ?code=).'
+        );
+      } finally {
+        window.clearTimeout(callbackTimer);
+        if (!navigated) setOauthBusy(false);
+      }
+    })();
+    return () => window.clearTimeout(callbackTimer);
+  }, []);
 
   async function handleGoogle() {
     setError('');
     if (!isSupabaseConfigured()) {
       setError(
         import.meta.env.PROD
-          ? 'Supabase env vars are missing on this deployment. In Vercel → your project → Settings → Environment Variables, add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (from Supabase → Project Settings → API), apply to Production, then Redeploy.'
+          ? 'Supabase env vars are missing in this build. In your host’s dashboard, set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (from Supabase → Project Settings → API), then rebuild or redeploy.'
           : 'Google sign-in needs a real Supabase project. In the project folder, create `.env` with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from Supabase → Project Settings → API, then restart the dev server (npm run dev).'
       );
       return;
@@ -85,11 +132,9 @@ export default function Login() {
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-950 leading-relaxed">
                 {import.meta.env.PROD ? (
                   <>
-                    <span className="font-semibold">Vercel needs Supabase keys.</span> Open{' '}
-                    <span className="font-semibold">Vercel → Settings → Environment Variables</span> and add{' '}
+                    <span className="font-semibold">This build has no Supabase keys.</span> In your hosting provider’s environment settings, add{' '}
                     <code className="bg-white px-1 rounded border border-amber-200/80">VITE_SUPABASE_URL</code> and{' '}
-                    <code className="bg-white px-1 rounded border border-amber-200/80">VITE_SUPABASE_ANON_KEY</code> (same values as local <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>). Save, then{' '}
-                    <span className="font-semibold">Deployments → Redeploy</span> the latest build.
+                    <code className="bg-white px-1 rounded border border-amber-200/80">VITE_SUPABASE_ANON_KEY</code> (same as your local <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>), then trigger a new build/redeploy.
                   </>
                 ) : (
                   <>
@@ -102,10 +147,16 @@ export default function Login() {
               </div>
             )}
 
+            {oauthBusy && (
+              <div className="flex items-center justify-center gap-2 mb-4 text-sm text-[#5a000f]/80 bg-white/90 border border-[#84001B]/15 rounded-xl py-3 px-3">
+                <Spinner /> Completing Google sign-in…
+              </div>
+            )}
+
             <button
               type="button"
               onClick={handleGoogle}
-              disabled={loading}
+              disabled={loading || oauthBusy}
               className="w-full flex items-center justify-center gap-3 border border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 mb-2 shadow-sm"
             >
               <GoogleIcon />

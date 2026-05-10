@@ -14,30 +14,20 @@ import StudentAssignments from './pages/student/Assignments';
 import MySubmissions from './pages/student/Submissions';
 import Settings from './pages/student/Settings';
 
-function Spinner() {
-  return (
-    <div className="min-h-screen bg-[#84001B] flex items-center justify-center">
-      <svg className="animate-spin w-10 h-10 text-white" viewBox="0 0 24 24" fill="none">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-    </div>
-  );
-}
-
 /** Teacher shell: pathless `<Route element={<Layout />}>` + segment paths (`grading` → `/grading`). Avoid `path="/"` on the layout and avoid `[<Route/>]` arrays — both can yield an empty `<Outlet />` in RR7. */
 function AuthenticatedRoutes() {
-  const { session, user, loading } = useAuth();
+  const { session, user } = useAuth();
   const location = useLocation();
   /** Preserve ?code=… (OAuth PKCE) when sending users to /login — plain `/login` drops the code otherwise. */
   const loginRedirect = `/login${location.search}`;
 
-  if (loading) return <Spinner />;
+  // Never trap the shell behind a spinner: unknown auth still routes to /login (see AuthContext safety timeout).
 
   if (!session) {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/" element={<Navigate to={loginRedirect} replace />} />
         <Route path="*" element={<Navigate to={loginRedirect} replace />} />
       </Routes>
     );

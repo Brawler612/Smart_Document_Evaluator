@@ -3,22 +3,12 @@
  * so the same student sees them on every device after Google sign-in.
  */
 import { supabase } from './supabase';
-import { resolveSubmissionTableName, TEACHER_LOCAL_SUBMISSION_KEY } from './teacherSubmissionLoad';
+import {
+  resolveSubmissionTableName,
+  TEACHER_LOCAL_SUBMISSION_KEY,
+  type LocalSubmissionRow,
+} from './teacherSubmissionLoad';
 import { ensureCurrentAuthUserProfile } from './userProfilePersistence';
-
-type LocalSubmissionRow = {
-  id: string;
-  student_id: string;
-  assignment_id: string | null;
-  file_name: string;
-  file_url: string | null;
-  status: string;
-  feedback: string | null;
-  score: number | null;
-  ai_draft_score?: number | null;
-  ai_draft_summary?: string | null;
-  submitted_at: string;
-};
 
 type SyncResult = { uploaded: number; failed: number };
 
