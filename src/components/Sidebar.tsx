@@ -26,7 +26,10 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
   const nav = isTeacher ? TEACHER_NAV : STUDENT_NAV;
 
-  async function handleSignOut() { await signOut(); navigate('/login'); }
+  async function handleSignOut() {
+    await signOut();
+    navigate('/login', { replace: true });
+  }
 
   return (
     <aside className="w-64 flex-shrink-0 flex flex-col h-full bg-[#84001B] text-white">
@@ -56,8 +59,11 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
         ))}
       </nav>
       <div className="px-3 pb-6 pt-4 border-t border-white/10 space-y-2">
-        <button onClick={handleSignOut}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white/10 rounded-xl hover:bg-[#ffd21a]/25 transition-all duration-200 text-sm font-medium text-white/70 hover:text-white group">
+        <button
+          type="button"
+          onClick={() => void handleSignOut()}
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white/10 rounded-xl hover:bg-[#ffd21a]/25 transition-all duration-200 text-sm font-medium text-white/70 hover:text-white group"
+        >
           <LogOut className="w-[18px] h-[18px] text-white/40 group-hover:text-[#ffd21a] transition-colors flex-shrink-0" />Logout
         </button>
         <div className="text-center pt-1">

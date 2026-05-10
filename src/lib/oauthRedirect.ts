@@ -6,6 +6,10 @@
  * Add this exact URL in Supabase → Authentication → URL Configuration → Redirect URLs:
  *   http://localhost:5173/login
  */
+
+/** Written by AuthContext when Google redirects with ?code= but no session results (consume one message on Login). */
+export const OAUTH_CALLBACK_ERROR_STORAGE_KEY = 'smartdocs_oauth_login_hint';
+
 export function getOAuthRedirectTo(): string {
   if (typeof window === 'undefined') return '';
   const origin = window.location.origin.replace(/\/+$/, '');

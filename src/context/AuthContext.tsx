@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { mergeProfileIntoClassRosterCache } from '../lib/classRosterCache';
 import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
 import { supabase } from '../lib/supabase';
 import { rosterFieldsFromOAuthMetadata } from '../lib/oauthRosterClaims';
+import { getOAuthRedirectTo, OAUTH_CALLBACK_ERROR_STORAGE_KEY } from '../lib/oauthRedirect';
 import {
   emailMatchesCampusDomains,
   getConfiguredStudentDomains,
@@ -177,55 +178,109 @@ function rejectStudentIfWrongCampusEmail(profile: AppUser): boolean {
 }
 
 const SESSION_BOOT_MS = 8_000;
+/** Longer window when Google returns ?code= — PKCE exchange must finish before we treat boot as idle. */
+const SESSION_BOOT_OAUTH_CALLBACK_MS = 52_000;
+/** Caps a hung PKCE/token round-trip so Edge never spins forever on the login shell. */
+const OAUTH_PKCE_HARD_CAP_MS = 48_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getSessionAfterOAuthWithRetries(): Promise<Session | null> {
+  const gaps = [0, 140, 360, 800, 1600];
+  for (let i = 0; i < gaps.length; i++) {
+    if (gaps[i]) await sleep(gaps[i]);
+    const { data: { session: s }, error } = await supabase.auth.getSession();
+    if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
+    if (s?.user) return s;
+  }
+  return null;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
+  /** Bump on sign-out or session cleared so late profile fetches cannot repopulate `user`. */
+  const profileLoadGen = useRef(0);
 
   useEffect(() => {
     let alive = true;
     let subscription: { unsubscribe: () => void } | undefined;
 
+    const oauthLanding =
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('code');
+
     const safetyTimer = window.setTimeout(() => {
       console.warn('[auth] Session init slow — unlocking UI.');
       setLoading(false);
-    }, SESSION_BOOT_MS);
+    }, oauthLanding ? SESSION_BOOT_OAUTH_CALLBACK_MS : SESSION_BOOT_MS);
 
     function apply(next: Session | null) {
+      if (!alive) return;
       window.clearTimeout(safetyTimer);
       setSession(next);
       if (next?.user) {
+        profileLoadGen.current += 1;
+        const gen = profileLoadGen.current;
         const fb = fallbackProfile(next.user);
         mergeProfileIntoClassRosterCache(fb);
         setUser(fb);
         void ensureUserProfileOrFallback(next.user).then(async (profile) => {
           if (!alive) return;
+          if (gen !== profileLoadGen.current) return;
           if (rejectStudentIfWrongCampusEmail(profile)) {
-            await supabase.auth.signOut();
+            await supabase.auth.signOut({ scope: 'global' });
             return;
           }
           mergeProfileIntoClassRosterCache(profile);
           setUser(profile);
         });
       } else {
+        profileLoadGen.current += 1;
         setUser(null);
       }
       setLoading(false);
     }
 
     void (async () => {
-      await exchangeOAuthCodeOnce();
+      const { data: subData } = supabase.auth.onAuthStateChange((event, next) => {
+        if (event === 'INITIAL_SESSION') {
+          /** Don’t flip to “logged out” while `/login?code=` is pending — avoids Edge stuck spinner. */
+          if (!oauthLanding) apply(next ?? null);
+          return;
+        }
+        if (next?.user) apply(next);
+        else if (event === 'SIGNED_OUT') apply(null);
+      });
+      subscription = subData.subscription;
 
-      const { data: { session: stored }, error } = await supabase.auth.getSession();
-      if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
+      try {
+        /** Edge: bounded wait so hung token calls can’t stall boot forever */
+        await Promise.race([
+          exchangeOAuthCodeOnce(),
+          sleep(OAUTH_PKCE_HARD_CAP_MS).then(() => null),
+        ]);
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[auth] PKCE exchange bootstrap error:', e);
+      }
+
+      const stored = await getSessionAfterOAuthWithRetries();
+
+      if (oauthLanding && !stored?.user) {
+        const hint = `${getOAuthRedirectTo()} must be listed under Supabase → Authentication → URL Configuration → Redirect URLs (exact match); Site URL should be ${typeof window !== 'undefined' ? window.location.origin : 'your origin'}. Enable Authentication → Providers → Google.`;
+        try {
+          sessionStorage.setItem(
+            OAUTH_CALLBACK_ERROR_STORAGE_KEY,
+            `Sign-in did not finish after Google returned (${hint})`
+          );
+        } catch {
+          /* ignore */
+        }
+      }
 
       apply(stored ?? null);
-
-      const nextSub = supabase.auth.onAuthStateChange((_event, next) => {
-        apply(next ?? null);
-      });
-      subscription = nextSub.data.subscription;
     })();
 
     return () => {
@@ -236,9 +291,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function signOut() {
-    await supabase.auth.signOut();
+    profileLoadGen.current += 1;
     setSession(null);
     setUser(null);
+    await Promise.resolve();
+    try {
+      sessionStorage.removeItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
+      sessionStorage.removeItem(OAUTH_CALLBACK_ERROR_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'global' });
+      if (error && import.meta.env.DEV) console.warn('[auth] signOut:', error.message);
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn('[auth] signOut failed, clearing local session:', e);
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   return <AuthContext.Provider value={{ session, user, loading, signOut }}>{children}</AuthContext.Provider>;

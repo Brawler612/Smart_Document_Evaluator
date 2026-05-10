@@ -1,71 +1,66 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
-import { exchangeOAuthCodeOnce } from '../lib/authPkceExchange';
+import { useAuth } from '../context/AuthContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { getOAuthRedirectTo } from '../lib/oauthRedirect';
+import { getOAuthRedirectTo, OAUTH_CALLBACK_ERROR_STORAGE_KEY } from '../lib/oauthRedirect';
 import {
   getConfiguredStudentDomains,
   STUDENT_EMAIL_REJECT_STORAGE_KEY,
 } from '../lib/studentEmailPolicy';
 
-const CALLBACK_WAIT_MS = 10_000;
-
 const campusStudentDomains = getConfiguredStudentDomains();
 
 export default function Login() {
-  const [loading, setLoading] = useState(false);
-  const [oauthBusy, setOauthBusy] = useState(
+  const navigate = useNavigate();
+  /** True on first paint if Google redirected with PKCE (?code=) — survives URL cleanup during exchange. */
+  const [oauthReturnLanding] = useState(
     () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('code')
   );
+  const { loading: authInitializing, session } = useAuth();
+
+  /** PKCE handled only in AuthContext (single-flight). Keep spinner tied to auth boot, not a second timer race. */
+  const oauthCompleting = oauthReturnLanding && authInitializing;
+
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState('');
 
-  /** Finish OAuth return: exchange ?code=, then full reload into an authed route (avoids stuck “Completing…” if React state lags). */
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has('code')) return;
-    const callbackTimer = window.setTimeout(() => {
-      const u = new URL(window.location.href);
-      u.searchParams.delete('code');
-      u.searchParams.delete('state');
-      window.history.replaceState({}, '', u.pathname + u.search + u.hash);
-      setOauthBusy(false);
-      setError('Sign-in took too long. Try “Continue with Google” again.');
-    }, CALLBACK_WAIT_MS);
+    if (authInitializing) return;
+    const domainMsg = sessionStorage.getItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
+    const oauthMsg = sessionStorage.getItem(OAUTH_CALLBACK_ERROR_STORAGE_KEY);
+    if (domainMsg) {
+      sessionStorage.removeItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
+      setError(domainMsg);
+      return;
+    }
+    if (oauthMsg) {
+      sessionStorage.removeItem(OAUTH_CALLBACK_ERROR_STORAGE_KEY);
+      setError(oauthMsg);
+    }
+  }, [authInitializing]);
 
-    void (async () => {
-      setOauthBusy(true);
-      setError('');
-      let navigated = false;
-      try {
-        const exchanged = await exchangeOAuthCodeOnce();
-        const { data: { session }, error: se } = await supabase.auth.getSession();
-        if (se) console.warn('[auth] Login callback getSession:', se.message);
-        if (exchanged?.user || session?.user) {
-          navigated = true;
-          window.clearTimeout(callbackTimer);
-          window.location.replace(`${window.location.origin}/`);
-          return;
-        }
-        setError(
-          'Sign-in did not complete. In Supabase → Authentication → URL Configuration add Redirect URL ' +
-            `${window.location.origin}/login` +
-            ' and set Site URL to ' +
-            window.location.origin +
-            ' . Enable the Google provider, then try again (do not bookmark a URL that still has ?code=).'
-        );
-      } finally {
-        window.clearTimeout(callbackTimer);
-        if (!navigated) setOauthBusy(false);
+  /** Edge: session can land in client storage briefly before React context — recover without a full reload. */
+  useEffect(() => {
+    if (!oauthReturnLanding || authInitializing || session?.user) return;
+    let cancelled = false;
+    const delaysMs = [60, 200, 400, 800, 1500];
+    let t: number | undefined;
+    async function probe(i: number) {
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled && data.session?.user) {
+        navigate('/', { replace: true });
+        return;
       }
-    })();
-    return () => window.clearTimeout(callbackTimer);
-  }, []);
-
-  useEffect(() => {
-    const msg = sessionStorage.getItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
-    if (!msg) return;
-    sessionStorage.removeItem(STUDENT_EMAIL_REJECT_STORAGE_KEY);
-    setError(msg);
-  }, []);
+      if (cancelled || i >= delaysMs.length) return;
+      t = window.setTimeout(() => void probe(i + 1), delaysMs[i]);
+    }
+    void probe(0);
+    return () => {
+      cancelled = true;
+      if (t !== undefined) window.clearTimeout(t);
+    };
+  }, [oauthReturnLanding, authInitializing, session?.user, navigate]);
 
   async function handleGoogle() {
     setError('');
@@ -77,7 +72,7 @@ export default function Login() {
       );
       return;
     }
-    setLoading(true);
+    setGoogleBusy(true);
     const { data, error: oauthErr } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -86,12 +81,14 @@ export default function Login() {
     });
     if (oauthErr) {
       setError(oauthErr.message);
-      setLoading(false);
+      setGoogleBusy(false);
       return;
     }
     if (data.url) window.location.href = data.url;
-    else setLoading(false);
+    else setGoogleBusy(false);
   }
+
+  const buttonLocked = oauthCompleting || googleBusy || authInitializing;
 
   return (
     <div className="min-h-screen bg-[#6b0014] flex items-center justify-center p-6 relative overflow-hidden">
@@ -114,22 +111,21 @@ export default function Login() {
             </span>
           </div>
 
-          <h1 className="text-6xl font-extrabold leading-[1.08] mb-6">
-            <span className="text-[#f5e6c8]">University</span>
-            <br />
-            <span className="text-[#ffd21a]">Access</span>
+          <h1 className="text-5xl sm:text-6xl font-extrabold leading-[1.08] mb-6 tracking-[0.06em] uppercase">
+            <span className="text-[#f5e6c8]">Smart Docs</span>{' '}
+            <span className="text-[#ffd21a]">Validator</span>
           </h1>
 
           <p className="text-white/55 text-base leading-relaxed max-w-[380px]">
-            Sign in with your <span className="text-white/80 font-medium">campus Google</span> account.
+            Sign in with your <span className="text-white/80 font-medium">Google</span> account.
           </p>
         </div>
 
         {/* Right panel — login card */}
         <div className="w-full md:w-[420px] flex-shrink-0">
           <div className="bg-[#f7f3ee] rounded-2xl shadow-2xl p-8">
-            <h2 className="text-xl font-bold text-[#5a000f] mb-1">University Sign-In</h2>
-            <p className="text-gray-500 text-sm mb-6">Continue with Google.</p>
+            <h2 className="text-xl font-bold text-[#5a000f] mb-1 text-center">Secure Sign-In</h2>
+            <p className="text-gray-500 text-sm mb-6 text-center">Continue with Google.</p>
 
             {error && (
               <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-5 text-sm text-red-600">
@@ -149,10 +145,10 @@ export default function Login() {
               </div>
             )}
 
-            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 text-sm text-gray-600 leading-relaxed">
-              Choose <strong>Continue with Google</strong> and pick your school account (e.g.{' '}
-              <code className="text-[12px] bg-gray-100 px-1 rounded">@cit.edu</code>
-              ) if your organization uses Google Workspace.
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 text-sm leading-relaxed text-gray-600">
+              <span className="inline-block max-w-full font-medium antialiased [filter:blur(0.45px)]">
+                The unified academic and Software Project Proposal
+              </span>
             </div>
 
             {!isSupabaseConfigured() && (
@@ -174,7 +170,7 @@ export default function Login() {
               </div>
             )}
 
-            {oauthBusy && (
+            {oauthCompleting && (
               <div className="flex items-center justify-center gap-2 mb-4 text-sm text-[#5a000f]/80 bg-white/90 border border-[#84001B]/15 rounded-xl py-3 px-3">
                 <Spinner /> Completing sign-in…
               </div>
@@ -183,20 +179,20 @@ export default function Login() {
             <button
               type="button"
               onClick={() => void handleGoogle()}
-              disabled={loading || oauthBusy}
+              disabled={buttonLocked}
               className="w-full flex items-center justify-center gap-3 border-2 border-gray-300 rounded-xl py-3 bg-white text-sm font-semibold text-gray-800 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 mb-2 shadow-sm"
             >
               <GoogleIcon />
               <span>Continue with Google</span>
             </button>
 
-            <p className="text-center text-[11px] text-gray-400 mb-2">
-              Supabase: enable the Google provider and add this app&apos;s URLs under Authentication → URL Configuration.
+            <p className="text-center text-[11px] text-gray-400 mb-2 antialiased [filter:blur(0.35px)]">
+              You&apos;ll be redirected to Google to sign in securely
             </p>
 
-            {loading && (
+            {googleBusy && (
               <div className="flex items-center justify-center gap-2 mt-4 text-sm text-gray-400">
-                <Spinner /> Signing in with Google…
+                <Spinner /> Opening Google…
               </div>
             )}
           </div>

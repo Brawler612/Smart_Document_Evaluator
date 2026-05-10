@@ -5,7 +5,8 @@
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
-const EXCHANGE_TIMEOUT_MS = 10_000;
+/** Enough for CDN + auth round-trip; clears stuck SPAs faster than indefinite hang. */
+const EXCHANGE_TIMEOUT_MS = 35_000;
 
 let inflight: Promise<Session | null> | null = null;
 
