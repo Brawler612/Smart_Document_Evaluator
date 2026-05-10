@@ -12,6 +12,8 @@ export interface TeacherSubmission {
   file_url: string | null;
   status: SubStatus;
   submitted_at: string;
+  /** Quick-submit artifact label (SRS / SDD / SPMP / STD) — shown as queue Title when set. */
+  submission_doc_type: string | null;
   /** Last row update (`submissions.updated_at` when migrated; else null from API). */
   updated_at: string | null;
   feedback: string | null;
@@ -45,6 +47,7 @@ export type LocalSubmissionRow = {
   ai_draft_score?: number | null;
   ai_draft_summary?: string | null;
   submitted_at: string;
+  submission_doc_type?: string | null;
   team_code?: string | null;
   school_year?: string | null;
   semester?: string | null;
@@ -62,8 +65,29 @@ type BasicUserRow = {
 };
 
 function normalizeDocType(v: unknown): DocType {
-  if (v === 'SRS' || v === 'SDD' || v === 'SPMP' || v === 'Other') return v;
+  if (v === 'SRS' || v === 'SDD' || v === 'SPMP' || v === 'STD' || v === 'Other') return v;
   return 'Other';
+}
+
+/** Title column in grading queue: student-chosen doc type beats assignment title (e.g. General Submission). */
+export function submissionQueueTitle(
+  s: {
+    submission_doc_type?: string | null;
+    assignments?: { title?: string | null } | null;
+  },
+  emptyFallback = '—'
+): string {
+  const d = s.submission_doc_type?.trim();
+  if (d) return d;
+  const t = s.assignments?.title?.trim();
+  if (t) return t;
+  return emptyFallback;
+}
+
+export function gradingDocTypeForAI(sub: TeacherSubmission): string {
+  const raw = sub.submission_doc_type?.trim();
+  if (raw === 'SRS' || raw === 'SDD' || raw === 'SPMP' || raw === 'STD' || raw === 'Other') return raw;
+  return sub.assignments?.document_type ?? 'Other';
 }
 
 export function normalizeSubStatus(v: unknown): SubStatus {
@@ -138,6 +162,7 @@ export function normalizeSubmissionRow(row: Record<string, unknown>): TeacherSub
     ai_draft_summary: row.ai_draft_summary != null ? String(row.ai_draft_summary) : null,
     assignment_id: String(row.assignment_id ?? ''),
     student_id: String(row.student_id ?? ''),
+    submission_doc_type: optTrimmedText(row.submission_doc_type),
     team_code: optTrimmedText(row.team_code),
     school_year: optTrimmedText(row.school_year),
     semester: optTrimmedText(row.semester),
@@ -157,62 +182,6 @@ export function normalizeSubmissionRow(row: Record<string, unknown>): TeacherSub
         }
       : null,
   };
-}
-
-async function mergeLocalSubmissions(dbList: TeacherSubmission[]): Promise<TeacherSubmission[]> {
-  const raw = localStorage.getItem(TEACHER_LOCAL_SUBMISSION_KEY);
-  if (!raw) return dbList;
-  let localRows: LocalSubmissionRow[] = [];
-  try {
-    localRows = JSON.parse(raw) as LocalSubmissionRow[];
-  } catch {
-    return dbList;
-  }
-  const ids = new Set(dbList.map((s) => s.id));
-  const extra = localRows.filter((r) => !ids.has(r.id));
-  if (extra.length === 0) return dbList;
-  const userIds = [...new Set(extra.map((r) => r.student_id))];
-  let userMap: Record<string, BasicUserRow> = {};
-  if (userIds.length > 0) {
-    const rows = await fetchUsersByIdsForMerge(userIds);
-    userMap = Object.fromEntries(rows.map((u) => [u.id, u]));
-  }
-  const mapped = extra.map(
-    (row): TeacherSubmission => ({
-      id: row.id,
-      file_name: String(row.file_name ?? ''),
-      file_url: row.file_url,
-      status: normalizeSubStatus(row.status),
-      submitted_at: row.submitted_at,
-      updated_at: optTrimmedText(row.updated_at) ?? row.submitted_at,
-      feedback: row.feedback,
-      score: row.score,
-      ai_draft_score: row.ai_draft_score ?? null,
-      ai_draft_summary: row.ai_draft_summary ?? null,
-      assignment_id: row.assignment_id || '',
-      student_id: row.student_id,
-      team_code: optTrimmedText(row.team_code),
-      school_year: optTrimmedText(row.school_year),
-      semester: optTrimmedText(row.semester),
-      assignments: {
-        title: 'General Submission',
-        document_type: 'Other' as DocType,
-        due_date: null,
-      },
-      users: (() => {
-        const u = userMap[row.student_id];
-        return {
-          full_name: u?.full_name ?? '',
-          email: u?.email ?? '',
-          student_number: optTrimmedText(row.student_number) ?? optTrimmedText(u?.student_number),
-          course_year: optTrimmedText(row.course_year) ?? optTrimmedText(u?.course_year),
-        };
-      })(),
-    })
-  );
-  return [...dbList, ...mapped].sort(
-    (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
-  );
 }
 
 function looksLikeUuid(s: string): boolean {
@@ -336,7 +305,8 @@ async function enrichStudentRows(rows: TeacherSubmission[]): Promise<TeacherSubm
   });
 }
 
-let submissionTableCache: 'submissions' | 'submission' | null | undefined;
+/** Only cache successful resolution — never cache “missing”, so users recover after running SQL without a full browser restart. */
+let submissionTableCache: 'submissions' | 'submission' | undefined;
 
 export async function resolveSubmissionTableName(): Promise<'submissions' | 'submission' | null> {
   if (submissionTableCache !== undefined) return submissionTableCache;
@@ -350,7 +320,6 @@ export async function resolveSubmissionTableName(): Promise<'submissions' | 'sub
     submissionTableCache = 'submission';
     return 'submission';
   }
-  submissionTableCache = null;
   return null;
 }
 
@@ -386,6 +355,7 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
         ai_draft_summary: row.ai_draft_summary ?? null,
         assignment_id: row.assignment_id || '',
         student_id: row.student_id,
+        submission_doc_type: optTrimmedText(row.submission_doc_type),
         team_code: optTrimmedText(row.team_code),
         school_year: optTrimmedText(row.school_year),
         semester: optTrimmedText(row.semester),
@@ -432,7 +402,7 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
 
   if (joinData) {
     const rows = joinData.map((raw) => normalizeSubmissionRow(raw as Record<string, unknown>));
-    return enrichStudentRows(await mergeLocalSubmissions(rows));
+    return enrichStudentRows(rows);
   }
 
   const plain = await supabase
@@ -442,5 +412,5 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
   const base = (plain.data || []).map((s: Record<string, unknown>) =>
     normalizeSubmissionRow({ ...s, assignments: null, users: null })
   );
-  return enrichStudentRows(await mergeLocalSubmissions(base));
+  return enrichStudentRows(base);
 }

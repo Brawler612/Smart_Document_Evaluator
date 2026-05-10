@@ -1,6 +1,6 @@
 export type UserRole = 'teacher' | 'admin' | 'student';
 export interface AppUser { id: string; email: string; full_name: string; role: UserRole; created_at: string; }
-export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'Other';
+export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'STD' | 'Other';
 export type AStatus = 'active' | 'closed' | 'draft';
 export type SubStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
 export interface Assignment { id: string; title: string; description: string; document_type: DocType; teacher_id: string; group_id: string | null; due_date: string | null; max_score: number; status: AStatus; created_at: string; updated_at: string; }

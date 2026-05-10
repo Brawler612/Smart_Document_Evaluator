@@ -34,7 +34,8 @@ function resolveRole(email: string, metaRole: unknown, existingRole?: UserRole):
   const lowered = email.toLowerCase();
   if (ADMIN_EMAILS.has(lowered)) return 'admin';
   if (TEACHER_EMAILS.has(lowered)) return 'teacher';
-  if (existingRole) return existingRole;
+  // Keep DB staff rows when env lists are empty — otherwise sign-in can downgrade teacher → student and RLS hides other submissions.
+  if (existingRole === 'teacher' || existingRole === 'admin') return existingRole;
   return normalizeRole(metaRole);
 }
 
@@ -62,9 +63,9 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
   if (!email) return fallbackProfile(authUser);
 
   const meta = authUser.user_metadata ?? {};
-  const roleFromConfig = resolveRole(email, meta.role);
 
   const { data: existing, error: loadErr } = await fetchProfile(authUser.id);
+  const roleFromConfig = resolveRole(email, meta.role, existing?.role);
   if (loadErr && import.meta.env.DEV) {
     console.warn(
       '[auth] public.users load failed (often RLS/policy). Run docs/supabase-fix-users-rls-recursion.sql —',
@@ -107,6 +108,23 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
   return data ?? fallbackProfile(authUser);
 }
 
+const PROFILE_LOAD_MS = 18_000;
+
+async function ensureUserProfileOrFallback(authUser: User): Promise<AppUser> {
+  try {
+    const raced = await Promise.race([
+      ensureUserProfile(authUser),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('profile-timeout')), PROFILE_LOAD_MS)
+      ),
+    ]);
+    if (raced) return raced;
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn('[auth] profile load timed out or failed:', e);
+  }
+  return fallbackProfile(authUser);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<AppUser | null>(null);
@@ -116,27 +134,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(async ({ data: { session: s }, error }) => {
       if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
       setSession(s ?? null);
-      if (s?.user) {
-        try {
-          const profile = await ensureUserProfile(s.user);
-          if (profile) mergeProfileIntoClassRosterCache(profile);
+      try {
+        if (s?.user) {
+          const profile = await ensureUserProfileOrFallback(s.user);
+          mergeProfileIntoClassRosterCache(profile);
           setUser(profile);
-        } catch (e) {
-          if (import.meta.env.DEV) console.warn('[auth] ensureUserProfile:', e);
-          const fb = fallbackProfile(s.user);
-          mergeProfileIntoClassRosterCache(fb);
-          setUser(fb);
-        }
-      } else setUser(null);
-      setLoading(false);
+        } else setUser(null);
+      } finally {
+        setLoading(false);
+      }
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       if (s?.user) {
         void (async () => {
           try {
-            const profile = await ensureUserProfile(s.user);
-            if (profile) mergeProfileIntoClassRosterCache(profile);
+            const profile = await ensureUserProfileOrFallback(s.user);
+            mergeProfileIntoClassRosterCache(profile);
             setUser(profile);
           } catch (e) {
             if (import.meta.env.DEV) console.warn('[auth] ensureUserProfile:', e);

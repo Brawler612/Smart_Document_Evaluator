@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -28,6 +28,9 @@ function Spinner() {
 /** Teacher shell: pathless `<Route element={<Layout />}>` + segment paths (`grading` → `/grading`). Avoid `path="/"` on the layout and avoid `[<Route/>]` arrays — both can yield an empty `<Outlet />` in RR7. */
 function AuthenticatedRoutes() {
   const { session, user, loading } = useAuth();
+  const location = useLocation();
+  /** Preserve ?code=… (OAuth PKCE) when sending users to /login — plain `/login` drops the code otherwise. */
+  const loginRedirect = `/login${location.search}`;
 
   if (loading) return <Spinner />;
 
@@ -35,7 +38,7 @@ function AuthenticatedRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to={loginRedirect} replace />} />
       </Routes>
     );
   }

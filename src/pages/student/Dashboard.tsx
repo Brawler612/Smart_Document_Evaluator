@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ClipboardList, FileText, GraduationCap, Clock, ChevronRight, Star } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 export default function StudentDashboard() {
   const { user } = useAuth();
   const [stats, setStats] = useState({ assignments: 0, submissions: 0, reviewed: 0, avgScore: 0 });
@@ -12,6 +13,8 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     (async () => {
+      if (user?.id) await syncLocalSubmissionsToSupabase(user.id);
+
       const [asgn, subs] = await Promise.all([
         supabase.from('assignments').select('id, title, document_type, due_date').eq('status', 'active').order('due_date', { ascending: true }).limit(4),
         supabase.from('submissions').select('id, file_name, status, score, submitted_at, assignments(title)').eq('student_id', user!.id).order('submitted_at', { ascending: false }),

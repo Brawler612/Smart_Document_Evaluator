@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resolveStudentSubmissionFileUrl } from '../../lib/submissionStorage';
+import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
+import { ensureAppUserProfile } from '../../lib/userProfilePersistence';
 import { useAuth } from '../../context/AuthContext';
 interface Assignment {
   id: string;
@@ -33,8 +35,28 @@ const DOC_COLORS: Record<string, string> = {
   SRS: 'bg-[#84001B]/12 text-[#84001B]',
   SDD: 'bg-[#ffd21a]/35 text-[#5c0014]',
   SPMP: 'bg-red-50 text-red-800',
+  STD: 'bg-violet-100 text-violet-900',
   Other: 'bg-slate-100 text-slate-600',
 };
+
+const QUICK_DOC_TYPES = ['SRS', 'SDD', 'SPMP', 'STD'] as const;
+
+function isMissingSubmissionDocTypeColumn(message: string | undefined): boolean {
+  return /submission_doc_type|could not find|column|pgrst204|schema cache/i.test(message ?? '');
+}
+
+function submissionDocTypeFromAssignment(dt: string): string {
+  const x = dt.trim();
+  if (x === 'SRS' || x === 'SDD' || x === 'SPMP' || x === 'STD' || x === 'Other') return x;
+  return 'Other';
+}
+
+/** Quick submit: empty = no submission_doc_type (DB allows SRS/SDD/SPMP/STD/Other only). */
+function submissionDocTypeFromQuickPick(code: string): string | undefined {
+  const t = code.trim();
+  if (!t) return undefined;
+  return t;
+}
 
 function parseEmailList(value: string | undefined): string[] {
   return (value ?? '')
@@ -45,22 +67,7 @@ function parseEmailList(value: string | undefined): string[] {
 
 const ADMIN_EMAILS = parseEmailList(import.meta.env.VITE_ADMIN_EMAILS);
 const TEACHER_EMAILS = parseEmailList(import.meta.env.VITE_TEACHER_EMAILS);
-/** localStorage is ~5MB per origin; never persist base64 file blobs there. */
-const MAX_LOCAL_STORAGE_DATA_URL_CHARS = 120_000;
 const LOCAL_SUBMISSION_KEY = 'local_submission_fallback_v1';
-type LocalSubmissionRow = {
-  id: string;
-  student_id: string;
-  assignment_id: string | null;
-  file_name: string;
-  file_url: string | null;
-  status: 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
-  feedback: string | null;
-  score: number | null;
-  ai_draft_score?: number | null;
-  ai_draft_summary?: string | null;
-  submitted_at: string;
-};
 
 /** Shared fields for Quick submit & Turn in modals—aligned with grading + Submission status flows. */
 function SubmitUploadFields({
@@ -72,6 +79,8 @@ function SubmitUploadFields({
   setSelectedFile,
   submissionText,
   setSubmissionText,
+  quickDocType,
+  onPickDocType,
 }: {
   variant: 'quick' | 'task';
   taskTitle?: string | null;
@@ -81,11 +90,68 @@ function SubmitUploadFields({
   setSelectedFile: (f: File | null) => void;
   submissionText: string;
   setSubmissionText: (v: string) => void;
+  quickDocType?: string;
+  onPickDocType?: (code: string) => void;
 }) {
   const [pasteOpen, setPasteOpen] = useState(variant === 'task');
+  const [docSearch, setDocSearch] = useState('');
+
+  const filteredQuickTypes = QUICK_DOC_TYPES.filter((t) =>
+    t.toLowerCase().includes(docSearch.trim().toLowerCase())
+  );
 
   return (
     <div className="space-y-5">
+      {variant === 'quick' && quickDocType != null && onPickDocType && (
+        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
+          <label className="block text-sm font-semibold text-slate-800 mb-2">Document type</label>
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" aria-hidden />
+            <input
+              type="search"
+              value={docSearch}
+              onChange={(e) => setDocSearch(e.target.value)}
+              placeholder="Type to filter SRS, SDD, SPMP, STD…"
+              className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
+              autoComplete="off"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {filteredQuickTypes.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  onPickDocType(opt);
+                  setDocSearch('');
+                }}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${
+                  opt === quickDocType
+                    ? 'bg-[#84001B] text-[#ffd21a] ring-2 ring-[#84001B] ring-offset-2'
+                    : `${DOC_COLORS[opt] ?? 'bg-slate-100 text-slate-700'} hover:opacity-90`
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+            <button
+              type="button"
+              title="Clear document type (no label for the grading queue)"
+              onClick={() => {
+                onPickDocType('');
+                setDocSearch('');
+              }}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 normal-case tracking-normal hover:bg-slate-50"
+            >
+              Clear
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+            This label appears as the <span className="font-semibold text-slate-700">Title</span> in your instructor&apos;s grading queue.
+          </p>
+        </section>
+      )}
+
       <div className="rounded-xl border border-[#84001B]/20 bg-[#84001B]/10 px-4 py-3.5">
         <div className="flex gap-2.5">
           {variant === 'quick' ? (
@@ -97,7 +163,7 @@ function SubmitUploadFields({
             {variant === 'quick' ? (
               <p>
                 <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path · </span>
-                Upload one file—it routes to <span className="font-semibold">General Submission</span>. Confirm it on{' '}
+                Pick a document type above, upload one file—it queues under that title for staff. Confirm on{' '}
                 <span className="font-semibold text-slate-900">Submission status</span>. Course staff finalize scores in the
                 grading workspace.
               </p>
@@ -147,7 +213,10 @@ function SubmitUploadFields({
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
               setSelectedFile(f);
-              if (f) setFileName(f.name);
+              if (f) {
+                if (variant === 'quick' && quickDocType) setFileName(`${quickDocType}_${f.name}`);
+                else setFileName(f.name);
+              }
             }}
             className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1.5 file:px-3 file:border-0 file:rounded-lg file:bg-[#84001B] file:text-white file:text-xs file:font-semibold bg-white"
           />
@@ -259,10 +328,12 @@ export default function StudentAssignments() {
   const [fileName, setFileName] = useState('');
   const [submissionText, setSubmissionText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [quickDocType, setQuickDocType] = useState<string>('SRS');
   const [saving, setSaving] = useState(false);
   const [assignmentTable, setAssignmentTable] = useState<'assignments' | 'assignment' | null>(null);
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
-  const [documentTable, setDocumentTable] = useState<'documents' | 'document' | null>(null);
+  /** True after load when neither `submissions` nor `submission` table exists (schema not applied in Supabase). */
+  const [submissionSchemaMissing, setSubmissionSchemaMissing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitPageUrl] = useState(() => {
     if (typeof globalThis.window === 'undefined') return '/assignments';
@@ -301,65 +372,22 @@ export default function StudentAssignments() {
     return null;
   }
 
-  async function resolveDocumentTable(): Promise<'documents' | 'document' | null> {
-    if (documentTable) return documentTable;
-    const plural = await supabase.from('documents').select('id').limit(1);
-    if (!plural.error) {
-      setDocumentTable('documents');
-      return 'documents';
-    }
-    const singular = await supabase.from('document').select('id').limit(1);
-    if (!singular.error) {
-      setDocumentTable('document');
-      return 'document';
-    }
-    return null;
-  }
-
-  /** Binary data URLs are huge; keeping them in localStorage throws QuotaExceededError. */
-  function fileUrlForLocalStorage(fileUrl: string | null): string | null {
-    if (!fileUrl) return null;
-    if (fileUrl.length > MAX_LOCAL_STORAGE_DATA_URL_CHARS) return null;
-    if (fileUrl.startsWith('data:') && !fileUrl.startsWith('data:text/plain')) return null;
-    return fileUrl;
-  }
-
-  function saveSubmissionLocally(payload: { student_id: string; assignment_id: string | null; file_name: string; file_url: string | null }) {
-    const raw = localStorage.getItem(LOCAL_SUBMISSION_KEY);
-    const list = raw ? (JSON.parse(raw) as LocalSubmissionRow[]) : [];
-    const row: LocalSubmissionRow = {
-      id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      ...payload,
-      file_url: fileUrlForLocalStorage(payload.file_url),
-      status: 'submitted',
-      feedback: null,
-      score: null,
-      submitted_at: new Date().toISOString(),
-    };
-    list.push(row);
-    const serialized = JSON.stringify(list);
-    try {
-      localStorage.setItem(LOCAL_SUBMISSION_KEY, serialized);
-    } catch {
-      const stripped = list.map((r) => ({ ...r, file_url: null as string | null }));
-      try {
-        localStorage.setItem(LOCAL_SUBMISSION_KEY, JSON.stringify(stripped));
-      } catch {
-        const tail = stripped.slice(-12);
-        localStorage.setItem(LOCAL_SUBMISSION_KEY, JSON.stringify(tail));
-      }
-    }
-  }
-
   async function load() {
     if (!user?.id) {
       setAssignments([]);
+      setSubmissionSchemaMissing(false);
       setLoading(false);
       return;
     }
     setLoading(true);
     setLoadError(null);
+    setSubmissionSchemaMissing(false);
     try {
+      await syncLocalSubmissionsToSupabase(user!.id);
+
+      const subTable = await resolveSubmissionTable();
+      setSubmissionSchemaMissing(!subTable);
+
       const table = await resolveAssignmentTable();
       if (!table) {
         setAssignments([]);
@@ -367,20 +395,24 @@ export default function StudentAssignments() {
       }
       const [asgn, subs] = await Promise.all([
         supabase.from(table).select('*').eq('status', 'active').order('due_date', { ascending: true }),
-        (async () => {
-          const subTable = await resolveSubmissionTable();
-          if (!subTable) return { data: [] as Array<{ assignment_id: string }>, error: null };
-          return supabase.from(subTable).select('assignment_id').eq('student_id', user!.id);
-        })(),
+        subTable
+          ? supabase.from(subTable).select('assignment_id').eq('student_id', user!.id)
+          : Promise.resolve({ data: [] as Array<{ assignment_id: string | null }>, error: null }),
       ]);
       const submittedIds = new Set((subs.data || []).map((s: { assignment_id: string }) => s.assignment_id));
-      const localRaw = localStorage.getItem(LOCAL_SUBMISSION_KEY);
-      const localRows = localRaw
-        ? (JSON.parse(localRaw) as Array<{ student_id: string; assignment_id: string | null }>)
-        : [];
-      localRows
-        .filter((row) => row.student_id === user!.id && row.assignment_id)
-        .forEach((row) => submittedIds.add(row.assignment_id as string));
+      if (!subTable) {
+        try {
+          const localRaw = localStorage.getItem(LOCAL_SUBMISSION_KEY);
+          const localRows = localRaw
+            ? (JSON.parse(localRaw) as Array<{ student_id: string; assignment_id: string | null }>)
+            : [];
+          localRows
+            .filter((row) => row.student_id === user!.id && row.assignment_id)
+            .forEach((row) => submittedIds.add(row.assignment_id as string));
+        } catch {
+          /* ignore malformed local fallback rows */
+        }
+      }
       const data = (asgn.data || []).map(a => ({ ...a, submitted: submittedIds.has(a.id) }));
       setAssignments(data);
     } catch (err) {
@@ -479,54 +511,63 @@ export default function StudentAssignments() {
     return created.data.id;
   }
 
-  async function insertSubmissionDirect(finalFileName: string, extractedText: string, file: File | null): Promise<void> {
+  async function insertSubmissionDirect(
+    finalFileName: string,
+    extractedText: string,
+    file: File | null,
+    opts?: { submissionDocType?: string | null }
+  ): Promise<void> {
+    if (!user?.id) throw new Error('Please sign in with Google before submitting.');
+    await ensureAppUserProfile(user);
+
     const subTable = await resolveSubmissionTable();
     const fileUrl = await resolveStudentSubmissionFileUrl({
       file,
       extractedText,
-      studentId: user!.id,
+      studentId: user.id,
     });
 
     const assignmentId = await ensureGeneralAssignment();
 
     if (!subTable) {
-      const docTable = await resolveDocumentTable();
-      if (docTable) {
-        const fallback = await supabase.from(docTable).insert({
-          title: finalFileName,
-          description: 'Auto-saved student upload (fallback when submissions table is unavailable).',
-          document_type: 'Other',
-          file_name: finalFileName,
-          file_url: fileUrl,
-          uploader_id: user!.id,
-        });
-        if (fallback.error) {
-          throw new Error(`Submit failed: ${fallback.error.message}`);
-        }
-      }
-      saveSubmissionLocally({
-        student_id: user!.id,
-        assignment_id: assignmentId,
-        file_name: finalFileName,
-        file_url: fileUrl,
-      });
-      return;
+      throw new Error(
+        'Submissions are not saved to the cloud yet: the database has no `submissions` table. ' +
+          'In Supabase → SQL Editor, run `docs/supabase-setup-all-in-one.sql` (or `docs/supabase-assignments-submissions-core.sql` after users exist), then click Run. ' +
+          'After that, uploads persist for your account on every device.'
+      );
     }
 
     const basePayload = {
-      student_id: user!.id,
+      student_id: user.id,
       file_name: finalFileName,
       file_url: fileUrl,
       status: 'submitted' as const,
     };
+    const dt = opts?.submissionDocType?.trim();
+    const docExtras = dt ? { submission_doc_type: dt } : {};
+
     if (assignmentId) {
-      const withAssignment = await supabase.from(subTable).insert({
+      let withAssignment = await supabase.from(subTable).insert({
         ...basePayload,
+        ...docExtras,
         assignment_id: assignmentId,
       });
+      if (
+        withAssignment.error &&
+        dt &&
+        isMissingSubmissionDocTypeColumn(withAssignment.error.message)
+      ) {
+        withAssignment = await supabase.from(subTable).insert({
+          ...basePayload,
+          assignment_id: assignmentId,
+        });
+      }
       if (!withAssignment.error) return;
     }
-    const noAssignment = await supabase.from(subTable).insert(basePayload);
+    let noAssignment = await supabase.from(subTable).insert({ ...basePayload, ...docExtras });
+    if (noAssignment.error && dt && isMissingSubmissionDocTypeColumn(noAssignment.error.message)) {
+      noAssignment = await supabase.from(subTable).insert(basePayload);
+    }
     if (noAssignment.error) {
       throw new Error(`Submit failed: ${noAssignment.error.message}`);
     }
@@ -535,6 +576,7 @@ export default function StudentAssignments() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!submitting || (!fileName.trim() && !selectedFile)) return;
+    if (submissionSchemaMissing) return;
     setSaving(true);
     const finalFileName = selectedFile?.name || fileName.trim();
     let extractedText = submissionText.trim();
@@ -550,7 +592,9 @@ export default function StudentAssignments() {
       }
     }
     try {
-      await insertSubmissionDirect(finalFileName, extractedText, selectedFile);
+      await insertSubmissionDirect(finalFileName, extractedText, selectedFile, {
+        submissionDocType: submissionDocTypeFromAssignment(submitting.document_type),
+      });
       setSubmitting(null);
       setFileName('');
       setSubmissionText('');
@@ -566,6 +610,7 @@ export default function StudentAssignments() {
   async function handleQuickSubmit(e: React.FormEvent) {
     e.preventDefault();
     if ((!fileName.trim() && !selectedFile) || !user?.id) return;
+    if (submissionSchemaMissing) return;
     setSaving(true);
     try {
       const finalFileName = selectedFile?.name || fileName.trim();
@@ -581,11 +626,14 @@ export default function StudentAssignments() {
           }
         }
       }
-      await insertSubmissionDirect(finalFileName, extractedText, selectedFile);
+      await insertSubmissionDirect(finalFileName, extractedText, selectedFile, {
+        submissionDocType: submissionDocTypeFromQuickPick(quickDocType),
+      });
       setQuickSubmitOpen(false);
       setFileName('');
       setSubmissionText('');
       setSelectedFile(null);
+      setQuickDocType('SRS');
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Submit failed.');
@@ -609,7 +657,8 @@ export default function StudentAssignments() {
 
   function openQuickSubmitModal() {
     setQuickSubmitOpen(true);
-    setFileName('');
+    setQuickDocType('SRS');
+    setFileName('SRS');
     setSubmissionText('');
     setSelectedFile(null);
   }
@@ -652,6 +701,29 @@ export default function StudentAssignments() {
             </p>
           </div>
         </header>
+
+        {!loading && submissionSchemaMissing && (
+          <div
+            role="alert"
+            className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950 shadow-sm"
+          >
+            <p className="font-semibold">Cloud submissions are not configured yet</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-red-900/95">
+              Your Supabase project is missing the <span className="font-mono">submissions</span> table, so uploads
+              cannot be saved for every device. <span className="font-semibold">Fastest fix:</span> in Supabase →{' '}
+              <span className="font-semibold">Project Settings → Database</span>, copy the{' '}
+              <span className="font-semibold">Connection string (URI)</span> with your DB password, put it in{' '}
+              <span className="font-mono">.env</span> as <span className="font-mono">DATABASE_URL=...</span> (do not
+              commit), then run <span className="font-mono">npm run db:apply</span> in this project folder.{' '}
+              <span className="font-semibold">Or</span> open <span className="font-semibold">SQL Editor</span>, paste{' '}
+              <span className="font-mono">docs/supabase-setup-all-in-one.sql</span>, click{' '}
+              <span className="font-semibold">Run</span>, or use <span className="font-mono">npm run supabase:setup</span>{' '}
+              to copy that file. If <span className="font-mono">public.users</span> already exists,{' '}
+              <span className="font-mono">docs/supabase-assignments-submissions-core.sql</span> is enough. Then click{' '}
+              <span className="font-semibold">Refresh task list</span> below (or reload the page).
+            </p>
+          </div>
+        )}
 
         {resubmitSubmissionId && (
           <div
@@ -714,7 +786,13 @@ export default function StudentAssignments() {
               <button
                 type="button"
                 onClick={openQuickSubmitModal}
-                className="inline-flex h-9 min-w-[7.5rem] flex-1 items-center justify-center gap-1.5 rounded-md bg-[#84001B] px-3 text-[13px] font-semibold text-[#ffd21a] hover:bg-[#6b0016]"
+                disabled={loading || submissionSchemaMissing}
+                title={
+                  submissionSchemaMissing
+                    ? 'Run docs/supabase-setup-all-in-one.sql in Supabase first'
+                    : undefined
+                }
+                className="inline-flex h-9 min-w-[7.5rem] flex-1 items-center justify-center gap-1.5 rounded-md bg-[#84001B] px-3 text-[13px] font-semibold text-[#ffd21a] hover:bg-[#6b0016] disabled:pointer-events-none disabled:opacity-45"
               >
                 <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 Upload file
@@ -870,7 +948,13 @@ export default function StudentAssignments() {
                                 setSubmissionText('');
                                 setSelectedFile(null);
                               }}
-                              className="flex items-center gap-1.5 bg-[#84001B] text-white text-xs px-3 py-2 rounded-xl hover:bg-[#6b0016] transition-colors font-semibold shadow-sm"
+                              disabled={submissionSchemaMissing}
+                              title={
+                                submissionSchemaMissing
+                                  ? 'Run docs/supabase-setup-all-in-one.sql in Supabase first'
+                                  : undefined
+                              }
+                              className="flex items-center gap-1.5 bg-[#84001B] text-white text-xs px-3 py-2 rounded-xl hover:bg-[#6b0016] transition-colors font-semibold shadow-sm disabled:pointer-events-none disabled:opacity-45"
                             >
                               <Upload className="w-3.5 h-3.5" />
                               Turn in
@@ -975,7 +1059,7 @@ export default function StudentAssignments() {
               <div className={`flex gap-3 pt-4 border-t border-slate-100 ${canSendUpload ? 'mt-6' : 'mt-4'}`}>
                 <button type="button" onClick={() => setSubmitting(null)}
                   className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={saving || !canSendUpload}
+                <button type="submit" disabled={saving || !canSendUpload || submissionSchemaMissing}
                   className="flex-1 bg-[#84001B] text-white px-4 py-3 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
                   {saving ? 'Sending…' : 'Send upload'}
                 </button>
@@ -1001,8 +1085,10 @@ export default function StudentAssignments() {
                   Quick submit
                 </h2>
                 <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                  Use when instructors haven&apos;t posted a matching task—you still ship a file now; it queues as{' '}
-                  <span className="font-semibold text-[#84001B]">General Submission</span> until staff route it.
+                  Choose SRS, SDD, SPMP, or STD (or <span className="font-semibold">Clear</span> to drop the type), attach
+                  your file—the{' '}
+                  <span className="font-semibold text-[#84001B]">Title</span> staff see matches your choice (still tied to the
+                  general course queue).
                 </p>
               </div>
               <button type="button" onClick={() => setQuickSubmitOpen(false)} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-xl transition-colors shrink-0"><X className="w-5 h-5" /></button>
@@ -1011,6 +1097,11 @@ export default function StudentAssignments() {
               <SubmitUploadFields
                 key="quick-fields"
                 variant="quick"
+                quickDocType={quickDocType}
+                onPickDocType={(code) => {
+                  setQuickDocType(code);
+                  setFileName(code);
+                }}
                 fileName={fileName}
                 setFileName={setFileName}
                 selectedFile={selectedFile}
@@ -1026,7 +1117,7 @@ export default function StudentAssignments() {
               <div className="flex gap-3 pt-4 border-t border-slate-100 mt-6">
                 <button type="button" onClick={() => setQuickSubmitOpen(false)}
                   className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={saving || !canSendUpload}
+                <button type="submit" disabled={saving || !canSendUpload || submissionSchemaMissing}
                   className="flex-1 bg-[#84001B] text-white px-4 py-3 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
                   {saving ? 'Sending…' : 'Send upload'}
                 </button>

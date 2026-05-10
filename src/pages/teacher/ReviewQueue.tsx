@@ -21,6 +21,8 @@ import {
   fetchTeacherSubmissionRows,
   TEACHER_LOCAL_SUBMISSION_KEY,
   resolveSubmissionTableName,
+  submissionQueueTitle,
+  gradingDocTypeForAI,
   type LocalSubmissionRow,
   type TeacherSubmission,
 } from '../../lib/teacherSubmissionLoad';
@@ -32,6 +34,8 @@ import {
 } from '../../components/SubmissionOpenLink';
 import { isPlausibleSubmissionId } from '../../lib/gradingRoutes';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../context/AuthContext';
+import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubStatus } from '../../types';
 
 type Submission = TeacherSubmission;
@@ -180,7 +184,7 @@ function grammarMechanicsCriterion(content: string, max: number): AICriterion {
 
 function lengthCompletenessCriterion(content: string, docType: string, max: number): AICriterion {
   const words = content.trim().split(/\s+/).filter(Boolean).length;
-  const targets: Record<string, number> = { SRS: 200, SDD: 220, SPMP: 260, Other: 150 };
+  const targets: Record<string, number> = { SRS: 200, SDD: 220, SPMP: 260, STD: 170, Other: 150 };
   const target = targets[docType] ?? targets.Other;
   const ratio = target > 0 ? words / target : 0;
   let score = ratio < 0.12 ? Math.round(max * 0.1) : Math.round(Math.min(max, max * Math.min(1.1, ratio * 1.15)));
@@ -223,6 +227,12 @@ function runAIFromText(docType: string, content: string): AICriterion[] {
       { name: 'Risk Management', max: 20, keys: ['risk', 'mitigation', 'impact', 'probability'] },
       { name: 'Resource Allocation', max: 20, keys: ['budget', 'resource', 'effort', 'cost'] },
       { name: 'Quality Assurance', max: 20, keys: ['quality', 'review', 'audit', 'test plan'] },
+    ],
+    STD: [
+      { name: 'Content Quality', max: 25, keys: ['objective', 'scope', 'summary', 'analysis'] },
+      { name: 'Organization', max: 25, keys: ['introduction', 'conclusion', 'section'] },
+      { name: 'Technical Accuracy', max: 25, keys: ['requirement', 'design', 'implementation'] },
+      { name: 'Completeness', max: 25, keys: ['details', 'reference', 'appendix'] },
     ],
     Other: [
       { name: 'Content Quality', max: 25, keys: ['objective', 'scope', 'summary', 'analysis'] },
@@ -440,6 +450,7 @@ async function loadSubmissionInspectionPayload(sub: Submission): Promise<{
 }
 
 export default function ReviewQueue() {
+  const { user: authUser } = useAuth();
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -529,6 +540,7 @@ export default function ReviewQueue() {
   async function load() {
     setLoading(true);
     try {
+      await syncAllLocalSubmissionsToSupabase();
       setSubmissions(await fetchTeacherSubmissionRows());
     } catch (e) {
       console.error('[grading] Failed to load queue:', e);
@@ -577,7 +589,7 @@ export default function ReviewQueue() {
     setOriginalSubmissionSnapshot(payload.text);
     setFileOpenHref(payload.openHref);
     setFileLoadHint(payload.hint);
-    const criteria = runFullAIDraft(sub.assignments?.document_type || 'Other', payload.text);
+    const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
     aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria);
     setAiCriteria(criteria);
     if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
@@ -616,7 +628,7 @@ export default function ReviewQueue() {
 
   function runInspectionNow() {
     if (!selected) return;
-    const criteria = runFullAIDraft(selected.assignments?.document_type || 'Other', inspectionText);
+    const criteria = runFullAIDraft(gradingDocTypeForAI(selected), inspectionText);
     aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria);
     setAiCriteria(criteria);
     if (!feedback.trim()) setFeedback(buildAIFeedback(criteria));
@@ -685,11 +697,13 @@ export default function ReviewQueue() {
         s.users?.email ?? '',
         s.users?.student_number ?? '',
         s.student_id ?? '',
+        submissionQueueTitle(s),
         s.assignments?.title ?? '',
         s.team_code ?? '',
         s.school_year ?? '',
         s.semester ?? '',
         s.users?.course_year ?? '',
+        s.submission_doc_type ?? '',
       ]
         .join(' ')
         .toLowerCase();
@@ -726,7 +740,7 @@ export default function ReviewQueue() {
     const rows = reviewed.map(s => [
       s.users?.full_name ?? '',
       s.users?.email ?? '',
-      s.assignments?.title ?? '',
+      submissionQueueTitle(s),
       s.file_name,
       s.score?.toString() ?? '',
       s.status,
@@ -868,6 +882,18 @@ export default function ReviewQueue() {
               ? 'When students submit files, they appear here. Submissions saved locally (offline fallback) are merged automatically.'
               : 'Try clearing filters — set status to All or widen your search.'}
           </p>
+          {!loading &&
+            submissions.length === 0 &&
+            (authUser?.role === 'teacher' || authUser?.role === 'admin') && (
+              <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 max-w-xl mx-auto mb-6 text-left leading-relaxed">
+                If students already submitted work but this queue is still empty, your database profile may still be a student.
+                Staff accounts need <span className="font-mono">public.users.role</span> set to teacher or admin so row-level
+                security allows viewing everyone&apos;s submissions. Add your Google email to{' '}
+                <span className="font-mono">VITE_TEACHER_EMAILS</span> in <span className="font-mono">.env</span>, restart the
+                app, and sign in again, or run the one-time SQL in{' '}
+                <span className="font-mono">docs/supabase-teacher-submissions-visibility.sql</span>.
+              </p>
+            )}
           <div className="flex flex-wrap gap-3 justify-center">
             <button
               type="button"
@@ -941,8 +967,8 @@ export default function ReviewQueue() {
                           />
                         </td>
                         <td className="px-3 py-3 align-middle text-gray-900 font-medium min-w-0">
-                          <span className="truncate block max-w-[14rem]" title={s.assignments?.title ?? ''}>
-                            {s.assignments?.title || '—'}
+                          <span className="truncate block max-w-[14rem]" title={submissionQueueTitle(s)}>
+                            {submissionQueueTitle(s)}
                           </span>
                         </td>
                         <td className="px-3 py-3 align-middle min-w-0">
@@ -1072,7 +1098,7 @@ export default function ReviewQueue() {
                         ) : (
                           <p className="font-semibold text-gray-900 truncate">{s.file_name}</p>
                         )}
-                        <p className="text-sm text-gray-500 font-medium truncate">{s.assignments?.title || '—'}</p>
+                        <p className="text-sm text-gray-500 font-medium truncate">{submissionQueueTitle(s)}</p>
                         <p className="text-xs text-gray-400 mt-0.5">
                           <span className="mr-2 inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
                             {studentIdBadge(s)}
@@ -1251,7 +1277,7 @@ export default function ReviewQueue() {
                 </button>
                 <h3 className="text-sm font-semibold text-gray-700 mb-1">AI Evaluation</h3>
                 <p className="text-xs text-gray-400 mb-4">
-                  Draft scores for {selected.assignments?.document_type ?? 'Other'} plus{' '}
+                  Draft scores for {gradingDocTypeForAI(selected)} plus{' '}
                   <span className="text-gray-600">grammar / mechanics</span> and{' '}
                   <span className="text-gray-600">length &amp; completeness</span>. Publishing is blocked when the body is
                   empty or criteria stay below threshold.

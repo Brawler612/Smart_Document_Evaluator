@@ -11,7 +11,9 @@ export default function Login() {
     setError('');
     if (!isSupabaseConfigured()) {
       setError(
-        'Google sign-in needs a real Supabase project. In the project folder, create `.env` with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from Supabase → Project Settings → API, then restart the dev server (npm start).'
+        import.meta.env.PROD
+          ? 'Supabase env vars are missing on this deployment. In Vercel → your project → Settings → Environment Variables, add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (from Supabase → Project Settings → API), apply to Production, then Redeploy.'
+          : 'Google sign-in needs a real Supabase project. In the project folder, create `.env` with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from Supabase → Project Settings → API, then restart the dev server (npm run dev).'
       );
       return;
     }
@@ -81,9 +83,22 @@ export default function Login() {
 
             {!isSupabaseConfigured() && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-950 leading-relaxed">
-                <span className="font-semibold">Google needs a real Supabase project.</span> Copy{' '}
-                <code className="bg-white px-1 rounded border border-amber-200/80">.env.example</code> to{' '}
-                <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>, paste your Project URL and anon key from the Supabase dashboard, then restart <code className="bg-white px-1 rounded border border-amber-200/80">npm start</code>.
+                {import.meta.env.PROD ? (
+                  <>
+                    <span className="font-semibold">Vercel needs Supabase keys.</span> Open{' '}
+                    <span className="font-semibold">Vercel → Settings → Environment Variables</span> and add{' '}
+                    <code className="bg-white px-1 rounded border border-amber-200/80">VITE_SUPABASE_URL</code> and{' '}
+                    <code className="bg-white px-1 rounded border border-amber-200/80">VITE_SUPABASE_ANON_KEY</code> (same values as local <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>). Save, then{' '}
+                    <span className="font-semibold">Deployments → Redeploy</span> the latest build.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">Google needs a real Supabase project.</span> Copy{' '}
+                    <code className="bg-white px-1 rounded border border-amber-200/80">.env.example</code> to{' '}
+                    <code className="bg-white px-1 rounded border border-amber-200/80">.env</code>, paste your Project URL and anon key from the Supabase dashboard, then restart{' '}
+                    <code className="bg-white px-1 rounded border border-amber-200/80">npm run dev</code>.
+                  </>
+                )}
               </div>
             )}
 

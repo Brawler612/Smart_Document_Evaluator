@@ -126,5 +126,6 @@ if (copied) {
 }
 
 console.log('\n3) In Supabase: click in the empty editor → Ctrl+V → Run.');
+console.log('   This creates assignments + submissions tables so uploads persist after Google sign-in on any device.');
 console.log('4) If you ever see HTTP 500 / "infinite recursion" on users: npm run supabase:fix-rls');
 console.log('5) Then locally: npm run verify:env   and restart: npm run dev\n');

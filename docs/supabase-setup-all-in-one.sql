@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Paste this ENTIRE file into Supabase → SQL Editor → Run (one click).
--- Combines: public.users bootstrap + student-submissions storage + roster columns for the grading table.
+-- Combines: users + assignments/submissions (persistent across devices) + storage + roster columns.
 -- ============================================================================
 
 -- ---------- Part A: public.users ----------
@@ -61,7 +61,183 @@ grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on table public.users to authenticated;
 grant all on table public.users to service_role;
 
--- ---------- Part B: Storage (Open file / uploads) ----------
+-- Auto-create public.users rows for Google sign-ins so submissions always have a durable owner.
+create or replace function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.users (id, email, full_name, role)
+  values (
+    new.id,
+    coalesce(nullif(new.email, ''), new.id::text || '@auth.local'),
+    coalesce(
+      nullif(new.raw_user_meta_data ->> 'full_name', ''),
+      nullif(new.raw_user_meta_data ->> 'name', ''),
+      split_part(coalesce(nullif(new.email, ''), new.id::text), '@', 1),
+      'User'
+    ),
+    'student'
+  )
+  on conflict (id) do update set
+    email = excluded.email,
+    full_name = case
+      when public.users.full_name is null or btrim(public.users.full_name) = '' then excluded.full_name
+      else public.users.full_name
+    end;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_auth_user();
+
+insert into public.users (id, email, full_name, role)
+select
+  au.id,
+  coalesce(nullif(au.email, ''), au.id::text || '@auth.local'),
+  coalesce(
+    nullif(au.raw_user_meta_data ->> 'full_name', ''),
+    nullif(au.raw_user_meta_data ->> 'name', ''),
+    split_part(coalesce(nullif(au.email, ''), au.id::text), '@', 1),
+    'User'
+  ),
+  'student'
+from auth.users au
+u ron conflict (id) do update set
+  email = excluded.email,
+  full_name = case
+    when public.users.full_name is null or btrim(public.users.full_name) = '' then excluded.full_name
+    else public.users.full_name
+  end;
+
+-- ---------- Part B: assignments + submissions (same data after Google sign-in on any device) ----------
+
+create table if not exists public.assignments (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  description text not null default '',
+  document_type text not null default 'Other',
+  teacher_id uuid not null references public.users (id) on delete cascade,
+  group_id uuid null,
+  due_date timestamptz null,
+  max_score integer not null default 100,
+  status text not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.assignments drop constraint if exists assignments_document_type_check;
+alter table public.assignments
+  add constraint assignments_document_type_check check (document_type in ('SRS', 'SDD', 'SPMP', 'Other'));
+
+alter table public.assignments drop constraint if exists assignments_status_check;
+alter table public.assignments
+  add constraint assignments_status_check check (status in ('active', 'closed', 'draft'));
+
+alter table public.assignments enable row level security;
+
+drop policy if exists "assignments_select_visible" on public.assignments;
+create policy "assignments_select_visible" on public.assignments
+  for select to authenticated
+  using (
+    status = 'active'
+    or teacher_id = auth.uid()
+    or public.app_user_is_staff()
+  );
+
+drop policy if exists "assignments_insert_own" on public.assignments;
+create policy "assignments_insert_own" on public.assignments
+  for insert to authenticated
+  with check (teacher_id = auth.uid());
+
+drop policy if exists "assignments_update_own" on public.assignments;
+create policy "assignments_update_own" on public.assignments
+  for update to authenticated
+  using (teacher_id = auth.uid() or public.app_user_is_staff())
+  with check (teacher_id = auth.uid() or public.app_user_is_staff());
+
+drop policy if exists "assignments_delete_own" on public.assignments;
+create policy "assignments_delete_own" on public.assignments
+  for delete to authenticated
+  using (teacher_id = auth.uid() or public.app_user_is_staff());
+
+create table if not exists public.submissions (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid references public.assignments (id) on delete set null,
+  student_id uuid not null references public.users (id) on delete cascade,
+  file_name text not null,
+  file_url text,
+  status text not null default 'submitted',
+  feedback text,
+  score numeric,
+  ai_draft_score integer,
+  ai_draft_summary text,
+  submission_doc_type text,
+  submitted_at timestamptz not null default now()
+);
+
+alter table public.submissions drop constraint if exists submissions_submission_doc_type_check;
+alter table public.submissions
+  add constraint submissions_submission_doc_type_check check (
+    submission_doc_type is null
+    or submission_doc_type in ('SRS', 'SDD', 'SPMP', 'STD', 'Other')
+  );
+
+alter table public.submissions drop constraint if exists submissions_status_check;
+alter table public.submissions
+  add constraint submissions_status_check check (status in ('submitted', 'under_review', 'reviewed', 'resubmit'));
+
+alter table public.submissions enable row level security;
+
+drop policy if exists "submissions_select_own" on public.submissions;
+create policy "submissions_select_own" on public.submissions
+  for select to authenticated
+  using (student_id = auth.uid());
+
+drop policy if exists "submissions_select_staff" on public.submissions;
+create policy "submissions_select_staff" on public.submissions
+  for select to authenticated
+  using (public.app_user_is_staff());
+
+drop policy if exists "submissions_insert_own" on public.submissions;
+create policy "submissions_insert_own" on public.submissions
+  for insert to authenticated
+  with check (student_id = auth.uid());
+
+drop policy if exists "submissions_insert_staff" on public.submissions;
+create policy "submissions_insert_staff" on public.submissions
+  for insert to authenticated
+  with check (public.app_user_is_staff());
+
+drop policy if exists "submissions_update_student" on public.submissions;
+create policy "submissions_update_student" on public.submissions
+  for update to authenticated
+  using (student_id = auth.uid())
+  with check (student_id = auth.uid());
+
+drop policy if exists "submissions_update_staff" on public.submissions;
+create policy "submissions_update_staff" on public.submissions
+  for update to authenticated
+  using (public.app_user_is_staff())
+  with check (public.app_user_is_staff());
+
+drop policy if exists "submissions_delete_teacher" on public.submissions;
+create policy "submissions_delete_teacher" on public.submissions
+  for delete to authenticated
+  using (public.app_user_is_staff());
+
+grant select, insert, update, delete on table public.assignments to authenticated;
+grant select, insert, update, delete on table public.submissions to authenticated;
+grant all on table public.assignments to service_role;
+grant all on table public.submissions to service_role;
+
+-- ---------- Part C: Storage (Open file / uploads) ----------
 INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES (
   'student-submissions',
@@ -88,7 +264,7 @@ CREATE POLICY "subs_authenticated_upload_own_folder"
     AND split_part(name, '/', 1) = auth.uid()::text
   );
 
--- ---------- Part C: Roster spreadsheet columns (grading queue) ----------
+-- ---------- Part D: Roster spreadsheet columns (grading queue) ----------
 -- Title / student roster fields: STUDENT ID, COURSE & YEAR, TEAM CODE, SY, SEMESTER, LAST MODIFIED.
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS student_number text;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS course_year text;

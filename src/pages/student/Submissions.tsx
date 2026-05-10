@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
-import { normalizeSubStatus } from '../../lib/teacherSubmissionLoad';
+import { normalizeSubStatus, submissionQueueTitle } from '../../lib/teacherSubmissionLoad';
+import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
 import type { SubStatus } from '../../types';
 
@@ -29,6 +30,7 @@ interface Submission {
   assignment_id: string | null;
   ai_draft_score: number | null;
   ai_draft_summary: string | null;
+  submission_doc_type: string | null;
   assignments: { title: string; document_type: string } | null;
 }
 
@@ -44,6 +46,7 @@ type LocalSubmissionRow = {
   ai_draft_score?: number | null;
   ai_draft_summary?: string | null;
   submitted_at: string;
+  submission_doc_type?: string | null;
 };
 
 const LOCAL_SUBMISSION_KEY = 'local_submission_fallback_v1';
@@ -116,6 +119,13 @@ function pickAssignmentJoin(rel: unknown): { title: string; document_type: strin
   };
 }
 
+function submissionHeading(s: Submission): string {
+  return submissionQueueTitle(
+    { submission_doc_type: s.submission_doc_type, assignments: s.assignments },
+    'General Submission'
+  );
+}
+
 function mapDbSubmissionRow(raw: Record<string, unknown>): Submission {
   const assignments = pickAssignmentJoin(raw.assignments);
   const aiN =
@@ -135,6 +145,7 @@ function mapDbSubmissionRow(raw: Record<string, unknown>): Submission {
     assignment_id: raw.assignment_id != null ? String(raw.assignment_id) : null,
     ai_draft_score: Number.isFinite(aiN) ? aiN : null,
     ai_draft_summary: raw.ai_draft_summary != null ? String(raw.ai_draft_summary) : null,
+    submission_doc_type: raw.submission_doc_type != null ? String(raw.submission_doc_type) : null,
     assignments,
   };
 }
@@ -177,6 +188,8 @@ export default function MySubmissions() {
       return;
     }
     setLoading(true);
+    await syncLocalSubmissionsToSupabase(user.id);
+
     const table = await resolveSubmissionTable();
     let dbRows: Submission[] = [];
     if (table) {
@@ -197,23 +210,31 @@ export default function MySubmissions() {
       }
     }
 
-    const localRaw = localStorage.getItem(LOCAL_SUBMISSION_KEY);
-    const localRows = localRaw ? (JSON.parse(localRaw) as LocalSubmissionRow[]) : [];
-    const localMapped: Submission[] = localRows
-      .filter((row) => row.student_id === user.id)
-      .map((row) => ({
-        id: row.id,
-        file_name: row.file_name,
-        file_url: row.file_url,
-        status: normalizeSubStatus(row.status),
-        score: row.score,
-        feedback: row.feedback,
-        submitted_at: row.submitted_at,
-        assignment_id: row.assignment_id ?? null,
-        ai_draft_score: row.ai_draft_score ?? null,
-        ai_draft_summary: row.ai_draft_summary ?? null,
-        assignments: { title: 'General Submission', document_type: 'Other' },
-      }));
+    let localMapped: Submission[] = [];
+    if (!table) {
+      try {
+        const localRaw = localStorage.getItem(LOCAL_SUBMISSION_KEY);
+        const localRows = localRaw ? (JSON.parse(localRaw) as LocalSubmissionRow[]) : [];
+        localMapped = localRows
+          .filter((row) => row.student_id === user.id)
+          .map((row) => ({
+            id: row.id,
+            file_name: row.file_name,
+            file_url: row.file_url,
+            status: normalizeSubStatus(row.status),
+            score: row.score,
+            feedback: row.feedback,
+            submitted_at: row.submitted_at,
+            assignment_id: row.assignment_id ?? null,
+            ai_draft_score: row.ai_draft_score ?? null,
+            ai_draft_summary: row.ai_draft_summary ?? null,
+            submission_doc_type: row.submission_doc_type ?? null,
+            assignments: { title: 'General Submission', document_type: 'Other' },
+          }));
+      } catch {
+        localMapped = [];
+      }
+    }
 
     const combined = [...dbRows, ...localMapped].sort(
       (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
@@ -232,8 +253,10 @@ export default function MySubmissions() {
         (s) =>
           (filter === 'all' || s.status === filter) &&
           (s.file_name.toLowerCase().includes(search.toLowerCase()) ||
+            submissionHeading(s).toLowerCase().includes(search.toLowerCase()) ||
             (s.assignments?.title ?? '').toLowerCase().includes(search.toLowerCase()) ||
-            (s.assignments?.document_type ?? '').toLowerCase().includes(search.toLowerCase()))
+            (s.assignments?.document_type ?? '').toLowerCase().includes(search.toLowerCase()) ||
+            (s.submission_doc_type ?? '').toLowerCase().includes(search.toLowerCase()))
       ),
     [submissions, filter, search]
   );
@@ -399,8 +422,8 @@ export default function MySubmissions() {
                           )}
                         </div>
                         <p className="text-sm text-slate-600 mt-0.5 truncate">
-                          {s.assignments?.title ?? 'General Submission'}
-                          {s.assignments?.document_type && (
+                          {submissionHeading(s)}
+                          {!s.submission_doc_type && s.assignments?.document_type && (
                             <span className="text-slate-400"> · {s.assignments.document_type}</span>
                           )}
                         </p>
@@ -521,7 +544,7 @@ export default function MySubmissions() {
                   <div className="text-xs text-slate-500 space-y-1">
                     <p>
                       <span className="font-semibold text-slate-600">Task:</span>{' '}
-                      {selected.assignments?.title ?? 'General Submission'}
+                      {submissionHeading(selected)}
                     </p>
                     <p>
                       <span className="font-semibold text-slate-600">Sent:</span>{' '}

@@ -67,7 +67,62 @@ grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on table public.users to authenticated;
 grant all on table public.users to service_role;
 
--- 5) PostgREST v14+ often needs a schema reload so the API stops saying "schema cache" / table missing.
+-- 5) Keep Google sign-ins permanent: every auth.users row gets a matching public.users row.
+create or replace function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.users (id, email, full_name, role)
+  values (
+    new.id,
+    coalesce(nullif(new.email, ''), new.id::text || '@auth.local'),
+    coalesce(
+      nullif(new.raw_user_meta_data ->> 'full_name', ''),
+      nullif(new.raw_user_meta_data ->> 'name', ''),
+      split_part(coalesce(nullif(new.email, ''), new.id::text), '@', 1),
+      'User'
+    ),
+    'student'
+  )
+  on conflict (id) do update set
+    email = excluded.email,
+    full_name = case
+      when public.users.full_name is null or btrim(public.users.full_name) = '' then excluded.full_name
+      else public.users.full_name
+    end;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_auth_user();
+
+insert into public.users (id, email, full_name, role)
+select
+  au.id,
+  coalesce(nullif(au.email, ''), au.id::text || '@auth.local'),
+  coalesce(
+    nullif(au.raw_user_meta_data ->> 'full_name', ''),
+    nullif(au.raw_user_meta_data ->> 'name', ''),
+    split_part(coalesce(nullif(au.email, ''), au.id::text), '@', 1),
+    'User'
+  ),
+  'student'
+from auth.users au
+on conflict (id) do update set
+  email = excluded.email,
+  full_name = case
+    when public.users.full_name is null or btrim(public.users.full_name) = '' then excluded.full_name
+    else public.users.full_name
+  end;
+
+-- 6) PostgREST v14+ often needs a schema reload so the API stops saying "schema cache" / table missing.
 notify pgrst, 'reload schema';
 
 -- If the API still cannot see `users`: Dashboard → Project Settings → Data API → ensure `public` is exposed,

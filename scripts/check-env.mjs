@@ -129,7 +129,48 @@ try {
   console.warn('⚠ Could not call Supabase REST API:', e?.message ?? e, '\n');
 }
 
+let submissionsTableMissing = false;
+console.log('Checking public.submissions via REST (anon key)…');
+try {
+  const base = url.replace(/\/+$/, '');
+  const res = await fetch(`${base}/rest/v1/submissions?select=id&limit=1`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` },
+  });
+  const text = await res.text();
+  let detail = text.slice(0, 400);
+  try {
+    const j = JSON.parse(text);
+    if (j.message) detail = j.message;
+    if (j.hint && /schema|reload/i.test(String(j.hint))) detail += ` — ${j.hint}`;
+  } catch {
+    /* not JSON */
+  }
+  const tableMissing = /could not find the table|schema cache|pgrst205|pgrst204/i.test(detail);
+  if (res.ok) {
+    console.log('✓ REST /submissions reachable (HTTP 200).\n');
+  } else {
+    console.warn(`⚠ REST /submissions HTTP ${res.status}: ${detail}`);
+    if (tableMissing) submissionsTableMissing = true;
+  }
+} catch (e) {
+  console.warn('⚠ Could not probe public.submissions:', e?.message ?? e, '\n');
+}
+
+if (submissionsTableMissing) {
+  console.error('=== MISSING: public.submissions (and usually assignments) ===');
+  console.error(' Automated (needs DATABASE_URL in .env from Supabase → Database → connection URI):');
+  console.error('   npm run db:apply');
+  console.error(' Manual: Supabase SQL Editor → paste docs/supabase-setup-all-in-one.sql → Run');
+  console.error(' Or (if public.users + helpers already exist): docs/supabase-assignments-submissions-core.sql');
+  console.error(' Clipboard helper: npm run supabase:setup');
+  console.error('');
+  console.error('After Run, refresh PostgREST if needed: NOTIFY pgrst, \'reload schema\';');
+  console.error('Restart dev after .env edits: npm run dev\n');
+  process.exit(1);
+}
+
 console.log('--- Always run once per Supabase project (SQL Editor) ---');
+console.log('  • docs/supabase-setup-all-in-one.sql  (includes assignments + submissions — same data on every device)');
 console.log('  • docs/supabase-storage-student-submissions.sql  (student file URLs — Open file in grading)');
 console.log('Optional: docs/supabase-submissions-ai-draft.sql');
 console.log('Optional: docs/supabase-roster-columns.sql (spreadsheet columns — also in supabase-setup-all-in-one Part C)');
