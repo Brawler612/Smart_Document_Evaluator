@@ -125,13 +125,34 @@ async function ensureUserProfileOrFallback(authUser: User): Promise<AppUser> {
   return fallbackProfile(authUser);
 }
 
+async function exchangeOAuthCodeIfPresent(): Promise<void> {
+  try {
+    const u = new URL(window.location.href);
+    if (!u.searchParams.has('code')) return;
+    const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+    if (error && import.meta.env.DEV) console.warn('[auth] exchangeCodeForSession:', error.message);
+    if (!error) {
+      window.history.replaceState({}, '', u.pathname + u.hash);
+    }
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn('[auth] OAuth PKCE exchange:', e);
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session: s }, error }) => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      await exchangeOAuthCodeIfPresent();
+      if (cancelled) return;
+
+      const { data: { session: s }, error } = await supabase.auth.getSession();
+      if (cancelled) return;
       if (error && import.meta.env.DEV) console.warn('[auth] getSession:', error.message);
       setSession(s ?? null);
       try {
@@ -141,10 +162,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(profile);
         } else setUser(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    }
+
+    void bootstrap();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       if (s?.user) {
         void (async () => {
@@ -166,7 +192,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function signOut() { await supabase.auth.signOut(); setSession(null); setUser(null); }

@@ -41,12 +41,16 @@ export function isSupabaseConfigured(): boolean {
   return urlOk && keyOk;
 }
 
-/** PKCE + URL session detection so Google can return to /login and the client exchanges the code safely. */
+/**
+ * PKCE: we exchange `?code=` in AuthProvider (explicit `exchangeCodeForSession`) so production hosts
+ * match localhost reliability — `detectSessionInUrl` alone can race and leave session null on Vercel.
+ */
 export const supabase = createClient(url, anonKey, {
   auth: {
     flowType: 'pkce',
-    detectSessionInUrl: true,
+    detectSessionInUrl: false,
     persistSession: true,
     autoRefreshToken: true,
+    storage: typeof globalThis !== 'undefined' ? globalThis.localStorage : undefined,
   },
 });
