@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import {
   Search,
   FileText,
-  Star,
   MessageSquare,
   X,
   ChevronRight,
@@ -15,6 +14,8 @@ import {
   Trash2,
   Loader2,
   CheckCircle2,
+  Sparkles,
+  GraduationCap,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
@@ -507,12 +508,21 @@ export default function MySubmissions() {
                             {pv.label}
                           </span>
                           {pv.normalized === 'reviewed' && s.score != null && (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#84001B] bg-[#ffd21a]/35 px-2 py-1 rounded-full border border-[#ffd21a]/50">
-                              <Star className="w-3 h-3 shrink-0" aria-hidden />
-                              {s.score}%
-                              {s.ai_draft_score != null &&
-                                s.ai_draft_score !== s.score &&
-                                ` · AI pref. ${s.ai_draft_score}%`}
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-[#5c0014] bg-[#ffd21a]/35 px-2 py-1 rounded-full border border-[#ffd21a]/50"
+                              title="Final score published by your instructor."
+                            >
+                              <GraduationCap className="w-3 h-3 shrink-0" aria-hidden />
+                              Teacher {s.score}%
+                            </span>
+                          )}
+                          {s.ai_draft_score != null && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-900 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-200"
+                              title="Automated AI rubric score (preliminary)."
+                            >
+                              <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
+                              AI {s.ai_draft_score}%
                             </span>
                           )}
                         </div>
@@ -555,6 +565,17 @@ export default function MySubmissions() {
                           Resubmit
                           <ChevronRight className="w-3.5 h-3.5" />
                         </Link>
+                      )}
+                      {((pv.normalized === 'reviewed' && s.score != null) || s.ai_draft_score != null) && (
+                        <button
+                          type="button"
+                          onClick={() => setSelected(s)}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 text-white px-3 py-2 text-xs font-bold hover:bg-emerald-700 shadow-sm shadow-emerald-600/20"
+                          title="Grading is done — open this submission to see the AI and Teacher scores."
+                        >
+                          <GraduationCap className="w-3.5 h-3.5" />
+                          View score
+                        </button>
                       )}
                       <button
                         type="button"
@@ -756,17 +777,21 @@ function SubmissionDetailsDialog({
               </p>
             </div>
           )}
-          {selPv.normalized === 'reviewed' &&
-            selected.score != null &&
-            selected.ai_draft_score == null &&
-            !(selected.ai_draft_summary ?? '').trim() && (
-            <div className="flex items-center justify-between rounded-xl bg-[#ffd21a]/25 border border-[#ffd21a]/40 px-4 py-3">
-              <span className="text-sm font-semibold text-slate-800">Final score (staff)</span>
-              <span className="text-2xl font-bold text-[#84001B] tabular-nums">{selected.score}%</span>
-            </div>
-          )}
-          {(selected.ai_draft_score != null || (selected.ai_draft_summary ?? '').trim().length > 0) && (
-            <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4">
+          {((selPv.normalized === 'reviewed' && selected.score != null) ||
+            selected.ai_draft_score != null ||
+            (selected.ai_draft_summary ?? '').trim().length > 0) && (
+            <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Grades for this submission
+                  </p>
+                  <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
+                    Two side-by-side scores so you can compare the AI rubric draft with what your instructor finally
+                    published.
+                  </p>
+                </div>
+              </div>
               <AIDocumentEvaluationReport
                 criteria={[]}
                 aiScorePercent={selected.ai_draft_score}
@@ -774,7 +799,7 @@ function SubmissionDetailsDialog({
                   selected.status === 'reviewed' && selected.score != null ? selected.score : null
                 }
                 summaryText={selected.ai_draft_summary}
-                heading="AI evaluation (your submission)"
+                heading="AI and Teacher score"
               />
             </div>
           )}
@@ -786,6 +811,39 @@ function SubmissionDetailsDialog({
               {selPv.label}
             </span>
           </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
+              Staff feedback
+            </p>
+            {selected.feedback ? (
+              <div className="bg-slate-50 rounded-xl p-4 text-sm font-bold text-slate-800 leading-relaxed border border-slate-100">
+                {selected.feedback}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">
+                No written comments yet.
+              </p>
+            )}
+          </div>
+          {submissionHasOpenableFileUrl(selected.file_url) && (
+            <SubmissionOpenLink
+              raw={selected.file_url!.trim()}
+              fileName={selected.file_name}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/30 bg-[#84001B]/8 px-3 py-2 text-sm font-semibold text-[#84001B] hover:bg-[#84001B]/12 w-fit"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Open your file
+            </SubmissionOpenLink>
+          )}
+          {selPv.normalized === 'resubmit' && (
+            <Link
+              to={resubmitAssignmentsHref(selected)}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#84001B] px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-[#6b0016] w-fit"
+            >
+              Upload new version
+              <ChevronRight className="w-4 h-4" />
+            </Link>
+          )}
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">File details</p>
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs">
@@ -850,39 +908,6 @@ function SubmissionDetailsDialog({
               </div>
             </dl>
           </div>
-                  {submissionHasOpenableFileUrl(selected.file_url) && (
-                    <SubmissionOpenLink
-                      raw={selected.file_url!.trim()}
-                      fileName={selected.file_name}
-                      className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/30 bg-[#84001B]/8 px-3 py-2 text-sm font-semibold text-[#84001B] hover:bg-[#84001B]/12"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      Open your file
-                    </SubmissionOpenLink>
-                  )}
-                  {selPv.normalized === 'resubmit' && (
-                    <Link
-                      to={resubmitAssignmentsHref(selected)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-[#84001B] px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-[#6b0016] w-fit"
-                    >
-                      Upload new version
-                      <ChevronRight className="w-4 h-4" />
-                    </Link>
-                  )}
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-                      Staff feedback
-                    </p>
-                    {selected.feedback ? (
-                      <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-700 leading-relaxed border border-slate-100">
-                        {selected.feedback}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">
-                        No written comments yet.
-                      </p>
-                    )}
-                  </div>
         </div>
         <div className="shrink-0 border-t border-slate-100 px-6 py-3 bg-slate-50/60 flex items-center justify-between gap-3 rounded-b-2xl">
           <div className="text-[11px] text-slate-500 leading-tight">

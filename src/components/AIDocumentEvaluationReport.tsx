@@ -200,7 +200,7 @@ export default function AIDocumentEvaluationReport({
             <Sparkles className="h-4 w-4 text-pink-500" aria-hidden />
             Executive summary
           </div>
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm leading-relaxed text-slate-800">
+          <div className="rounded-2xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm font-bold leading-relaxed text-slate-900">
             {executiveDisplay}
           </div>
         </div>
@@ -269,7 +269,7 @@ export default function AIDocumentEvaluationReport({
           ) : executiveDisplay ? (
             <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
               <h4 className="text-base font-bold text-slate-900">Automated summary</h4>
-              <p className="mt-2 text-sm leading-relaxed text-slate-700">{executiveDisplay}</p>
+              <p className="mt-2 text-sm font-bold leading-relaxed text-slate-800">{executiveDisplay}</p>
             </div>
           ) : (
             <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-500">
