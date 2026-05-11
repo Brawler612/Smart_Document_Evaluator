@@ -93,6 +93,14 @@ if (!bucket || bucket === 'off' || bucket === 'false') {
   console.log(`✓ VITE_SUBMISSION_STORAGE_BUCKET=${env.VITE_SUBMISSION_STORAGE_BUCKET.trim()}\n`);
 }
 
+if (env.VITE_GEMINI_EVAL_URL?.trim()) {
+  console.log('ℹ VITE_GEMINI_EVAL_URL is set — teacher “Run AI Inspection” will call your backend for Gemini.\n');
+} else if (env.VITE_GEMINI_API_KEY?.trim()) {
+  console.warn(
+    '⚠ VITE_GEMINI_API_KEY is set — the key is baked into the browser bundle. Prefer VITE_GEMINI_EVAL_URL for production.\n'
+  );
+}
+
 console.log('Checking public.users via REST (anon key, may return 200 with 0 rows if RLS hides data)…');
 
 let databaseBootstrapMissing = false;

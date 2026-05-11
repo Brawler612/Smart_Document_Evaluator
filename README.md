@@ -1,78 +1,127 @@
-# Smart_Document_Evalutator
+# Smart Document Evaluator
 
-[![Open in Bolt](https://bolt.new/static/open-in-bolt.svg)](https://bolt.new/~/sb1-bxqgjzrh)
+A web application for **course document workflows**: students sign in, see assignments, upload submissions to Supabase Storage, and track their work; teachers use a **grading / review queue**, class roster tools, analytics, and optional **AI-assisted rubric inspection** (Google Gemini) to refine scores and narrative feedback.
 
-## Run locally
-
-```bash
-npm install
-npm start
-```
-
-Open the URL Vite prints (usually `http://localhost:5173`).
-
-## Google Sign-In (end-to-end)
-
-Google OAuth **does not work** until three layers are correct: your app `.env`, Google Cloud, and Supabase. Use this order:
-
-### 1. App environment (required first)
-
-1. Copy `.env.example` to `.env` in the project root (next to `package.json`).
-2. In [Supabase](https://supabase.com/dashboard) → **Project Settings** → **API**, copy:
-   - **Project URL** → `VITE_SUPABASE_URL`
-   - **anon public** key → `VITE_SUPABASE_ANON_KEY`
-3. Save `.env` and **restart** the dev server (`Ctrl+C`, then `npm start`). Vite only reads env on startup.
-
-Check your file:
-
-```bash
-npm run verify:env
-```
-
-### 2. Google Cloud (OAuth client)
-
-1. [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services** → **OAuth consent screen** (configure if needed).
-2. **Credentials** → **Create credentials** → **OAuth client ID** → **Web application**.
-3. Under **Authorized redirect URIs**, add **exactly** the Supabase callback (not localhost here):
-
-   `https://<YOUR_PROJECT_REF>.supabase.co/auth/v1/callback`
-
-   The value is shown in Supabase → **Authentication** → **Providers** → **Google** (or in docs under Redirect URL).
-
-4. Copy **Client ID** and **Client secret** into Supabase (next step).
-
-### 3. Supabase (provider + redirect URLs)
-
-1. **Authentication** → **Providers** → **Google** → enable, paste Client ID and Client secret from Google.
-2. **Authentication** → **URL Configuration**:
-   - **Site URL**: `http://localhost:5173` for local dev.
-   - **Redirect URLs**: add your app return URLs, including:
-     - `http://localhost:5173/login`
-     - Production: `https://your-domain.example/login`
-
-The app sends users back to `/login` after Google; that path must appear in **Redirect URLs**.
-
-### 4. Database (if sign-in works but profile fails)
-
-If you see “Could not load your account profile”, the `public.users` insert is likely blocked by RLS. Run the example policies in **`docs/supabase-rls-users.sql`** (adjust table/columns to match your schema).
+Built with **Vite**, **React 18**, **TypeScript**, **Tailwind CSS**, **React Router 7**, and **Supabase** (Auth, Postgres, Row Level Security, Storage).
 
 ---
 
-## Risks and how this project mitigates them
+## Features
 
-| Risk | Mitigation |
-|------|------------|
-| Fake Supabase host / DNS error | App requires real `VITE_*` values for Google; placeholders never start OAuth. Run `npm run verify:env`. |
-| Token or session leaked via bad redirect | OAuth `redirectTo` is built same-origin only (`src/lib/oauthRedirect.ts`). |
-| Implicit OAuth flow weaknesses | Client uses **PKCE** and **detectSessionInUrl** (`src/lib/supabase.ts`). |
-| Anyone with link signs in | UI restricts to `@cit.edu.ph` in `AuthContext`; tighten further with Supabase Auth Hooks or DB policies if needed. |
-| Anon key in frontend | Expected for SPAs; protect data with **RLS**, not by hiding the anon key. |
+| Area | What it does |
+|------|----------------|
+| **Authentication** | Supabase Auth with Google OAuth (PKCE). Session-aware routing; unauthenticated users go to `/login`. |
+| **Roles** | `student`, `teacher`, and `admin`. Optional env lists (`VITE_ADMIN_EMAILS`, `VITE_TEACHER_EMAILS`) can elevate accounts by email; profiles live in `public.users`. |
+| **Students** | Assignments, **My Submissions** (uploads tied to the configured storage bucket), settings. |
+| **Teachers** | Dashboard, **grading / review queue**, student submissions view, documents, analytics/reports, class list, instructions, settings; several legacy paths redirect to the current routes (see `App.tsx`). |
+| **AI inspection (optional)** | “Run AI Inspection” uses a heuristic rubric draft, then optionally **Gemini** to adjust scores, per-criterion comments, and an executive summary. Prefer a backend proxy (`VITE_GEMINI_EVAL_URL`); browser-only `VITE_GEMINI_API_KEY` is for development only. |
 
 ---
 
-## Scripts
+## Prerequisites
 
-| Command | Purpose |
+- **Node.js** 18+ (LTS recommended)
+- A **Supabase** project with Auth (Google provider) and the schema/storage described in `docs/`
+- (Optional) **Google Gemini** API access or your own evaluation HTTP endpoint
+
+---
+
+## Quick start
+
+1. **Clone and install**
+
+   ```bash
+   git clone <your-repo-url>
+   cd Smart_Document_Evalutator
+   npm install
+   ```
+
+2. **Environment**
+
+   Copy `.env.example` to `.env` and set at least:
+
+   - `VITE_SUPABASE_URL` — `https://<project-ref>.supabase.co`
+   - `VITE_SUPABASE_ANON_KEY` — anon / publishable key from Supabase → Project Settings → API
+
+   Optional variables (admin/teacher email lists, student email domain allowlist, submission bucket name, Gemini) are documented inline in [`.env.example`](.env.example).
+
+3. **Validate local env**
+
+   ```bash
+   npm run verify:env
+   ```
+
+4. **Run the dev server**
+
+   ```bash
+   npm run dev
+   ```
+
+   Open the URL Vite prints (typically `http://localhost:5173`). Add the same origin to Supabase **Authentication → URL Configuration** (redirect URLs) if Google sign-in should work locally.
+
+---
+
+## Database and storage
+
+SQL migrations and one-shot setup scripts live under [`docs/`](docs/). Highlights:
+
+- [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) — consolidated bootstrap (use when you want a single file to apply).
+- [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) — `public.users` and related pieces.
+- [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql) — bucket/policy for student uploads (align with `VITE_SUBMISSION_STORAGE_BUCKET`, default `student-submissions`).
+- [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql) — fix for recursive RLS on `users` if profile loads fail at sign-in.
+
+**Applying SQL from your machine** (optional; requires `DATABASE_URL`, never commit it):
+
+```bash
+npm run db:apply          # default schema path used by the script
+npm run db:fix-rls        # users RLS fix only
+```
+
+Interactive helpers: `npm run supabase:setup`, `npm run supabase:fix-rls`.
+
+---
+
+## NPM scripts
+
+| Script | Purpose |
 |--------|---------|
-| `npm start` | Dev server |
-| `npm run verify:env` | Validate `.env` before debugging Google |
+| `npm run dev` / `npm start` | Vite dev server |
+| `npm run build` | Production build → `dist/` |
+| `npm run preview` | Preview the production build locally |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript `--noEmit` |
+| `npm run verify:env` | Sanity-check `.env` (Supabase URL/key shape) |
+
+---
+
+## Deployment
+
+**Do not commit `.env`.** Hosted builds need the same `VITE_*` variables set in the host’s environment UI; they are inlined at build time.
+
+Step-by-step hosting (including Vercel, SPA rewrites, and OAuth redirect URLs) is in **[`DEPLOY.md`](DEPLOY.md)**. This repo includes [`vercel.json`](vercel.json) tuned for a Vite SPA on Vercel.
+
+---
+
+## Project layout (short)
+
+| Path | Role |
+|------|------|
+| `src/App.tsx` | Router, auth gate, teacher vs student routes |
+| `src/context/AuthContext.tsx` | Session, profile, OAuth, student email policy |
+| `src/lib/supabase.ts` | Supabase client |
+| `src/lib/geminiDocumentEvaluation.ts` | Optional Gemini / proxy evaluation |
+| `src/components/AIDocumentEvaluationReport.tsx` | UI for AI-assisted rubric output |
+| `src/pages/teacher/` · `src/pages/student/` | Role-specific screens |
+
+---
+
+## Security notes
+
+- The **anon key** is safe for the browser only with correct **RLS** policies; treat service-role keys and `DATABASE_URL` as secrets.
+- **Gemini**: use `VITE_GEMINI_EVAL_URL` and keep API keys on a server you control for any public deployment.
+
+---
+
+## License
+
+Private / unlicensed unless you add a `LICENSE` file. Adjust this section when you publish the project.

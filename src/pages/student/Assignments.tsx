@@ -15,6 +15,11 @@ import {
   Check,
   Settings,
   RefreshCw,
+  Send,
+  Sparkles,
+  Inbox,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resolveStudentSubmissionFileUrl } from '../../lib/submissionStorage';
@@ -93,58 +98,34 @@ function SubmitUploadFields({
   quickDocType?: string;
   onPickDocType?: (code: string) => void;
 }) {
-  const [pasteOpen, setPasteOpen] = useState(variant === 'task');
-  const [docSearch, setDocSearch] = useState('');
-
-  const filteredQuickTypes = QUICK_DOC_TYPES.filter((t) =>
-    t.toLowerCase().includes(docSearch.trim().toLowerCase())
-  );
-
   return (
     <div className="space-y-5">
       {variant === 'quick' && quickDocType != null && onPickDocType && (
         <section className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
-          <label className="block text-sm font-semibold text-slate-800 mb-2">Document type</label>
-          <div className="relative mb-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" aria-hidden />
-            <input
-              type="search"
-              value={docSearch}
-              onChange={(e) => setDocSearch(e.target.value)}
-              placeholder="Type to filter SRS, SDD, SPMP, STD…"
-              className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
-              autoComplete="off"
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {filteredQuickTypes.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => {
-                  onPickDocType(opt);
-                  setDocSearch('');
-                }}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${
-                  opt === quickDocType
-                    ? 'bg-[#84001B] text-[#ffd21a] ring-2 ring-[#84001B] ring-offset-2'
-                    : `${DOC_COLORS[opt] ?? 'bg-slate-100 text-slate-700'} hover:opacity-90`
-                }`}
-              >
-                {opt}
-              </button>
-            ))}
-            <button
-              type="button"
-              title="Clear document type (no label for the grading queue)"
-              onClick={() => {
-                onPickDocType('');
-                setDocSearch('');
-              }}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 normal-case tracking-normal hover:bg-slate-50"
+          <label
+            htmlFor="quick-doc-type-select"
+            className="block text-sm font-semibold text-slate-800 mb-2"
+          >
+            Document type
+          </label>
+          <div className="relative max-w-xs">
+            <select
+              id="quick-doc-type-select"
+              value={quickDocType}
+              onChange={(e) => onPickDocType(e.target.value)}
+              className="w-full appearance-none pl-3 pr-9 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
             >
-              Clear
-            </button>
+              <option value="">— None —</option>
+              {QUICK_DOC_TYPES.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"
+              aria-hidden
+            />
           </div>
           <p className="text-[11px] text-slate-500 mt-2 leading-snug">
             This label appears as the <span className="font-semibold text-slate-700">Title</span> in your instructor&apos;s grading queue.
@@ -249,40 +230,14 @@ function SubmitUploadFields({
         </div>
       </section>
 
-      {variant === 'quick' && !pasteOpen && (
-        <button
-          type="button"
-          onClick={() => setPasteOpen(true)}
-          className="w-full flex items-center justify-between gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-100 hover:border-slate-400 transition-colors text-left"
-        >
-          <span>
-            Skip extra typing — or{' '}
-            <span className="text-[#84001B]">add pasted text</span>{' '}
-            <span className="font-normal text-slate-600 text-xs font-medium">for PDF/DOC-friendly review</span>
-          </span>
-          <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" aria-hidden />
-        </button>
-      )}
-
-      {(variant === 'task' || pasteOpen) && (
+      {variant === 'task' && (
         <section className="space-y-3 rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-slate-300 text-slate-800 text-[11px]">
-                2
-              </span>
-              Plain-text copy{' '}
-              <span className="font-normal text-slate-400 normal-case font-medium">Optional</span>
-            </div>
-            {variant === 'quick' && pasteOpen && (
-              <button
-                type="button"
-                onClick={() => setPasteOpen(false)}
-                className="text-[11px] font-semibold text-slate-500 hover:text-[#84001B]"
-              >
-                Hide this section
-              </button>
-            )}
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-slate-300 text-slate-800 text-[11px]">
+              2
+            </span>
+            Plain-text copy{' '}
+            <span className="font-normal text-slate-400 normal-case font-medium">Optional</span>
           </div>
           <div>
             <label htmlFor={`su-text-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
@@ -292,7 +247,7 @@ function SubmitUploadFields({
               id={`su-text-${variant}`}
               value={submissionText}
               onChange={(e) => setSubmissionText(e.target.value)}
-              rows={variant === 'quick' ? 4 : 5}
+              rows={5}
               placeholder="Only if helpful: paste the body of your report so review tools don’t rely on PDF/Word alone…"
               className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] resize-y bg-white leading-relaxed"
             />
@@ -315,6 +270,31 @@ function SubmitUploadFields({
     </div>
   );
 }
+
+type DueTone = 'overdue' | 'today' | 'soon' | 'future' | 'none';
+
+function describeDueDate(dueDate: string | null | undefined): { label: string; tone: DueTone } {
+  if (!dueDate) return { label: 'No due date', tone: 'none' };
+  const due = new Date(dueDate);
+  if (Number.isNaN(due.getTime())) return { label: 'No due date', tone: 'none' };
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((startOfDay(due).getTime() - startOfDay(now).getTime()) / 86400000);
+  const dateLabel = due.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (days < 0) return { label: `Overdue · ${dateLabel}`, tone: 'overdue' };
+  if (days === 0) return { label: `Due today · ${dateLabel}`, tone: 'today' };
+  if (days === 1) return { label: `Due tomorrow · ${dateLabel}`, tone: 'soon' };
+  if (days <= 6) return { label: `Due in ${days}d · ${dateLabel}`, tone: 'soon' };
+  return { label: `Due ${dateLabel}`, tone: 'future' };
+}
+
+const DUE_TONE_CLASSES: Record<DueTone, string> = {
+  overdue: 'bg-red-50 text-red-700 border-red-200',
+  today: 'bg-amber-50 text-amber-800 border-amber-200',
+  soon: 'bg-[#ffd21a]/25 text-[#5c0014] border-[#ffd21a]/60',
+  future: 'bg-slate-50 text-slate-600 border-slate-200',
+  none: 'bg-slate-50 text-slate-500 border-slate-200',
+};
 
 export default function StudentAssignments() {
   const { user } = useAuth();
@@ -341,6 +321,7 @@ export default function StudentAssignments() {
     return `${globalThis.window.location.origin}${base}/assignments`;
   });
   const [linkCopied, setLinkCopied] = useState(false);
+  const [taskFilter, setTaskFilter] = useState<'all' | 'open' | 'sent'>('all');
 
   async function resolveAssignmentTable(): Promise<'assignments' | 'assignment' | null> {
     if (assignmentTable) return assignmentTable;
@@ -654,6 +635,15 @@ export default function StudentAssignments() {
   const canSendUpload = Boolean(fileName.trim() || selectedFile);
 
   const hasAnyTasks = assignments.length > 0;
+  const visibleTasks =
+    taskFilter === 'open' ? upcoming : taskFilter === 'sent' ? submitted : filtered;
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.full_name?.split(/\s+/)[0] ?? 'there';
+
+  const totalAssignments = assignments.length;
+  const overdueCount = upcoming.filter((a) => describeDueDate(a.due_date).tone === 'overdue').length;
 
   function openQuickSubmitModal() {
     setQuickSubmitOpen(true);
@@ -688,24 +678,64 @@ export default function StudentAssignments() {
   }
 
   return (
-    <div className="flex min-h-full min-h-dvh w-full flex-1 flex-col bg-slate-50">
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-6 md:max-w-4xl md:px-6 md:py-8">
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold tracking-tight text-slate-900 md:text-xl">Submit</h1>
-            <p className="mt-0.5 max-w-lg text-[12px] leading-snug text-slate-500">
-              General queue · track on{' '}
-              <Link to="/my-submissions" className="font-medium text-[#84001B] hover:underline">
-                Submission status
-              </Link>
-            </p>
+    <div className="flex min-h-full min-h-dvh w-full flex-1 flex-col bg-gradient-to-b from-[#fff8f9] via-slate-50 to-white">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-6 md:max-w-4xl md:px-6 md:py-8">
+
+        <section
+          aria-labelledby="submit-hero-heading"
+          className="relative overflow-hidden rounded-3xl border border-[#84001B]/25 bg-gradient-to-br from-[#84001B] via-[#84001B] to-[#5c0014] p-5 md:p-7 text-white shadow-xl shadow-[#84001B]/15"
+        >
+          <div
+            className="absolute -top-16 -right-12 w-56 h-56 rounded-full bg-[#ffd21a]/25 blur-3xl pointer-events-none"
+            aria-hidden
+          />
+          <div className="absolute -bottom-12 -left-10 w-48 h-48 rounded-full bg-white/10 blur-3xl pointer-events-none" aria-hidden />
+          <div className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#ffd21a]">
+                {greeting}
+                {user?.full_name ? `, ${firstName}` : ''}
+              </p>
+              <h1 id="submit-hero-heading" className="text-2xl md:text-[28px] font-bold mt-2 leading-tight">
+                Submit your work
+              </h1>
+              <p className="mt-2 max-w-md text-sm leading-relaxed text-white/85">
+                One file is enough — quick submit drops it into the general queue. Track outcomes on{' '}
+                <Link
+                  to="/my-submissions"
+                  className="font-semibold text-[#ffd21a] underline-offset-2 hover:underline"
+                >
+                  Submission status
+                </Link>
+                .
+              </p>
+            </div>
+            <dl className="grid grid-cols-3 gap-2 sm:gap-3 shrink-0 md:min-w-[300px]">
+              {[
+                { label: 'Open', value: upcoming.length, accent: 'text-white' },
+                { label: 'Sent', value: submitted.length, accent: 'text-[#ffd21a]' },
+                { label: 'Total', value: totalAssignments, accent: 'text-white' },
+              ].map((kpi) => (
+                <div
+                  key={kpi.label}
+                  className="rounded-2xl bg-white/10 backdrop-blur-sm border border-white/15 px-3 py-3 text-center"
+                >
+                  <dt className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
+                    {kpi.label}
+                  </dt>
+                  <dd className={`mt-1 text-2xl font-bold tabular-nums ${kpi.accent}`}>
+                    {loading ? '—' : kpi.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
-        </header>
+        </section>
 
         {!loading && submissionSchemaMissing && (
           <div
             role="alert"
-            className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950 shadow-sm"
+            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950 shadow-sm"
           >
             <p className="font-semibold">Cloud submissions are not configured yet</p>
             <p className="mt-1.5 text-xs leading-relaxed text-red-900/95">
@@ -728,7 +758,7 @@ export default function StudentAssignments() {
         {resubmitSubmissionId && (
           <div
             role="status"
-            className="mt-4 flex flex-col gap-2 rounded-xl border border-amber-400/70 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-2 rounded-2xl border border-amber-400/70 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
           >
             <p className="min-w-0 leading-snug">
               <span className="font-semibold">Redo requested — </span>
@@ -755,31 +785,61 @@ export default function StudentAssignments() {
           </div>
         )}
 
-        <div className="flex flex-1 flex-col gap-3 pt-5">
-          <section aria-labelledby="quick-actions-heading" className="rounded-lg border border-slate-200 bg-white p-3">
-            <h2 id="quick-actions-heading" className="sr-only">
-              Copy shortcut or upload
-            </h2>
-            <span id="submit-page-url-description" className="sr-only">
-              Copied URL is your full submit page address: {submitPageUrl}.
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
+        {!loading && overdueCount > 0 && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-sm"
+          >
+            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-red-600" aria-hidden />
+            <div className="min-w-0 leading-snug">
+              <p className="font-semibold">
+                {overdueCount} task{overdueCount !== 1 ? 's are' : ' is'} past due
+              </p>
+              <p className="text-xs text-red-800 mt-0.5">
+                Send what you have — late uploads still reach your teacher.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <section
+          aria-labelledby="primary-action-heading"
+          className="rounded-3xl border border-slate-200 bg-white p-5 md:p-6 shadow-sm"
+        >
+          <span id="submit-page-url-description" className="sr-only">
+            Copied URL is your full submit page address: {submitPageUrl}.
+          </span>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-4 min-w-0">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#ffd21a] to-[#f5c400] flex items-center justify-center shrink-0 shadow-inner">
+                <Send className="w-6 h-6 text-[#84001B]" aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <h2 id="primary-action-heading" className="font-bold text-slate-900 text-base md:text-lg">
+                  Quick submit — fastest path
+                </h2>
+                <p className="text-sm text-slate-500 mt-1 leading-snug">
+                  Pick SRS / SDD / SPMP / STD, attach one file, hit send. Your teacher sees it in the grading queue.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-stretch gap-2 shrink-0">
               <button
                 type="button"
                 onClick={() => void copySubmitLink()}
                 aria-live="polite"
                 aria-describedby="submit-page-url-description"
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-800 hover:bg-slate-50"
+                className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               >
                 {linkCopied ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-green-600" aria-hidden />
+                    <Check className="h-4 w-4 text-green-600" aria-hidden />
                     Copied
                   </>
                 ) : (
                   <>
-                    <Copy className="h-3.5 w-3.5 text-slate-400" aria-hidden />
-                    Copy shortcut
+                    <Copy className="h-4 w-4 text-slate-400" aria-hidden />
+                    Copy link
                   </>
                 )}
               </button>
@@ -792,60 +852,290 @@ export default function StudentAssignments() {
                     ? 'Run docs/supabase-setup-all-in-one.sql in Supabase first'
                     : undefined
                 }
-                className="inline-flex h-9 min-w-[7.5rem] flex-1 items-center justify-center gap-1.5 rounded-md bg-[#84001B] px-3 text-[13px] font-semibold text-[#ffd21a] hover:bg-[#6b0016] disabled:pointer-events-none disabled:opacity-45"
+                className="inline-flex h-11 flex-1 md:flex-none items-center justify-center gap-2 rounded-xl bg-[#84001B] px-5 text-sm font-bold text-[#ffd21a] shadow-md shadow-[#84001B]/25 hover:bg-[#6b0016] disabled:pointer-events-none disabled:opacity-45 transition-colors"
               >
-                <Upload className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <Upload className="h-4 w-4 shrink-0" aria-hidden />
                 Upload file
               </button>
             </div>
-            <p className="mt-2 text-[11px] leading-snug text-slate-400">
-              Assignments from your instructor list below when available.
-            </p>
-          </section>
+          </div>
+        </section>
 
-          <details className="rounded-lg border border-slate-200 bg-white [&_summary::-webkit-details-marker]:hidden">
-            <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-slate-600 hover:bg-slate-50">
-              Submission tips
-            </summary>
-            <ul className="border-t border-slate-100 px-3 py-2 text-[11px] leading-snug text-slate-500">
-              <li className="py-1">Naming: include course code and deliverable type when you can.</li>
-              <li className="py-1 border-t border-slate-50">Optional paste in the form helps search—not a duplicate official file.</li>
-              <li className="py-1 border-t border-slate-50">Big files: finish upload, then confirm on Submission status.</li>
-            </ul>
-          </details>
+        {!loading && hasAnyTasks && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              role="tablist"
+              aria-label="Task filter"
+              className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm w-fit"
+            >
+              {(
+                [
+                  { id: 'all', label: 'All', count: filtered.length },
+                  { id: 'open', label: 'Open', count: upcoming.length },
+                  { id: 'sent', label: 'Sent', count: submitted.length },
+                ] as const
+              ).map((tab) => {
+                const active = taskFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setTaskFilter(tab.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                      active ? 'bg-[#84001B] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {tab.label}
+                    <span
+                      className={`inline-flex min-w-[1.25rem] items-center justify-center rounded-md px-1.5 text-[10px] font-bold tabular-nums ${
+                        active ? 'bg-[#ffd21a] text-[#84001B]' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="relative sm:min-w-[260px]">
+              <Search
+                className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none"
+                aria-hidden
+              />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter by title or document type…"
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]/40 bg-white shadow-sm"
+              />
+            </div>
+          </div>
+        )}
 
-          <nav aria-labelledby="other-features-heading" className="rounded-lg border border-slate-200 bg-white">
-            <h2 id="other-features-heading" className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {loading ? (
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-[110px] bg-slate-100 rounded-2xl animate-pulse" />
+            ))}
+          </div>
+        ) : (
+          <>
+            {loadError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {loadError}
+              </div>
+            )}
+
+            {!hasAnyTasks ? (
+              <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
+                <div className="mx-auto w-14 h-14 rounded-2xl bg-[#84001B]/10 flex items-center justify-center text-[#84001B] mb-3">
+                  <Inbox className="w-7 h-7" aria-hidden />
+                </div>
+                <h3 className="font-bold text-slate-900">No assignments yet</h3>
+                <p className="text-sm text-slate-500 mt-1.5 max-w-sm mx-auto leading-relaxed">
+                  Once your teacher posts work, it shows up here. You can still send a one-off file using{' '}
+                  <span className="font-semibold text-slate-700">Upload file</span>.
+                </p>
+              </div>
+            ) : visibleTasks.length === 0 ? (
+              <div className="flex flex-col gap-3 rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  No tasks match this filter
+                  {searching ? (
+                    <>
+                      {' '}for <span className="font-semibold">&ldquo;{search.trim()}&rdquo;</span>
+                    </>
+                  ) : null}
+                  .
+                </span>
+                <div className="flex items-center gap-3 shrink-0">
+                  {searching && (
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="font-semibold text-[#84001B] hover:underline"
+                    >
+                      Clear search
+                    </button>
+                  )}
+                  {taskFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setTaskFilter('all')}
+                      className="font-semibold text-[#84001B] hover:underline"
+                    >
+                      Show all
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {visibleTasks.map((a) => {
+                  const due = describeDueDate(a.due_date);
+                  const isSent = !!a.submitted;
+                  return (
+                    <li
+                      key={a.id}
+                      className={`group relative overflow-hidden rounded-2xl border bg-white p-5 transition-all ${
+                        isSent
+                          ? 'border-slate-200/80'
+                          : 'border-slate-200/90 hover:shadow-md hover:border-[#84001B]/25'
+                      }`}
+                    >
+                      {!isSent && due.tone === 'overdue' && (
+                        <span
+                          className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full bg-red-500"
+                          aria-hidden
+                        />
+                      )}
+                      <div className="flex items-start gap-4">
+                        <div
+                          className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 ${
+                            isSent ? 'bg-[#ffd21a]/30 text-[#84001B]' : 'bg-[#84001B]/10 text-[#84001B]'
+                          }`}
+                        >
+                          {isSent ? (
+                            <CheckCircle2 className="w-5 h-5" aria-hidden />
+                          ) : (
+                            <ClipboardList className="w-5 h-5" aria-hidden />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="font-bold text-slate-900 truncate">{a.title}</h3>
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${
+                                    DOC_COLORS[a.document_type] ?? DOC_COLORS.Other
+                                  }`}
+                                >
+                                  {a.document_type}
+                                </span>
+                                {isSent && (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                    Uploaded
+                                  </span>
+                                )}
+                              </div>
+                              {a.description && !isSent && (
+                                <p className="text-sm text-slate-500 mt-1 line-clamp-2">{a.description}</p>
+                              )}
+                              {!isSent && (
+                                <div className="mt-2 inline-flex">
+                                  <span
+                                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                                      DUE_TONE_CLASSES[due.tone]
+                                    }`}
+                                  >
+                                    {due.tone === 'overdue' ? (
+                                      <AlertTriangle className="w-3 h-3" aria-hidden />
+                                    ) : due.tone === 'none' ? (
+                                      <Calendar className="w-3 h-3" aria-hidden />
+                                    ) : (
+                                      <Clock className="w-3 h-3" aria-hidden />
+                                    )}
+                                    {due.label}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              {!isSent ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSubmitting(a);
+                                    setFileName('');
+                                    setSubmissionText('');
+                                    setSelectedFile(null);
+                                  }}
+                                  disabled={submissionSchemaMissing}
+                                  title={
+                                    submissionSchemaMissing
+                                      ? 'Run docs/supabase-setup-all-in-one.sql in Supabase first'
+                                      : undefined
+                                  }
+                                  className="flex items-center gap-1.5 bg-[#84001B] text-white text-xs px-3 py-2 rounded-xl hover:bg-[#6b0016] transition-colors font-semibold shadow-sm disabled:pointer-events-none disabled:opacity-45"
+                                >
+                                  <Upload className="w-3.5 h-3.5" aria-hidden />
+                                  Turn in
+                                </button>
+                              ) : (
+                                <Link
+                                  to="/my-submissions"
+                                  className="text-xs font-semibold text-[#84001B] hover:underline whitespace-nowrap"
+                                >
+                                  View status →
+                                </Link>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
+        )}
+
+        <div className="grid gap-3 mt-2 md:grid-cols-2">
+          <nav
+            aria-labelledby="other-features-heading"
+            className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+          >
+            <h2
+              id="other-features-heading"
+              className="border-b border-slate-100 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+            >
               Other shortcuts
             </h2>
             <ul className="divide-y divide-slate-100">
               <li>
                 <Link
                   to="/my-submissions"
-                  className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
+                  className="flex items-center gap-3 px-4 py-3 text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
                 >
                   <FileText className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                   <span className="min-w-0 flex-1 font-medium">Submission status</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">History and grades</span>
+                  <span className="shrink-0 text-[11px] text-slate-400">History &amp; grades</span>
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/team-14"
+                  className="flex items-center gap-3 px-4 py-3 text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
+                >
+                  <Sparkles className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                  <span className="min-w-0 flex-1 font-medium">Team 14</span>
+                  <span className="shrink-0 text-[11px] text-slate-400">Roster</span>
                 </Link>
               </li>
               <li>
                 <Link
                   to="/settings"
-                  className="flex items-center gap-3 px-3 py-2.5 text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
+                  className="flex items-center gap-3 px-4 py-3 text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
                 >
                   <Settings className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                   <span className="min-w-0 flex-1 font-medium">Account settings</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">Name and security</span>
+                  <span className="shrink-0 text-[11px] text-slate-400">Name &amp; security</span>
                 </Link>
               </li>
               <li>
                 <button
                   type="button"
                   onClick={() => void load()}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-[13px] text-slate-800 transition-colors hover:bg-slate-50"
                 >
-                  <RefreshCw className={`h-4 w-4 shrink-0 text-slate-400 ${loading ? 'animate-spin' : ''}`} aria-hidden />
+                  <RefreshCw
+                    className={`h-4 w-4 shrink-0 text-slate-400 ${loading ? 'animate-spin' : ''}`}
+                    aria-hidden
+                  />
                   <span className="min-w-0 flex-1 font-medium">Refresh task list</span>
                   <span className="shrink-0 text-[11px] text-slate-400">From server</span>
                 </button>
@@ -853,167 +1143,28 @@ export default function StudentAssignments() {
             </ul>
           </nav>
 
-        {!loading && hasAnyTasks && (
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Open to send</p>
-              <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">{upcoming.length}</p>
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-slate-100 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-2">
+              <ListChecks className="w-3.5 h-3.5 text-[#84001B]" aria-hidden />
+              Submission tips
             </div>
-            <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Already sent</p>
-              <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">{submitted.length}</p>
-            </div>
+            <ul className="px-4 py-3 text-[12px] leading-relaxed text-slate-600 space-y-2">
+              <li className="flex gap-2">
+                <span className="text-[#84001B] font-bold leading-none mt-1">·</span>
+                <span>Naming: include course code and deliverable type when you can.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-[#84001B] font-bold leading-none mt-1">·</span>
+                <span>Optional paste in the form helps search — not a duplicate official file.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-[#84001B] font-bold leading-none mt-1">·</span>
+                <span>Big files: finish the upload, then confirm on Submission status.</span>
+              </li>
+            </ul>
           </div>
-        )}
-
-        {!loading && hasAnyTasks && (
-          <div className="rounded-2xl border border-slate-200/90 bg-white/85 backdrop-blur-sm shadow-sm p-4 mb-6">
-            <div className="relative">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Filter tasks by title or document type…"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]/40 bg-white"
-              />
-            </div>
-          </div>
-        )}
-
-      {loading ? (
-        <div className="space-y-3">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-[100px] bg-slate-100 rounded-2xl animate-pulse" />
-          ))}
         </div>
-      ) : (
-        <>
-          {loadError && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {loadError}
-            </div>
-          )}
 
-          {!loading && searching && filtered.length === 0 && hasAnyTasks && (
-            <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-950">
-              <span>
-                No tasks match <span className="font-semibold">&ldquo;{search.trim()}&rdquo;</span>.
-              </span>
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                className="shrink-0 font-semibold text-[#84001B] hover:underline text-left sm:text-right"
-              >
-                Clear filter
-              </button>
-            </div>
-          )}
-
-          {upcoming.length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-                Open for upload ({upcoming.length})
-              </h2>
-              <div className="space-y-3">
-                {upcoming.map((a) => (
-                  <div
-                    key={a.id}
-                    className="bg-white border border-slate-200/90 rounded-2xl p-5 hover:shadow-md hover:border-[#84001B]/15 transition-all"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className="w-11 h-11 bg-[#84001B]/10 rounded-xl flex items-center justify-center flex-shrink-0">
-                        <ClipboardList className="w-5 h-5 text-[#84001B]" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                          <div className="min-w-0">
-                            <h3 className="font-semibold text-slate-900 truncate">{a.title}</h3>
-                            {a.description && (
-                              <p className="text-sm text-slate-500 mt-0.5 line-clamp-2">{a.description}</p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                            <span
-                              className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
-                                DOC_COLORS[a.document_type] ?? DOC_COLORS.Other
-                              }`}
-                            >
-                              {a.document_type}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSubmitting(a);
-                                setFileName('');
-                                setSubmissionText('');
-                                setSelectedFile(null);
-                              }}
-                              disabled={submissionSchemaMissing}
-                              title={
-                                submissionSchemaMissing
-                                  ? 'Run docs/supabase-setup-all-in-one.sql in Supabase first'
-                                  : undefined
-                              }
-                              className="flex items-center gap-1.5 bg-[#84001B] text-white text-xs px-3 py-2 rounded-xl hover:bg-[#6b0016] transition-colors font-semibold shadow-sm disabled:pointer-events-none disabled:opacity-45"
-                            >
-                              <Upload className="w-3.5 h-3.5" />
-                              Turn in
-                            </button>
-                          </div>
-                        </div>
-                        {a.due_date && (
-                          <p className="text-xs text-slate-500 flex items-center gap-1 mt-2">
-                            <Calendar className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                            Due {new Date(a.due_date).toLocaleDateString()}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {submitted.length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
-                Sent to your teacher ({submitted.length})
-              </h2>
-              <div className="space-y-3">
-                {submitted.map((a) => (
-                  <div
-                    key={a.id}
-                    className="bg-white border border-slate-200/80 rounded-2xl p-5 opacity-95"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-11 h-11 bg-[#ffd21a]/30 rounded-xl flex items-center justify-center flex-shrink-0">
-                        <CheckCircle2 className="w-5 h-5 text-[#84001B]" aria-hidden />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-slate-900 truncate">{a.title}</h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              DOC_COLORS[a.document_type] ?? DOC_COLORS.Other
-                            }`}
-                          >
-                            {a.document_type}
-                          </span>
-                          <span className="text-[11px] font-bold uppercase tracking-wide text-[#84001B]">
-                            Uploaded
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-        </div>
       </div>
 
       {submitting && (
@@ -1084,12 +1235,6 @@ export default function StudentAssignments() {
                 <h2 id="quick-submit-modal-title" className="font-bold text-slate-900 text-lg leading-tight">
                   Quick submit
                 </h2>
-                <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                  Choose SRS, SDD, SPMP, or STD (or <span className="font-semibold">Clear</span> to drop the type), attach
-                  your file—the{' '}
-                  <span className="font-semibold text-[#84001B]">Title</span> staff see matches your choice (still tied to the
-                  general course queue).
-                </p>
               </div>
               <button type="button" onClick={() => setQuickSubmitOpen(false)} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-xl transition-colors shrink-0"><X className="w-5 h-5" /></button>
             </div>

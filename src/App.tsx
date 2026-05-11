@@ -14,6 +14,14 @@ import Team14 from './pages/teacher/Team14';
 import StudentAssignments from './pages/student/Assignments';
 import MySubmissions from './pages/student/Submissions';
 import Settings from './pages/student/Settings';
+import StudentTeam14 from './pages/student/Team14';
+import StudentDashboard from './pages/student/Dashboard';
+import StudentTasks from './pages/student/Tasks';
+import StudentBoards from './pages/student/Boards';
+import StudentCalendar from './pages/student/Calendar';
+import StudentDrive from './pages/student/Drive';
+import StudentSheets from './pages/student/Sheets';
+import StudentAnalytics from './pages/student/Analytics';
 
 /** Teacher shell: pathless `<Route element={<Layout />}>` + segment paths (`grading` → `/grading`). Avoid `path="/"` on the layout and avoid `[<Route/>]` arrays — both can yield an empty `<Outlet />` in RR7. */
 function AuthenticatedRoutes() {
@@ -57,13 +65,18 @@ function AuthenticatedRoutes() {
         {isTeacher && <Route path="rubrics" element={<Navigate to="/analytics" replace />} />}
         {isTeacher && <Route path="groups" element={<Navigate to="/class-list" replace />} />}
         {isTeacher && <Route path="users" element={<Navigate to="/teacher-settings" replace />} />}
+        {!isTeacher && <Route path="dashboard" element={<StudentDashboard />} />}
         {!isTeacher && <Route path="assignments" element={<StudentAssignments />} />}
         {!isTeacher && <Route path="my-submissions" element={<MySubmissions />} />}
+        {!isTeacher && <Route path="tasks" element={<StudentTasks />} />}
+        {!isTeacher && <Route path="boards" element={<StudentBoards />} />}
+        {!isTeacher && <Route path="calendar" element={<StudentCalendar />} />}
+        {!isTeacher && <Route path="drive" element={<StudentDrive />} />}
+        {!isTeacher && <Route path="sheets" element={<StudentSheets />} />}
+        {!isTeacher && <Route path="analytics" element={<StudentAnalytics />} />}
+        {!isTeacher && <Route path="team-14" element={<StudentTeam14 />} />}
         {!isTeacher && <Route path="settings" element={<Settings />} />}
-        <Route
-          path="*"
-          element={<Navigate to={isTeacher ? '/dashboard' : '/assignments'} replace />}
-        />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
   );

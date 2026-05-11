@@ -227,6 +227,11 @@ create policy "submissions_update_staff" on public.submissions
   using (public.app_user_is_staff())
   with check (public.app_user_is_staff());
 
+drop policy if exists "submissions_delete_own" on public.submissions;
+create policy "submissions_delete_own" on public.submissions
+  for delete to authenticated
+  using (student_id = auth.uid());
+
 drop policy if exists "submissions_delete_teacher" on public.submissions;
 create policy "submissions_delete_teacher" on public.submissions
   for delete to authenticated

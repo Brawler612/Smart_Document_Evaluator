@@ -119,6 +119,11 @@ create policy "submissions_delete_teacher" on public.submissions
   for delete to authenticated
   using (public.app_user_is_staff());
 
+drop policy if exists "submissions_delete_own" on public.submissions;
+create policy "submissions_delete_own" on public.submissions
+  for delete to authenticated
+  using (student_id = auth.uid());
+
 grant select, insert, update, delete on table public.assignments to authenticated;
 grant select, insert, update, delete on table public.submissions to authenticated;
 grant all on table public.assignments to service_role;

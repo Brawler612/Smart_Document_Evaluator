@@ -154,6 +154,17 @@ export default function Settings() {
                   <Save className="w-4 h-4" aria-hidden />
                   {savingProfile ? 'Saving…' : 'Save name'}
                 </button>
+                <button
+                  type="button"
+                  disabled={noChanges && !profileMsg}
+                  onClick={() => {
+                    setFullName(user?.full_name || '');
+                    setProfileMsg(null);
+                  }}
+                  className="inline-flex items-center gap-2 border border-slate-300 bg-white text-slate-700 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-50 hover:border-slate-400 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  Cancel
+                </button>
                 {noChanges && trimmed && (
                   <span className="text-xs text-slate-500">No edits to save yet.</span>
                 )}

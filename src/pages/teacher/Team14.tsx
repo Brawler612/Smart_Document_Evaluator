@@ -9,45 +9,7 @@ import {
   teacherMaroonTheadClasses,
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
-
-type TeamMember = {
-  fullName: string;
-  studentId: string;
-  courseYear: string;
-  citEmail: string;
-  gmail: string;
-};
-
-const TEAM_14: TeamMember[] = [
-  {
-    fullName: 'Alexandreinash Dinapo',
-    studentId: '22-5471-353',
-    courseYear: 'BSIT-4',
-    citEmail: 'alexandreinash.dinapo@cit.edu',
-    gmail: 'dinaponash26@gmail.com',
-  },
-  {
-    fullName: 'Jushua Peter Te',
-    studentId: '20-4539-311',
-    courseYear: 'BSIT-4',
-    citEmail: 'jushuapeter.te@cit.edu',
-    gmail: 'jushuapeterte2@gmail.com',
-  },
-  {
-    fullName: 'Jeffer Azcona',
-    studentId: '20-1096-892',
-    courseYear: 'BSIT-4',
-    citEmail: 'jeffer.azcona@cit.edu',
-    gmail: 'jeffer.azcona21@gmail.com',
-  },
-  {
-    fullName: 'Ryan Bebiro',
-    studentId: '22-2193-721',
-    courseYear: 'BSIT-4',
-    citEmail: 'ryan.bebiro@cit.edu',
-    gmail: 'ryanbebiro7@gmail.com',
-  },
-];
+import { TEAM_14 } from '../../data/team14';
 
 export default function Team14() {
   const [q, setQ] = useState('');

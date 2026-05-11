@@ -1,191 +1,337 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ClipboardList,
+  Home,
   FileText,
-  GraduationCap,
+  ClipboardList,
+  CheckCircle2,
   Clock,
+  AlertTriangle,
   ChevronRight,
   Star,
-  AlertTriangle,
+  Upload,
+  Sparkles,
+  Calendar,
+  Folder,
+  Table2,
+  BarChart3,
+  ListChecks,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
-import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
+import {
+  StudentPageHero,
+  StudentStatusPill,
+  StudentWorkspaceShell,
+  studentCardClasses,
+} from '../../components/student/StudentWorkspaceChrome';
+import {
+  buildEffectiveSubmittedAssignmentIds,
+  describeDueRelative,
+  formatShortDate,
+  useStudentWorkspace,
+} from '../../lib/studentWorkspaceData';
+
+const QUICK_LINKS: { to: string; label: string; description: string; icon: typeof Home; tint: string }[] = [
+  {
+    to: '/assignments',
+    label: 'Submit work',
+    description: 'Quick path or per-task uploads',
+    icon: Upload,
+    tint: 'bg-[#84001B] text-[#ffd21a]',
+  },
+  {
+    to: '/tasks',
+    label: 'Tasks',
+    description: 'A focused to-do view with due dates',
+    icon: ListChecks,
+    tint: 'bg-rose-100 text-[#84001B]',
+  },
+  {
+    to: '/boards',
+    label: 'Boards',
+    description: 'Kanban across submission status',
+    icon: ClipboardList,
+    tint: 'bg-amber-100 text-amber-800',
+  },
+  {
+    to: '/calendar',
+    label: 'Calendar',
+    description: 'Due dates and what you sent',
+    icon: Calendar,
+    tint: 'bg-emerald-50 text-emerald-700',
+  },
+  {
+    to: '/drive',
+    label: 'Drive',
+    description: 'Every file you have uploaded',
+    icon: Folder,
+    tint: 'bg-sky-50 text-sky-700',
+  },
+  {
+    to: '/sheets',
+    label: 'Sheets',
+    description: 'Spreadsheet of submissions and scores',
+    icon: Table2,
+    tint: 'bg-violet-50 text-violet-700',
+  },
+  {
+    to: '/analytics',
+    label: 'Analytics',
+    description: 'Average score, on-time rate, by type',
+    icon: BarChart3,
+    tint: 'bg-slate-100 text-slate-700',
+  },
+  {
+    to: '/team-14',
+    label: 'Team 14',
+    description: 'Your team roster and emails',
+    icon: Sparkles,
+    tint: 'bg-[#ffd21a]/40 text-[#84001B]',
+  },
+];
+
 export default function StudentDashboard() {
   const { user } = useAuth();
-  const [stats, setStats] = useState({
-    assignments: 0,
-    submissions: 0,
-    reviewed: 0,
-    resubmit: 0,
-    avgScore: 0,
-  });
-  const [recentSubs, setRecentSubs] = useState<{ id: string; file_name: string; status: string; score: number | null; submitted_at: string; assignments: { title: string } | null }[]>([]);
-  const [pendingAsgn, setPendingAsgn] = useState<{ id: string; title: string; document_type: string; due_date: string | null }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { loading, assignments, submissions } = useStudentWorkspace();
 
-  useEffect(() => {
-    (async () => {
-      if (user?.id) await syncLocalSubmissionsToSupabase(user.id);
+  const submittedAssignmentIds = useMemo(
+    () => buildEffectiveSubmittedAssignmentIds(submissions),
+    [submissions]
+  );
 
-      const [asgn, subs] = await Promise.all([
-        supabase.from('assignments').select('id, title, document_type, due_date').eq('status', 'active').order('due_date', { ascending: true }).limit(4),
-        supabase.from('submissions').select('id, file_name, status, score, submitted_at, assignments(title)').eq('student_id', user!.id).order('submitted_at', { ascending: false }),
-      ]);
+  const openAssignments = useMemo(
+    () =>
+      assignments.filter((a) => a.status === 'active' && !submittedAssignmentIds.has(a.id)),
+    [assignments, submittedAssignmentIds]
+  );
 
-      const subsData: typeof recentSubs = (subs.data || []).map((row: Record<string, unknown>) => {
-        let a = row.assignments;
-        if (Array.isArray(a)) a = a[0];
-        const assignments =
-          a && typeof a === 'object' ? { title: String((a as { title?: unknown }).title ?? '') } : null;
-        return {
-          id: String(row.id ?? ''),
-          file_name: String(row.file_name ?? ''),
-          status: String(row.status ?? ''),
-          score: typeof row.score === 'number' ? row.score : row.score != null ? Number(row.score) : null,
-          submitted_at: String(row.submitted_at ?? ''),
-          assignments,
-        };
-      });
-      const reviewed = subsData.filter(s => s.status === 'reviewed');
-      const resubmitN = subsData.filter((s) => s.status === 'resubmit').length;
-      const avgScore = reviewed.length > 0 && reviewed.some(s => s.score != null)
-        ? Math.round(reviewed.filter(s => s.score != null).reduce((acc, s) => acc + (s.score || 0), 0) / reviewed.filter(s => s.score != null).length)
-        : 0;
+  const reviewed = submissions.filter((s) => s.status === 'reviewed');
+  const resubmit = submissions.filter((s) => s.status === 'resubmit');
+  const inReview = submissions.filter((s) => s.status === 'under_review');
+  const reviewedScores = reviewed.filter((s) => s.score != null) as Array<typeof reviewed[number] & { score: number }>;
+  const avgScore = reviewedScores.length
+    ? Math.round(reviewedScores.reduce((acc, s) => acc + s.score, 0) / reviewedScores.length)
+    : null;
 
-      setStats({
-        assignments: asgn.data?.length || 0,
-        submissions: subsData.length,
-        reviewed: reviewed.length,
-        resubmit: resubmitN,
-        avgScore,
-      });
-      setRecentSubs(subsData.slice(0, 5));
-      setPendingAsgn(asgn.data || []);
-      setLoading(false);
-    })();
-  }, [user]);
+  const overdue = openAssignments.filter((a) => describeDueRelative(a.due_date).tone === 'overdue');
+  const dueSoon = openAssignments
+    .map((a) => ({ a, due: describeDueRelative(a.due_date) }))
+    .filter((x) => x.due.tone === 'today' || x.due.tone === 'soon')
+    .sort((a, b) => (a.due.days ?? 99) - (b.due.days ?? 99))
+    .slice(0, 4);
+
+  const recentSubs = submissions.slice(0, 5);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-
-  const SC: Record<string, string> = {
-    submitted: 'bg-blue-100 text-blue-700',
-    under_review: 'bg-amber-100 text-amber-700',
-    reviewed: 'bg-green-100 text-green-700',
-    resubmit: 'bg-red-100 text-red-700',
-  };
+  const firstName = user?.full_name?.split(/\s+/)[0] ?? 'there';
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">{greeting}, {user?.full_name?.split(' ')[0]}!</h1>
-        <p className="text-gray-400 text-sm">Welcome to your student portal.</p>
-      </div>
+    <StudentWorkspaceShell>
+      <StudentPageHero
+        eyebrow={`${greeting}${user?.full_name ? `, ${firstName}` : ''}`}
+        title="Your student workspace"
+        icon={Home}
+        description={
+          <>
+            Track open assignments, sent work, and grading outcomes. Use the shortcuts below to jump into Tasks, Boards,
+            Calendar, Drive, Sheets, or Analytics.
+          </>
+        }
+        kpis={[
+          { label: 'Open', value: loading ? '—' : openAssignments.length },
+          { label: 'Sent', value: loading ? '—' : submissions.length, accent: 'yellow' },
+          { label: 'Avg', value: loading ? '—' : avgScore != null ? `${avgScore}%` : '—' },
+        ]}
+      />
 
-      {!loading && stats.resubmit > 0 && (
+      {!loading && resubmit.length > 0 && (
         <div
           role="alert"
-          className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 flex gap-3 items-start"
+          className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 flex gap-3 items-start shadow-sm"
         >
           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" aria-hidden />
           <div className="min-w-0 flex-1 text-sm">
             <p className="font-semibold text-red-950">
-              Your instructor requested a revised upload ({stats.resubmit} file{stats.resubmit !== 1 ? 's' : ''})
+              Your instructor requested a revised upload ({resubmit.length} file{resubmit.length !== 1 ? 's' : ''})
             </p>
             <p className="text-red-900/90 mt-1">
-              Likely causes: empty, incomplete, or not ready for grading. Open My submissions to read feedback and submit
-              again.
+              Open Submission status to read feedback and submit again.
             </p>
             <Link
               to="/my-submissions"
               className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-red-900 underline hover:text-red-950"
             >
-              Go to My submissions
+              Go to Submission status
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      {!loading && overdue.length > 0 && (
+        <div
+          role="alert"
+          className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex gap-3 items-start shadow-sm"
+        >
+          <Clock className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" aria-hidden />
+          <div className="min-w-0 flex-1 text-sm text-amber-950">
+            <p className="font-semibold">{overdue.length} task{overdue.length !== 1 ? 's are' : ' is'} past due</p>
+            <p className="mt-0.5 text-xs text-amber-900/90">
+              Send what you have — late uploads still reach your teacher.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
         {[
-          { label: 'Open Assignments', value: stats.assignments, Icon: ClipboardList, bg: 'bg-[#84001B]', link: '/assignments' },
-          { label: 'My Submissions', value: stats.submissions, Icon: FileText, bg: 'bg-blue-600', link: '/my-submissions' },
-          { label: 'Reviewed', value: stats.reviewed, Icon: GraduationCap, bg: 'bg-emerald-600', link: '/grades' },
-          { label: 'Avg Score', value: stats.avgScore > 0 ? `${stats.avgScore}%` : '—', Icon: Star, bg: 'bg-amber-500', link: '/grades' },
-        ].map(({ label, value, Icon, bg, link }) => (
-          <Link key={label} to={link}>
-            <div className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-md hover:border-gray-200 transition-all duration-200">
-              <div className={`w-12 h-12 ${bg} rounded-xl flex items-center justify-center text-white mb-4`}><Icon className="w-6 h-6" /></div>
-              <p className="text-2xl font-bold text-gray-900">{loading ? '—' : value}</p>
-              <p className="text-sm text-gray-400 mt-0.5">{label}</p>
+          { label: 'Open assignments', value: openAssignments.length, Icon: ClipboardList, link: '/tasks', accent: 'bg-[#84001B] text-white' },
+          { label: 'Sent submissions', value: submissions.length, Icon: FileText, link: '/my-submissions', accent: 'bg-blue-600 text-white' },
+          { label: 'Graded', value: reviewed.length, Icon: CheckCircle2, link: '/sheets', accent: 'bg-emerald-600 text-white' },
+          { label: 'Avg score', value: avgScore != null ? `${avgScore}%` : '—', Icon: Star, link: '/analytics', accent: 'bg-amber-500 text-white' },
+        ].map(({ label, value, Icon, link, accent }) => (
+          <Link key={label} to={link} className="group">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-md hover:border-[#84001B]/25 transition-all">
+              <div className={`w-12 h-12 ${accent} rounded-xl flex items-center justify-center mb-4`}>
+                <Icon className="w-6 h-6" aria-hidden />
+              </div>
+              <p className="text-2xl font-bold text-slate-900 tabular-nums">{loading ? '—' : value}</p>
+              <p className="text-xs uppercase tracking-wide text-slate-400 mt-1 font-semibold">{label}</p>
             </div>
           </Link>
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-white border border-gray-100 rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-semibold text-gray-900">My Recent Submissions</h2>
-            <Link to="/my-submissions" className="text-sm text-[#84001B] hover:underline flex items-center gap-1 font-medium">View all <ChevronRight className="w-3 h-3" /></Link>
+      <section className="mb-8">
+        <div className="flex items-end justify-between mb-3">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Workspace shortcuts</h2>
+          <Link to="/team-14" className="text-xs font-semibold text-[#84001B] hover:underline">
+            Open team roster →
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {QUICK_LINKS.map(({ to, label, description, icon: Icon, tint }) => (
+            <Link
+              key={to}
+              to={to}
+              className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md hover:border-[#84001B]/30 transition-all"
+            >
+              <div className={`w-10 h-10 rounded-xl ${tint} flex items-center justify-center mb-3`}>
+                <Icon className="w-5 h-5" aria-hidden />
+              </div>
+              <p className="text-sm font-bold text-slate-900">{label}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-snug line-clamp-2">{description}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <div className={`${studentCardClasses} p-5`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-slate-900">Recent submissions</h2>
+            <Link to="/my-submissions" className="text-xs font-semibold text-[#84001B] hover:underline flex items-center gap-1">
+              View all <ChevronRight className="w-3 h-3" />
+            </Link>
           </div>
-          {loading ? <Sk /> : recentSubs.length === 0 ? (
-            <Em icon={<FileText className="w-8 h-8" />} text="No submissions yet" />
+          {loading ? (
+            <SkList />
+          ) : recentSubs.length === 0 ? (
+            <Empty icon={<FileText className="w-8 h-8" />} text="No submissions yet" />
           ) : (
-            <div className="space-y-2">
-              {recentSubs.map(s => (
-                <div key={s.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
-                  <div className="w-8 h-8 bg-[#84001B]/10 rounded-lg flex items-center justify-center flex-shrink-0"><FileText className="w-4 h-4 text-[#84001B]" /></div>
+            <ul className="space-y-2">
+              {recentSubs.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  <div className="w-9 h-9 bg-[#84001B]/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-4 h-4 text-[#84001B]" aria-hidden />
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{s.file_name}</p>
-                    <p className="text-xs text-gray-400 truncate">{s.assignments?.title}</p>
+                    <p className="text-sm font-semibold text-slate-900 truncate">{s.file_name}</p>
+                    <p className="text-[11px] text-slate-500 truncate">
+                      {s.assignment_title || 'General queue'} · {formatShortDate(s.submitted_at)}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {s.status === 'reviewed' && s.score != null && (
-                      <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                      <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
                         {s.score}%
                       </span>
                     )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SC[s.status] || 'bg-gray-100 text-gray-600'}`}>{s.status.replace('_', ' ')}</span>
+                    <StudentStatusPill status={s.status} />
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
 
-        <div className="bg-white border border-gray-100 rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-semibold text-gray-900">Open Assignments</h2>
-            <Link to="/assignments" className="text-sm text-[#84001B] hover:underline flex items-center gap-1 font-medium">View all <ChevronRight className="w-3 h-3" /></Link>
+        <div className={`${studentCardClasses} p-5`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-slate-900">Due soon</h2>
+            <Link to="/calendar" className="text-xs font-semibold text-[#84001B] hover:underline flex items-center gap-1">
+              Open calendar <ChevronRight className="w-3 h-3" />
+            </Link>
           </div>
-          {loading ? <Sk /> : pendingAsgn.length === 0 ? (
-            <Em icon={<ClipboardList className="w-8 h-8" />} text="No open assignments" />
+          {loading ? (
+            <SkList />
+          ) : dueSoon.length === 0 && openAssignments.length === 0 ? (
+            <Empty icon={<ClipboardList className="w-8 h-8" />} text="No open assignments" />
+          ) : dueSoon.length === 0 ? (
+            <Empty icon={<Clock className="w-8 h-8" />} text="No due dates set yet" />
           ) : (
-            <div className="space-y-2">
-              {pendingAsgn.map(a => (
-                <div key={a.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
-                  <div className="w-8 h-8 bg-[#ffd21a]/40 rounded-lg flex items-center justify-center flex-shrink-0">
+            <ul className="space-y-2">
+              {dueSoon.map(({ a, due }) => (
+                <li
+                  key={a.id}
+                  className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors"
+                >
+                  <div className="w-9 h-9 bg-[#ffd21a]/30 rounded-lg flex items-center justify-center flex-shrink-0">
                     <span className="text-[10px] font-bold text-[#84001B]">{a.document_type}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{a.title}</p>
-                    <p className="text-xs text-gray-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />{a.due_date ? `Due ${new Date(a.due_date).toLocaleDateString()}` : 'No due date'}
-                    </p>
+                    <p className="text-sm font-semibold text-slate-900 truncate">{a.title}</p>
+                    <p className="text-[11px] text-slate-500 truncate">{due.label}</p>
                   </div>
-                </div>
+                  <Link
+                    to="/assignments"
+                    className="text-[11px] font-bold text-[#84001B] hover:underline whitespace-nowrap"
+                  >
+                    Turn in →
+                  </Link>
+                </li>
               ))}
-            </div>
+              {inReview.length > 0 && (
+                <li className="text-[11px] text-slate-500 mt-3 px-1">
+                  {inReview.length} submission{inReview.length !== 1 ? 's' : ''} currently under review.
+                </li>
+              )}
+            </ul>
           )}
         </div>
       </div>
+    </StudentWorkspaceShell>
+  );
+}
+
+function SkList() {
+  return (
+    <div className="space-y-2">
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="h-14 bg-slate-100 rounded-xl animate-pulse" />
+      ))}
     </div>
   );
 }
 
-function Sk() { return <div className="space-y-2">{[...Array(4)].map((_, i) => <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />)}</div>; }
-function Em({ icon, text }: { icon: React.ReactNode; text: string }) { return <div className="flex flex-col items-center justify-center py-10 text-gray-300"><div className="mb-2">{icon}</div><p className="text-sm text-gray-400">{text}</p></div>; }
+function Empty({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-10 text-slate-300">
+      <div className="mb-2">{icon}</div>
+      <p className="text-sm text-slate-400">{text}</p>
+    </div>
+  );
+}

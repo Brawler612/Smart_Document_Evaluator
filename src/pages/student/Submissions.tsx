@@ -12,12 +12,21 @@ import {
   RefreshCw,
   Inbox,
   AlertTriangle,
+  Trash2,
+  Loader2,
+  CheckCircle2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { normalizeSubStatus, submissionQueueTitle } from '../../lib/teacherSubmissionLoad';
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
+import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
+import { useSubmissionFileMeta } from '../../lib/submissionFileMeta';
+import {
+  deleteStudentSubmission,
+  getStudentHiddenSubmissionIds,
+} from '../../lib/studentDeleteSubmission';
 import type { SubStatus } from '../../types';
 
 interface Submission {
@@ -166,6 +175,51 @@ export default function MySubmissions() {
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [selected, setSelected] = useState<Submission | null>(null);
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
+  /** Two-step inline confirm — id of the row currently asking "are you sure?" */
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removedToast, setRemovedToast] = useState<string | null>(null);
+
+  /** Auto-dismiss the success toast after a few seconds. */
+  useEffect(() => {
+    if (!removedToast) return;
+    const t = window.setTimeout(() => setRemovedToast(null), 3500);
+    return () => window.clearTimeout(t);
+  }, [removedToast]);
+
+  async function handleRemoveSubmission(target: Submission) {
+    if (!user?.id) return;
+    setRemovingId(target.id);
+    setRemoveError(null);
+
+    /** Optimistic removal — snap it out of the list immediately. */
+    const prev = submissions;
+    setSubmissions((rows) => rows.filter((r) => r.id !== target.id));
+    if (selected?.id === target.id) setSelected(null);
+
+    const res = await deleteStudentSubmission({
+      id: target.id,
+      studentId: user.id,
+      fileUrl: target.file_url,
+    });
+
+    setRemovingId(null);
+    setConfirmRemoveId(null);
+
+    if (!res.ok) {
+      /** Roll back the optimistic remove so the row reappears with its original status. */
+      setSubmissions(prev);
+      setRemoveError(res.message);
+      return;
+    }
+
+    setRemovedToast(
+      res.hiddenLocally
+        ? `Removed ${target.file_name} from your view (kept on the instructor's queue).`
+        : `Removed ${target.file_name}${res.localOnly ? ' (browser copy)' : ''}.`
+    );
+  }
 
   async function resolveSubmissionTable(): Promise<'submissions' | 'submission' | null> {
     if (submissionTable) return submissionTable;
@@ -237,9 +291,11 @@ export default function MySubmissions() {
       }
     }
 
-    const combined = [...dbRows, ...localMapped].sort(
-      (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()
-    );
+    /** Skip rows the student soft-removed when RLS blocked the actual DELETE. */
+    const hiddenIds = getStudentHiddenSubmissionIds();
+    const combined = [...dbRows, ...localMapped]
+      .filter((row) => !hiddenIds.has(row.id))
+      .sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
     setSubmissions(combined);
     setLoading(false);
   }
@@ -422,8 +478,14 @@ export default function MySubmissions() {
             {filtered.map((s) => {
               const pv = statusPresentation(s.status);
               return (
-              <li key={s.id}>
-                <div className="bg-white border border-slate-200/90 rounded-2xl p-4 md:p-5 shadow-sm hover:shadow-md hover:border-[#84001B]/15 transition-all">
+              <li key={s.id} data-submission-row={s.id}>
+                <div
+                  className={`bg-white border rounded-2xl p-4 md:p-5 shadow-sm hover:shadow-md transition-all ${
+                    confirmRemoveId === s.id
+                      ? 'border-red-300 ring-2 ring-red-100'
+                      : 'border-slate-200/90 hover:border-[#84001B]/15'
+                  }`}
+                >
                   <div className="flex flex-col sm:flex-row sm:items-stretch gap-4">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
                       <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#ffd21a] to-[#f5c400] flex items-center justify-center shrink-0 text-[#84001B]">
@@ -457,7 +519,8 @@ export default function MySubmissions() {
                             <span className="text-slate-400"> · {s.assignments.document_type}</span>
                           )}
                         </p>
-                        <p className="text-xs text-slate-500 mt-1.5">
+                        <FileChipStrip fileUrl={s.file_url} fileName={s.file_name} />
+                        <p className="text-xs text-slate-500 mt-2">
                           <span className="font-medium text-slate-600">{relativeTime(s.submitted_at)}</span>
                           <span className="text-slate-300 mx-1.5">·</span>
                           <time dateTime={s.submitted_at} title={new Date(s.submitted_at).toISOString()}>
@@ -498,6 +561,45 @@ export default function MySubmissions() {
                         <MessageSquare className="w-3.5 h-3.5" />
                         Details
                       </button>
+                      {confirmRemoveId === s.id ? (
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveSubmission(s)}
+                            disabled={removingId === s.id}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 text-white px-3 py-2 text-xs font-bold hover:bg-red-700 shadow-sm disabled:opacity-60"
+                          >
+                            {removingId === s.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                            {removingId === s.id ? 'Removing…' : 'Confirm'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRemoveId(null)}
+                            disabled={removingId === s.id}
+                            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmRemoveId(s.id);
+                            setRemoveError(null);
+                          }}
+                          disabled={removingId !== null}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 disabled:opacity-60"
+                          title="Remove this submission"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Remove
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -508,92 +610,243 @@ export default function MySubmissions() {
         )}
       </div>
 
-      {selected &&
-        (() => {
-          const selPv = statusPresentation(selected.status);
-          return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200/90 max-h-[min(90vh,32rem)] flex flex-col">
-                <div className="flex shrink-0 items-start justify-between p-6 border-b border-slate-100 gap-4">
-                  <div className="min-w-0">
-                    <h2 className="font-bold text-slate-900 text-lg">Submission details</h2>
-                    <p className="text-sm text-slate-500 truncate mt-0.5">{selected.file_name}</p>
-                    <p className="text-[11px] text-slate-400 mt-1 tabular-nums" title={selected.id}>
-                      Ref {shortId(selected.id)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelected(null)}
-                    className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors shrink-0"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-4">
-                  {selPv.normalized === 'resubmit' && (
-                    <div className="rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm text-red-950">
-                      <p className="font-bold flex items-center gap-2 mb-1">
-                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" aria-hidden />
-                        Revision needed
-                      </p>
-                      <p className="leading-relaxed text-red-900/95">
-                        This file was flagged as empty, incomplete, or not acceptable for grading. Please read the staff
-                        message below and upload a complete replacement from Submit work.
-                      </p>
-                    </div>
-                  )}
-                  {selPv.normalized === 'reviewed' && selected.score != null && (
-                    <div className="flex items-center justify-between rounded-xl bg-[#ffd21a]/25 border border-[#ffd21a]/40 px-4 py-3">
-                      <span className="text-sm font-semibold text-slate-800">Final score (staff)</span>
-                      <span className="text-2xl font-bold text-[#84001B] tabular-nums">{selected.score}%</span>
-                    </div>
-                  )}
-                  {selPv.normalized === 'reviewed' &&
-                    (selected.ai_draft_score != null || (selected.ai_draft_summary ?? '').trim()) && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-4 py-3">
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-                        AI preliminary (automated draft)
-                      </p>
-                      {selected.ai_draft_score != null && (
-                        <p className="text-sm font-semibold text-slate-800 tabular-nums mb-2">
-                          Indicative total:{' '}
-                          <span className="text-[#84001B]">{selected.ai_draft_score}%</span>
-                          {selPv.normalized === 'reviewed' &&
-                            selected.score != null &&
-                            selected.ai_draft_score !== selected.score && (
-                              <span className="font-normal text-slate-600">
-                                {' '}
-                                · staff adjusted to {selected.score}%
-                              </span>
-                            )}
-                        </p>
-                      )}
-                      {selected.ai_draft_summary ? (
-                        <p className="text-sm text-slate-700 leading-relaxed">{selected.ai_draft_summary}</p>
-                      ) : (
-                        <p className="text-xs text-slate-500 italic">No summary text stored for this run.</p>
-                      )}
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Status</p>
-                    <span
-                      className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-xl font-semibold ${selPv.chip}`}
-                    >
-                      {selPv.label}
+      {removeError && (
+        <div
+          role="alert"
+          className="fixed bottom-6 right-6 z-[60] max-w-md rounded-2xl border border-red-200 bg-red-50/95 px-4 py-3 text-sm text-red-900 shadow-xl backdrop-blur-sm"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="font-bold mb-1">Couldn&apos;t remove that submission</p>
+              <p className="text-[12px] leading-relaxed text-red-900/90 break-words">{removeError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRemoveError(null)}
+              className="p-1 text-red-500 hover:text-red-700 shrink-0"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {removedToast && (
+        <div
+          role="status"
+          className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/95 px-4 py-3 text-sm text-emerald-900 shadow-xl backdrop-blur-sm"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden />
+          <span className="font-medium">{removedToast}</span>
+        </div>
+      )}
+
+      {selected && (
+        <SubmissionDetailsDialog
+          selected={selected}
+          onClose={() => setSelected(null)}
+          onRequestRemove={() => {
+            setConfirmRemoveId(selected.id);
+            setRemoveError(null);
+            setSelected(null);
+            requestAnimationFrame(() => {
+              document.querySelector(`[data-submission-row="${selected.id}"]`)?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+              });
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Small chip strip used on every row in the submissions list. Calls the live-size hook safely. */
+function FileChipStrip({ fileUrl, fileName }: { fileUrl: string | null; fileName: string }) {
+  const { meta, measuring } = useSubmissionFileMeta(fileUrl, fileName);
+  const sizeTitle =
+    meta.bytes != null
+      ? `${meta.bytes.toLocaleString()} bytes`
+      : measuring
+      ? 'Measuring file size…'
+      : 'Size could not be determined for this URL';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+      {meta.extension && (
+        <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded-md">
+          {meta.extension}
+        </span>
+      )}
+      <span
+        className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide bg-[#84001B]/8 text-[#84001B] border border-[#84001B]/15 px-1.5 py-0.5 rounded-md tabular-nums"
+        title={sizeTitle}
+      >
+        {meta.bytes == null && measuring ? 'Measuring…' : meta.sizeLabel}
+      </span>
+      <span
+        className="inline-flex items-center text-[10px] font-medium bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded-md max-w-[14rem] truncate"
+        title={meta.mime}
+      >
+        {meta.mime}
+      </span>
+      <span
+        className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${
+          meta.urlKind === 'http'
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+            : meta.urlKind === 'data'
+            ? 'bg-blue-50 text-blue-700 border-blue-100'
+            : meta.urlKind === 'none'
+            ? 'bg-slate-50 text-slate-500 border-slate-200'
+            : 'bg-slate-50 text-slate-600 border-slate-200'
+        }`}
+      >
+        {meta.urlKindLabel}
+      </span>
+    </div>
+  );
+}
+
+function SubmissionDetailsDialog({
+  selected,
+  onClose,
+  onRequestRemove,
+}: {
+  selected: Submission;
+  onClose: () => void;
+  onRequestRemove: () => void;
+}) {
+  const selPv = statusPresentation(selected.status);
+  const { meta: selMeta, measuring } = useSubmissionFileMeta(selected.file_url, selected.file_name);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200/90 max-h-[min(92vh,48rem)] flex flex-col">
+        <div className="flex shrink-0 items-start justify-between p-6 border-b border-slate-100 gap-4">
+          <div className="min-w-0">
+            <h2 className="font-bold text-slate-900 text-lg">Submission details</h2>
+            <p className="text-sm text-slate-500 truncate mt-0.5">{selected.file_name}</p>
+            <p className="text-[11px] text-slate-400 mt-1 tabular-nums" title={selected.id}>
+              Ref {shortId(selected.id)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-4">
+          {selPv.normalized === 'resubmit' && (
+            <div className="rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm text-red-950">
+              <p className="font-bold flex items-center gap-2 mb-1">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" aria-hidden />
+                Revision needed
+              </p>
+              <p className="leading-relaxed text-red-900/95">
+                This file was flagged as empty, incomplete, or not acceptable for grading. Please read the staff
+                message below and upload a complete replacement from Submit work.
+              </p>
+            </div>
+          )}
+          {selPv.normalized === 'reviewed' &&
+            selected.score != null &&
+            selected.ai_draft_score == null &&
+            !(selected.ai_draft_summary ?? '').trim() && (
+            <div className="flex items-center justify-between rounded-xl bg-[#ffd21a]/25 border border-[#ffd21a]/40 px-4 py-3">
+              <span className="text-sm font-semibold text-slate-800">Final score (staff)</span>
+              <span className="text-2xl font-bold text-[#84001B] tabular-nums">{selected.score}%</span>
+            </div>
+          )}
+          {(selected.ai_draft_score != null || (selected.ai_draft_summary ?? '').trim().length > 0) && (
+            <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4">
+              <AIDocumentEvaluationReport
+                criteria={[]}
+                aiScorePercent={selected.ai_draft_score}
+                teacherScorePercent={
+                  selected.status === 'reviewed' && selected.score != null ? selected.score : null
+                }
+                summaryText={selected.ai_draft_summary}
+                heading="AI evaluation (your submission)"
+              />
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Status</p>
+            <span
+              className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-xl font-semibold ${selPv.chip}`}
+            >
+              {selPv.label}
+            </span>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">File details</p>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs">
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Name</dt>
+                <dd className="text-slate-800 font-medium break-all" title={selected.file_name}>
+                  {selected.file_name}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Size</dt>
+                <dd
+                  className="text-slate-800 font-bold tabular-nums"
+                  title={
+                    selMeta.bytes != null
+                      ? `${selMeta.bytes.toLocaleString()} bytes`
+                      : measuring
+                      ? 'Measuring file size…'
+                      : 'Size could not be determined for this URL'
+                  }
+                >
+                  {selMeta.bytes != null ? (
+                    selMeta.sizeLabel
+                  ) : measuring ? (
+                    <span className="inline-flex items-center gap-1.5 text-slate-500 font-medium normal-case">
+                      <span
+                        className="w-3 h-3 rounded-full border-2 border-slate-300 border-t-[#84001B] animate-spin"
+                        aria-hidden
+                      />
+                      Measuring…
                     </span>
-                  </div>
-                  <div className="text-xs text-slate-500 space-y-1">
-                    <p>
-                      <span className="font-semibold text-slate-600">Task:</span>{' '}
-                      {submissionHeading(selected)}
-                    </p>
-                    <p>
-                      <span className="font-semibold text-slate-600">Sent:</span>{' '}
-                      {new Date(selected.submitted_at).toLocaleString()}
-                    </p>
-                  </div>
+                  ) : (
+                    <>
+                      —
+                      <span className="ml-1 text-[10px] font-medium text-slate-400 normal-case">
+                        (size unavailable)
+                      </span>
+                    </>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Type</dt>
+                <dd className="text-slate-800 font-medium break-all">
+                  {selMeta.extension || '—'}
+                  <span className="text-slate-400"> · {selMeta.mime}</span>
+                </dd>
+              </div>
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Storage</dt>
+                <dd className="text-slate-800 font-medium">{selMeta.urlKindLabel}</dd>
+              </div>
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Task</dt>
+                <dd className="text-slate-800 font-medium">{submissionHeading(selected)}</dd>
+              </div>
+              <div>
+                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Sent</dt>
+                <dd className="text-slate-800 font-medium">
+                  {new Date(selected.submitted_at).toLocaleString()}
+                </dd>
+              </div>
+            </dl>
+          </div>
                   {submissionHasOpenableFileUrl(selected.file_url) && (
                     <SubmissionOpenLink
                       raw={selected.file_url!.trim()}
@@ -627,11 +880,28 @@ export default function MySubmissions() {
                       </p>
                     )}
                   </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        </div>
+        <div className="shrink-0 border-t border-slate-100 px-6 py-3 bg-slate-50/60 flex items-center justify-between gap-3 rounded-b-2xl">
+          <div className="text-[11px] text-slate-500 leading-tight">
+            {selPv.normalized === 'reviewed' ? (
+              <span className="inline-flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-hidden />
+                Already graded — removing also deletes the score from your record.
+              </span>
+            ) : (
+              'Removing deletes the file and this row for you.'
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRequestRemove}
+            className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 shrink-0"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Remove submission
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

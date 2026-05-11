@@ -12,6 +12,7 @@ import {
   FileText,
   Undo2,
   UserMinus,
+  Download,
 } from 'lucide-react';
 import {
   isStudentHiddenFromTeacherDirectory,
@@ -71,6 +72,23 @@ function formatClassListDateTime(iso: string | null | undefined): string {
   } catch {
     return d.toLocaleString();
   }
+}
+
+function csvCell(v: string | number | null | undefined): string {
+  const s = v == null ? '' : String(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadTextFile(filename: string, body: string, mime: string) {
+  const blob = new Blob([body], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function UserManagement() {
@@ -321,6 +339,51 @@ export default function UserManagement() {
     return latestSubmissionByStudentId.get(u.id) ?? null;
   }
 
+  function exportDirectoryCsv() {
+    const statusFor = (u: AppUser, latest: TeacherSubmission | null) => {
+      if (u.roster_pending) return 'Awaiting sign-in';
+      if (latest) return DIRECTORY_STATUS_LABEL[latest.status];
+      return 'Awaiting upload';
+    };
+    const headers = [
+      'Name',
+      'Student ID',
+      'Team code',
+      'Group',
+      'Course',
+      'School year',
+      'Email',
+      'Live status',
+      'Latest file',
+      'Submitted',
+      'Last modified',
+    ];
+    const lines = filtered.map((u) => {
+      const latest = latestSubmissionByStudentId.get(u.id) ?? null;
+      const group = it332TeamGroupLabel(u.team_code) ?? '';
+      return [
+        csvCell(u.full_name),
+        csvCell(u.student_number ?? ''),
+        csvCell(u.team_code ?? ''),
+        csvCell(group),
+        csvCell(u.course_year ?? ''),
+        csvCell(u.school_year ?? ''),
+        csvCell(u.email ?? ''),
+        csvCell(statusFor(u, latest)),
+        csvCell(latest?.file_name ?? ''),
+        csvCell(latest ? formatClassListDateTime(latest.submitted_at) : ''),
+        csvCell(latest?.updated_at ? formatClassListDateTime(latest.updated_at) : ''),
+      ].join(',');
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const bom = '\uFEFF';
+    downloadTextFile(
+      `class-list-${stamp}.csv`,
+      `${bom}${headers.join(',')}\n${lines.join('\n')}`,
+      'text/csv;charset=utf-8;'
+    );
+  }
+
   return (
     <div className="min-h-full bg-gradient-to-b from-slate-100/95 via-[#faf8f8] to-slate-100/85">
       <div className="p-6 md:p-8 max-w-7xl mx-auto pb-16">
@@ -356,6 +419,16 @@ export default function UserManagement() {
                   aria-hidden
                 />
                 Sync
+              </button>
+              <button
+                type="button"
+                onClick={exportDirectoryCsv}
+                disabled={loading || filtered.length === 0}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                title="Download the current filtered directory as CSV"
+              >
+                <Download className="w-3.5 h-3.5" aria-hidden />
+                Export
               </button>
               <Link
                 to="/inbox"

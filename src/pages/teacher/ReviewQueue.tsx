@@ -7,7 +7,6 @@ import {
   X,
   Star,
   ChevronDown,
-  ChevronRight,
   Calendar,
   Download,
   Printer,
@@ -16,6 +15,16 @@ import {
   ArrowRight,
   Trash2,
   Undo2,
+  Loader2,
+  Sparkles,
+  BookOpen,
+  Wand2,
+  Send,
+  RotateCcw,
+  Eye,
+  GraduationCap,
+  Info,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   fetchTeacherSubmissionRows,
@@ -30,7 +39,6 @@ import {
   SubmissionOpenLink,
   parseDataUrl,
   submissionHasOpenableFileUrl,
-  openSubmissionAttachmentNewTab,
 } from '../../components/SubmissionOpenLink';
 import { isPlausibleSubmissionId } from '../../lib/gradingRoutes';
 import { supabase } from '../../lib/supabase';
@@ -48,6 +56,8 @@ import {
   teacherMaroonTheadClasses,
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
+import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
+import { formatGeminiEvaluationError, runGeminiBackedEvaluation } from '../../lib/geminiDocumentEvaluation';
 
 type Submission = TeacherSubmission;
 
@@ -241,11 +251,27 @@ function buildAIFeedback(criteria: AICriterion[]): string {
 }
 
 /** Snapshot persisted for students as “AI preliminary” versus teacher-adjusted `score` / `feedback`. */
-function criteriaToDraftSnapshot(criteria: AICriterion[]): { score: number | null; summary: string } {
+function criteriaToDraftSnapshot(
+  criteria: AICriterion[],
+  executiveSummary?: string | null
+): { score: number | null; summary: string } {
   const total = criteria.reduce((s, c) => s + c.score, 0);
   const maxTotal = criteria.reduce((s, c) => s + c.max, 0);
   const scorePct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
-  return { score: scorePct, summary: buildAIFeedback(criteria) };
+  const exec = executiveSummary?.trim() ?? '';
+  const rubricLine = buildAIFeedback(criteria);
+  const summary = exec ? (rubricLine ? `${exec}\n\n${rubricLine}` : exec) : rubricLine;
+  return { score: scorePct, summary };
+}
+
+/** Parses the manual teacher grade input. Returns null when blank or out of range. */
+function parseTeacherScoreInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0 || n > 100) return null;
+  return Math.round(n);
 }
 
 function getReadiness(criteria: AICriterion[], bodyText: string): ReadinessResult {
@@ -415,24 +441,37 @@ export default function ReviewQueue() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [selected, setSelected] = useState<Submission | null>(null);
+  /** Restricts the grading modal to the chosen flow ('ai' or 'teacher'). Set by which row button was pressed. */
+  const [gradeMode, setGradeMode] = useState<'ai' | 'teacher' | null>(null);
   const [aiCriteria, setAiCriteria] = useState<AICriterion[]>([]);
+  /** Manual per-criterion rubric the teacher scores in Grade-as-teacher mode. Same shape as AI rubric. */
+  const [teacherCriteria, setTeacherCriteria] = useState<AICriterion[]>([]);
+  const [aiExecutiveSummary, setAiExecutiveSummary] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [inspectionNotice, setInspectionNotice] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [inspectionText, setInspectionText] = useState('');
   /** Immutable snapshot when the grading modal loads (student text before teacher edits). */
-  const [originalSubmissionSnapshot, setOriginalSubmissionSnapshot] = useState('');
   const [feedback, setFeedback] = useState('');
-  const [newStatus, setNewStatus] = useState<SubStatus>('reviewed');
+  /** Working value in the teacher-grade input (string while editing). */
+  const [teacherScoreInput, setTeacherScoreInput] = useState('');
+  /** Confirmed teacher grade applied via the "Grade as teacher" button. Null = no manual grade. */
+  const [appliedTeacherScore, setAppliedTeacherScore] = useState<number | null>(null);
+  /** Inline message under the teacher-grade button (validation / confirmation). */
+  const [teacherGradeNotice, setTeacherGradeNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
   const [fileOpenHref, setFileOpenHref] = useState<string | null>(null);
-  const [fileLoadHint, setFileLoadHint] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const submissionDeepLinkConsumed = useRef<string | null>(null);
   const headerSelectAllRef = useRef<HTMLInputElement>(null);
   /** Latest automated AI run (“before” teacher tweaks criterion sliders). Persisted as `ai_draft_*` when saving. */
   const aiDraftSnapshotRef = useRef<{ score: number | null; summary: string } | null>(null);
+  /** Which grade flow the teacher wanted when opening the modal ('ai' | 'teacher'). Drives auto-scroll + auto-run. */
+  const pendingGradeIntentRef = useRef<'ai' | 'teacher' | null>(null);
+  /** Focus target for the teacher-grade input when the "Grade (Teacher)" row button is pressed. */
+  const teacherScoreInputRef = useRef<HTMLInputElement>(null);
 
   const selectedQueueIds = useMemo(
     () => [...selectedRowIds].filter((id) => submissions.some((s) => s.id === id)),
@@ -441,9 +480,77 @@ export default function ReviewQueue() {
 
   function closeGradingModal() {
     setSelected(null);
+    setGradeMode(null);
     setFileOpenHref(null);
-    setFileLoadHint(null);
-    setOriginalSubmissionSnapshot('');
+    setAiExecutiveSummary('');
+    setInspectionNotice(null);
+    setTeacherScoreInput('');
+    setAppliedTeacherScore(null);
+    setTeacherGradeNotice(null);
+    setTeacherCriteria([]);
+  }
+
+  /** Updates one criterion's score (clamped to [0, max]) and syncs the teacher-grade input to the new total. */
+  function updateTeacherCriterionScore(idx: number, rawValue: string) {
+    setTeacherCriteria((rows) => {
+      const next = rows.map((c, i) => {
+        if (i !== idx) return c;
+        const parsed = Number.parseInt(rawValue, 10);
+        const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(c.max, parsed)) : 0;
+        return { ...c, score: clamped };
+      });
+      /** Rubric is normalised to 100 points, so the raw sum is already the publishable grade. */
+      const rubricTotal = next.reduce((s, c) => s + c.score, 0);
+      setTeacherScoreInput(String(rubricTotal));
+      if (teacherGradeNotice) setTeacherGradeNotice(null);
+      /** Live rubric edits invalidate any previously-applied flat grade so the new total wins. */
+      if (appliedTeacherScore != null && appliedTeacherScore !== rubricTotal) {
+        setAppliedTeacherScore(null);
+      }
+      return next;
+    });
+  }
+
+  function updateTeacherCriterionComment(idx: number, comment: string) {
+    setTeacherCriteria((rows) => rows.map((c, i) => (i === idx ? { ...c, comment } : c)));
+  }
+
+  function resetTeacherRubric() {
+    setTeacherCriteria((rows) => rows.map((c) => ({ ...c, score: 0, comment: '' })));
+    setTeacherScoreInput('');
+    setAppliedTeacherScore(null);
+    setTeacherGradeNotice(null);
+  }
+
+  /** Validates the manual grade input and "applies" it as the published teacher score. */
+  function applyTeacherGrade() {
+    const parsed = parseTeacherScoreInput(teacherScoreInput);
+    if (teacherScoreInput.trim() === '') {
+      setTeacherGradeNotice({
+        kind: 'err',
+        text: 'Type a grade (0–100) before pressing Grade as teacher.',
+      });
+      return;
+    }
+    if (parsed == null) {
+      setTeacherGradeNotice({
+        kind: 'err',
+        text: 'Teacher grade must be a whole number between 0 and 100.',
+      });
+      return;
+    }
+    setAppliedTeacherScore(parsed);
+    setTeacherScoreInput(String(parsed));
+    setTeacherGradeNotice({
+      kind: 'ok',
+      text: `Teacher grade ${parsed}% saved. Publish to make it visible to the student.`,
+    });
+  }
+
+  function clearTeacherGrade() {
+    setTeacherScoreInput('');
+    setAppliedTeacherScore(null);
+    setTeacherGradeNotice(null);
   }
 
   function toggleRowSelected(id: string) {
@@ -517,15 +624,51 @@ export default function ReviewQueue() {
     void load();
   }, []);
 
-  async function openReview(sub: Submission) {
+  /**
+   * Build the teacher-scorable rubric from the AI rubric template, rescaling each criterion's
+   * `max` proportionally so the total adds up to exactly 100 points. The last row absorbs any
+   * rounding error so the rubric is guaranteed to total 100, never 99 or 101.
+   */
+  function buildTeacherRubricOutOfHundred(template: AICriterion[]): AICriterion[] {
+    if (template.length === 0) return [];
+    const TARGET = 100;
+    const totalMax = template.reduce((s, c) => s + c.max, 0);
+    if (totalMax <= 0) {
+      const even = Math.floor(TARGET / template.length);
+      const remainder = TARGET - even * template.length;
+      return template.map((c, i) => ({
+        name: c.name,
+        max: i === template.length - 1 ? even + remainder : even,
+        score: 0,
+        comment: '',
+      }));
+    }
+    const scaled = template.map((c) => Math.max(1, Math.round((c.max / totalMax) * TARGET)));
+    const drift = TARGET - scaled.reduce((s, n) => s + n, 0);
+    scaled[scaled.length - 1] = Math.max(1, scaled[scaled.length - 1] + drift);
+    return template.map((c, i) => ({
+      name: c.name,
+      max: scaled[i],
+      score: 0,
+      comment: '',
+    }));
+  }
+
+  async function openReview(sub: Submission, intent: 'ai' | 'teacher' | null = null) {
+    pendingGradeIntentRef.current = intent;
+    setGradeMode(intent);
     setSelected(sub);
     setFeedback(sub.feedback || '');
-    setNewStatus(sub.status === 'submitted' || sub.status === 'under_review' ? 'reviewed' : sub.status);
     setAiCriteria([]);
+    setAiExecutiveSummary('');
+    setInspectionNotice(null);
     setInspectionText('');
-    setOriginalSubmissionSnapshot('');
     setFileOpenHref(null);
-    setFileLoadHint(null);
+    /** Restore the teacher's previously-published manual grade so a re-grade starts where they left off. */
+    const priorScore = sub.status === 'reviewed' && sub.score != null ? sub.score : null;
+    setTeacherScoreInput(priorScore != null ? String(priorScore) : '');
+    setAppliedTeacherScore(priorScore);
+    setTeacherGradeNotice(null);
     setAiLoading(true);
     const table = await resolveSubmissionTableName();
     if (table) {
@@ -538,15 +681,41 @@ export default function ReviewQueue() {
     }
     const payload = await loadSubmissionInspectionPayload(sub);
     setInspectionText(payload.text);
-    setOriginalSubmissionSnapshot(payload.text);
     setFileOpenHref(payload.openHref);
-    setFileLoadHint(payload.hint);
     const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
-    aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria);
+    aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
     setAiCriteria(criteria);
     if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
+    /** Seed the teacher's rubric with the same criterion names but normalize maxes to sum to 100 points. */
+    setTeacherCriteria(buildTeacherRubricOutOfHundred(criteria));
     setAiLoading(false);
   }
+
+  /**
+   * After the modal opens AND the initial AI draft finishes, jump the teacher to the section that
+   * matches the row button they pressed: AI section (and auto-trigger Gemini) for "Grade AI",
+   * Teacher section (and focus the score input) for "Grade Teacher".
+   */
+  useEffect(() => {
+    if (!selected || aiLoading) return;
+    const intent = pendingGradeIntentRef.current;
+    if (!intent) return;
+    pendingGradeIntentRef.current = null;
+    if (intent === 'ai') {
+      void runInspectionNow();
+      const el = document.getElementById('grading-ai-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (intent === 'teacher') {
+      const el = document.getElementById('grading-teacher-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.setTimeout(() => {
+        teacherScoreInputRef.current?.focus();
+        teacherScoreInputRef.current?.select();
+      }, 350);
+    }
+    /** Intentional: react only to modal-open + aiLoading transitions for this submission. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, aiLoading]);
 
   useEffect(() => {
     const raw = searchParams.get('submission');
@@ -578,27 +747,99 @@ export default function ReviewQueue() {
     void openReview(match);
   }, [loading, submissions, searchParams, setSearchParams]);
 
-  function runInspectionNow() {
+  async function runInspectionNow() {
     if (!selected) return;
-    const criteria = runFullAIDraft(gradingDocTypeForAI(selected), inspectionText);
-    aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria);
-    setAiCriteria(criteria);
-    if (!feedback.trim()) setFeedback(buildAIFeedback(criteria));
+    const docType = gradingDocTypeForAI(selected);
+    const template = runFullAIDraft(docType, inspectionText);
+    const evalUrl = (import.meta.env.VITE_GEMINI_EVAL_URL as string | undefined)?.trim();
+    const apiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim();
+    const model = (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim();
+
+    if (!evalUrl && !apiKey) {
+      aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+      setAiCriteria(template);
+      setAiExecutiveSummary('');
+      if (!feedback.trim()) setFeedback(buildAIFeedback(template));
+      return;
+    }
+
+    setInspectionNotice(null);
+    setAiLoading(true);
+    try {
+      const result = await runGeminiBackedEvaluation({
+        docType,
+        content: inspectionText,
+        template,
+        evalUrl: evalUrl || null,
+        apiKey: apiKey || null,
+        model: model || null,
+      });
+      if (result) {
+        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(result.criteria, result.executiveSummary);
+        setAiCriteria(result.criteria);
+        setAiExecutiveSummary(result.executiveSummary);
+        if (!feedback.trim()) setFeedback(buildAIFeedback(result.criteria));
+        setInspectionNotice({
+          kind: 'ok',
+          text: 'Gemini updated scores, comments, and the executive summary. Fine-tune below if needed, then save.',
+        });
+      } else {
+        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+        setAiCriteria(template);
+        setAiExecutiveSummary('');
+        if (!feedback.trim()) setFeedback(buildAIFeedback(template));
+        setInspectionNotice({
+          kind: 'warn',
+          text: 'Gemini did not return usable JSON. Using the built-in draft. Open DevTools → Console for details.',
+        });
+      }
+    } catch (e) {
+      console.error('[grading] Gemini / eval URL failed:', e);
+      aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+      setAiCriteria(template);
+      setAiExecutiveSummary('');
+      if (!feedback.trim()) setFeedback(buildAIFeedback(template));
+      setInspectionNotice({ kind: 'err', text: formatGeminiEvaluationError(e) });
+    } finally {
+      setAiLoading(false);
+    }
   }
 
   async function saveReview(status: SubStatus) {
     if (!selected) return;
     if (status === 'reviewed') {
-      const canPublish = getReadiness(aiCriteria, inspectionText);
-      if (!canPublish.ready) {
-        alert(canPublish.message);
-        return;
+      if (gradeMode === 'teacher') {
+        if (appliedTeacherScore == null) {
+          const pending = parseTeacherScoreInput(teacherScoreInput);
+          alert(
+            pending != null
+              ? 'Press "Grade as teacher" first to apply the score you typed, then Publish.'
+              : 'Type a teacher grade (0–100) and press "Grade as teacher" before publishing.'
+          );
+          return;
+        }
+      } else {
+        /** AI mode (or legacy): need a usable AI grade. */
+        const canPublish = getReadiness(aiCriteria, inspectionText);
+        if (!canPublish.ready) {
+          alert(canPublish.message);
+          return;
+        }
       }
     }
     setSaving(true);
     const total = aiCriteria.reduce((s, c) => s + c.score, 0);
     const maxTotal = aiCriteria.reduce((s, c) => s + c.max, 0);
-    const score = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
+    const aiAggregateScore = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
+    /** Mode picks the source: AI flow publishes the AI score, Teacher flow publishes the applied teacher score. */
+    const score =
+      gradeMode === 'teacher'
+        ? appliedTeacherScore
+        : gradeMode === 'ai'
+          ? aiAggregateScore
+          : appliedTeacherScore != null
+            ? appliedTeacherScore
+            : aiAggregateScore;
     const nextStatus = status === 'reviewed' ? 'reviewed' : status === 'resubmit' ? 'resubmit' : 'under_review';
     const draft = aiDraftSnapshotRef.current;
     const ai_draft_score = draft?.score ?? null;
@@ -772,8 +1013,10 @@ export default function ReviewQueue() {
         icon={ClipboardList}
         description={
           <>
-            AI drafts scores and feedback; you review, adjust, then publish. Rows use the same{' '}
-            <span className="font-semibold text-slate-800">Grade · Redo · Delete</span> tools as{' '}
+            AI drafts scores and feedback; you review, adjust, then publish. Each row has two grade buttons —{' '}
+            <span className="font-semibold text-emerald-800">Grade AI</span> auto-runs the rubric,{' '}
+            <span className="font-semibold text-[#84001B]">Grade Teacher</span> jumps to the manual score — plus{' '}
+            <span className="font-semibold text-slate-800">Redo · Delete</span>. Same tools as{' '}
             <Link className="font-semibold text-[#84001B] hover:underline" to="/class-list">
               Class list
             </Link>{' '}
@@ -894,7 +1137,7 @@ export default function ReviewQueue() {
             Delete selected ({selectedQueueIds.length})
           </button>
           <span className="text-[11px] text-slate-500">
-            Select rows for bulk delete, or use Grade / Redo / Delete per row — same submission actions as{' '}
+            Select rows for bulk delete, or use Grade AI / Grade Teacher / Redo / Delete per row — same submission actions as{' '}
             <Link to="/class-list" className="font-semibold text-[#84001B] hover:underline">
               Class list
             </Link>{' '}
@@ -1079,12 +1322,22 @@ export default function ReviewQueue() {
                             <button
                               type="button"
                               disabled={deleting || resubmitSavingId === s.id}
-                              onClick={() => void openReview(s)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors disabled:opacity-50"
-                              title={s.status === 'reviewed' ? 'Edit grading' : 'Open grading'}
+                              onClick={() => void openReview(s, 'ai')}
+                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-400 transition-colors disabled:opacity-50"
+                              title="Open grading and run the AI rubric automatically"
                             >
-                              Grade
-                              <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
+                              <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                              Grade AI
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deleting || resubmitSavingId === s.id}
+                              onClick={() => void openReview(s, 'teacher')}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/30 bg-[#ffd21a]/15 px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors disabled:opacity-50"
+                              title="Open grading and jump to the manual teacher grade input"
+                            >
+                              <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                              Grade Teacher
                             </button>
                             <button
                               type="button"
@@ -1200,12 +1453,22 @@ export default function ReviewQueue() {
                           <button
                             type="button"
                             disabled={deleting || resubmitSavingId === s.id}
-                            onClick={() => void openReview(s)}
-                            className="inline-flex items-center gap-0.5 rounded-lg bg-[#84001B] text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50"
-                            title={s.status === 'reviewed' ? 'Edit' : 'Grade'}
+                            onClick={() => void openReview(s, 'ai')}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                            title="Grade with AI"
                           >
-                            Grade
-                            <ChevronRight className="w-3 h-3" aria-hidden />
+                            <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
+                            AI
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deleting || resubmitSavingId === s.id}
+                            onClick={() => void openReview(s, 'teacher')}
+                            className="inline-flex items-center gap-1 rounded-lg bg-[#84001B] text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50"
+                            title="Grade as teacher"
+                          >
+                            <GraduationCap className="w-3 h-3 shrink-0" aria-hidden />
+                            Teacher
                           </button>
                         </div>
                       </div>
@@ -1243,208 +1506,702 @@ export default function ReviewQueue() {
               >
                 <X className="h-5 w-5" strokeWidth={2.25} />
               </button>
-              <div className="shrink-0 border-b border-gray-100 px-6 pb-4 pt-5 pr-14">
-                <h2 id="grading-modal-title" className="font-bold text-gray-900">
-                  Grade submission
-                </h2>
-                <p className="text-sm text-gray-400 truncate">
-                  {selected.users?.full_name} · {selected.file_name}
-                </p>
+              <div className="shrink-0 border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/40 px-6 pt-5 pr-14">
+                <div className="flex items-start gap-3 pb-3">
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
+                      gradeMode === 'ai'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-[#84001B] text-[#ffd21a]'
+                    }`}
+                  >
+                    {gradeMode === 'ai' ? (
+                      <Sparkles className="w-5 h-5" aria-hidden />
+                    ) : (
+                      <GraduationCap className="w-5 h-5" aria-hidden />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h2 id="grading-modal-title" className="font-bold text-slate-900 text-lg leading-tight">
+                      {gradeMode === 'ai'
+                        ? 'Grade with AI'
+                        : gradeMode === 'teacher'
+                          ? 'Grade as teacher'
+                          : 'Grade submission'}
+                    </h2>
+                    <p className="text-xs text-slate-500 truncate mt-0.5">
+                      <span className="font-semibold text-slate-700">
+                        {selected.users?.full_name ?? 'Unknown student'}
+                      </span>
+                      <span className="text-slate-300 mx-1.5">·</span>
+                      <span className="font-mono text-slate-600">{selected.file_name}</span>
+                    </p>
+                  </div>
+                </div>
+                <ol className="-mx-1 flex items-center gap-1 overflow-x-auto pb-3 text-[10px] font-bold uppercase tracking-wide">
+                  {(gradeMode === 'ai'
+                    ? [
+                        { label: '1. File', Icon: BookOpen, accent: 'none' as const },
+                        { label: '2. AI grade', Icon: Sparkles, accent: 'emerald' as const },
+                        { label: '3. Publish', Icon: Send, accent: 'maroon' as const },
+                      ]
+                    : gradeMode === 'teacher'
+                      ? [
+                          { label: '1. File', Icon: BookOpen, accent: 'none' as const },
+                          { label: '2. Teacher grade', Icon: GraduationCap, accent: 'maroon' as const },
+                          { label: '3. Feedback', Icon: Send, accent: 'none' as const },
+                          { label: '4. Publish', Icon: Send, accent: 'maroon' as const },
+                        ]
+                      : [
+                          { label: '1. File', Icon: BookOpen, accent: 'none' as const },
+                          { label: '2. AI grade', Icon: Sparkles, accent: 'none' as const },
+                          { label: '3. Teacher grade', Icon: GraduationCap, accent: 'none' as const },
+                          { label: '4. Publish', Icon: Send, accent: 'maroon' as const },
+                        ]
+                  ).map(({ label, Icon, accent }) => (
+                    <li
+                      key={label}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 whitespace-nowrap ${
+                        accent === 'maroon'
+                          ? 'border-[#84001B]/25 bg-[#84001B]/8 text-[#84001B]'
+                          : accent === 'emerald'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            : 'border-slate-200 bg-white text-slate-600'
+                      }`}
+                    >
+                      <Icon className="w-3 h-3" aria-hidden /> {label}
+                    </li>
+                  ))}
+                </ol>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-6">
-              <div className="bg-gray-50 rounded-xl p-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-1">Before &amp; after grading</h3>
-                <p className="text-xs text-gray-500 mb-3">
-                  <span className="font-medium text-gray-700">Before</span> is what the student supplied (snapshot when you
-                  opened this row).{' '}
-                  <span className="font-medium text-gray-700">After</span> is what you edit below — Run AI inspects that
-                  column. Empty or tiny bodies cannot be published until you add real text or choose Needs resubmission.
-                </p>
-                {fileLoadHint && (
-                  <p className="mb-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {fileLoadHint}
-                  </p>
-                )}
-                {(() => {
-                  const openRaw = (fileOpenHref || submissionFileOpenUrl || selected.file_url || '').trim();
-                  const hasUrl = submissionHasOpenableFileUrl(openRaw);
-                  if (!hasUrl) {
-                    return (
-                      <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-900">
-                        No file link is stored for this row — nothing to open. New uploads use bucket{' '}
-                        <code className="rounded bg-white/80 px-1">student-submissions</code> by default. Run{' '}
-                        <code className="rounded bg-white/80 px-1">docs/supabase-storage-student-submissions.sql</code> in
-                        Supabase, redeploy with <code className="rounded bg-white/80 px-1">.env</code> from{' '}
-                        <code className="rounded bg-white/80 px-1">.env.example</code>, then ask the student to submit again.
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/30">
+                {/* ─── Section 1: Open the file ─── */}
+                <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                  <div className="flex items-start gap-3 mb-3">
+                    <SectionBadge n={1} Icon={BookOpen} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-slate-900">Open the student&apos;s file</h3>
+                      <p className="text-[12px] text-slate-500 leading-relaxed">
+                        View the attachment in a new tab so you can read it while grading.
                       </p>
-                    );
-                  }
-                  return (
-                    <div className="mb-4 flex flex-wrap items-center gap-2">
+                    </div>
+                  </div>
+                  {(() => {
+                    const openRaw = (fileOpenHref || submissionFileOpenUrl || selected.file_url || '').trim();
+                    const hasUrl = submissionHasOpenableFileUrl(openRaw);
+                    if (!hasUrl) {
+                      return (
+                        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-900 leading-relaxed">
+                          No file link is stored for this row. New uploads use bucket{' '}
+                          <code className="rounded bg-white/80 px-1">student-submissions</code> by default. Run{' '}
+                          <code className="rounded bg-white/80 px-1">docs/supabase-storage-student-submissions.sql</code> in
+                          Supabase, redeploy with <code className="rounded bg-white/80 px-1">.env</code> from{' '}
+                          <code className="rounded bg-white/80 px-1">.env.example</code>, then ask the student to submit again.
+                        </p>
+                      );
+                    }
+                    return (
                       <SubmissionOpenLink
                         raw={openRaw}
                         fileName={selected.file_name}
-                        className="inline-flex items-center gap-2 rounded-lg border border-[#84001B] bg-[#84001B] px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#6b0016] focus:outline-none focus:ring-2 focus:ring-[#84001B]/35"
-                      />
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-sm hover:bg-gray-50"
-                        onClick={() => {
-                          if (!openSubmissionAttachmentNewTab(openRaw, selected.file_name)) {
-                            alert('Could not prepare this file to open. Try the main Open file link above.');
-                          }
-                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#84001B] bg-[#84001B] px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#6b0016] focus:outline-none focus:ring-2 focus:ring-[#84001B]/35"
                       >
-                        Open backup (popup blockers)
-                      </button>
+                        <Eye className="w-3.5 h-3.5" aria-hidden />
+                        Open file
+                      </SubmissionOpenLink>
+                    );
+                  })()}
+                </section>
+
+                {/* ─── Section 2: AI grade — hidden in Teacher-only mode ─── */}
+                {gradeMode !== 'teacher' && (
+                <section
+                  id="grading-ai-section"
+                  className="rounded-2xl border-2 border-emerald-200/80 bg-white p-4 shadow-sm scroll-mt-4"
+                >
+                  <div className="flex items-start gap-3 mb-3">
+                    <SectionBadge n={2} Icon={Sparkles} accent="emerald" />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-slate-900 inline-flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-emerald-600" aria-hidden />
+                        Grade with AI
+                      </h3>
+                      <p className="text-[12px] text-slate-500 leading-relaxed">
+                        Automated rubric for <span className="font-semibold text-slate-700">{gradingDocTypeForAI(selected)}</span>{' '}
+                        plus grammar and length checks.{' '}
+                        {import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY
+                          ? 'Gemini refines scores and comments on each run.'
+                          : 'Add VITE_GEMINI_EVAL_URL (recommended) or VITE_GEMINI_API_KEY in .env to use Gemini.'}
+                        {gradeMode === 'ai'
+                          ? ' This score will be published directly to the student.'
+                          : ' Use this as a starting point — your manual grade in step 3 wins on publish.'}
+                      </p>
                     </div>
-                  );
-                })()}
-                <div className="grid gap-3 md:grid-cols-2 mb-3">
-                  <div className="min-w-0 flex flex-col rounded-lg border border-gray-200 bg-white p-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-2">
-                      Before grading — student original
-                    </span>
-                    <div className="min-h-[8rem] max-h-48 overflow-auto rounded-md border border-gray-100 bg-slate-50 px-2 py-2 text-xs text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
-                      {originalSubmissionSnapshot.trim() ? (
-                        originalSubmissionSnapshot
-                      ) : (
-                        <span className="italic text-gray-400">No text was extracted (binary file or empty). Use Open file.</span>
+                  </div>
+                  <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50/40 group">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60 rounded-lg flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Wand2 className="w-3 h-3" aria-hidden />
+                        Document text the AI will grade
+                      </span>
+                      <span className="text-[10px] font-medium text-slate-500 normal-case tracking-normal tabular-nums">
+                        {inspectionText.trim().split(/\s+/).filter(Boolean).length.toLocaleString()} words
+                        <ChevronDown className="w-3.5 h-3.5 inline ml-1 -mt-0.5 group-open:rotate-180 transition-transform" aria-hidden />
+                      </span>
+                    </summary>
+                    <div className="border-t border-slate-200 px-3 py-2.5">
+                      <textarea
+                        value={inspectionText}
+                        onChange={(e) => setInspectionText(e.target.value)}
+                        rows={6}
+                        placeholder="Paste or fix document text here if the extraction is empty or wrong…"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/25 focus:border-[#84001B] resize-y bg-white"
+                      />
+                    </div>
+                  </details>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!aiLoading) void runInspectionNow();
+                    }}
+                    className="mb-3 rounded-xl border border-emerald-200/70 bg-emerald-50/40 p-3"
+                    aria-label="AI grade form"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="submit"
+                        disabled={aiLoading}
+                        className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60 ${
+                          import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY
+                            ? 'bg-emerald-700 text-white hover:bg-emerald-800 focus:ring-emerald-600/40 shadow-emerald-700/20'
+                            : 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 focus:ring-slate-300'
+                        }`}
+                        title="Run the automated rubric. Result becomes a draft you can override in step 3."
+                      >
+                        {aiLoading ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                        )}
+                        {aiLoading ? 'Grading with AI…' : aiCriteria.length === 0 ? 'Grade with AI' : 'Re-grade with AI'}
+                      </button>
+                      {(import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY) && (
+                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+                          Gemini connected
+                        </span>
+                      )}
+                      {aiCriteria.length > 0 && !aiLoading && (
+                        <span className="text-[11px] font-semibold text-slate-600 tabular-nums ml-auto">
+                          Draft total: <span className="text-emerald-800 text-sm">{maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%</span>
+                        </span>
                       )}
                     </div>
-                  </div>
-                  <div className="min-w-0 flex flex-col rounded-lg border border-[#84001B]/25 bg-white p-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-[#84001B] mb-2">
-                      After grading — working copy (AI evaluates this)
-                    </span>
-                    <textarea
-                      value={inspectionText}
-                      onChange={(e) => setInspectionText(e.target.value)}
-                      rows={8}
-                      placeholder="Paste or fix document text here…"
-                      className="w-full min-h-[8rem] flex-1 px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/25 focus:border-[#84001B] resize-y"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={runInspectionNow}
-                  className="mb-4 inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-white"
-                >
-                  Run AI Inspection
-                </button>
-                <h3 className="text-sm font-semibold text-gray-700 mb-1">AI Evaluation</h3>
-                <p className="text-xs text-gray-400 mb-4">
-                  Draft scores for {gradingDocTypeForAI(selected)} plus{' '}
-                  <span className="text-gray-600">grammar / mechanics</span> and{' '}
-                  <span className="text-gray-600">length &amp; completeness</span>. Publishing is blocked when the body is
-                  empty or criteria stay below threshold.
-                </p>
-                {aiLoading ? (
-                  <div className="space-y-3">
-                    {[...Array(4)].map((_, i) => <div key={i} className="h-10 bg-gray-200 rounded-lg animate-pulse" />)}
-                  </div>
-                ) : (
-                  <>
-                    {aiCriteria.map((c, idx) => (
-                      <div key={c.name} className="mb-4 bg-white rounded-lg border border-gray-200 p-3">
-                        <div className="flex justify-between items-center text-sm mb-2">
-                          <span className="font-medium text-gray-700">{c.name}</span>
-                          <div className="flex items-center gap-2 text-gray-500">
-                            <input
-                              type="number"
-                              min={0}
-                              max={c.max}
-                              value={c.score}
-                              onChange={e => {
-                                const val = Number(e.target.value || 0);
-                                setAiCriteria(prev => prev.map((item, i) => i === idx ? { ...item, score: Math.min(item.max, Math.max(0, val)) } : item));
-                              }}
-                              className="w-16 px-2 py-1 border border-gray-200 rounded-md text-xs"
-                            />
-                            <span>/ {c.max}</span>
-                          </div>
-                        </div>
-                        <input
-                          type="text"
-                          value={c.comment}
-                          onChange={e => setAiCriteria(prev => prev.map((item, i) => i === idx ? { ...item, comment: e.target.value } : item))}
-                          placeholder="Criterion feedback"
-                          className="w-full mb-2 px-2 py-1.5 border border-gray-200 rounded-md text-xs"
-                        />
-                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#84001B] rounded-full transition-all duration-500"
-                            style={{ width: `${c.max > 0 ? (c.score / c.max) * 100 : 0}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                    {aiCriteria.length > 0 && (
-                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                        <span className="font-bold text-gray-700">Total Score</span>
-                        <span className="text-xl font-bold text-[#84001B]">
+
+                    {aiCriteria.length > 0 && !aiLoading ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border-2 border-emerald-300/70 bg-white px-3 py-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 text-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                          <Sparkles className="w-3 h-3" aria-hidden />
+                          AI graded
+                        </span>
+                        <span className="text-lg font-extrabold tabular-nums text-emerald-800">
                           {maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%
                         </span>
+                        <span className="text-[11px] text-slate-600">
+                          {gradeMode === 'ai'
+                            ? 'this is the score that will be published.'
+                            : 'draft score · used when no teacher grade is applied in step 3.'}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+                        Not graded yet — press <span className="font-semibold">Grade with AI</span> to generate a draft rubric.
+                      </p>
+                    )}
+
+                    {inspectionNotice && (
+                      <div
+                        className={`mt-2 flex gap-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
+                          inspectionNotice.kind === 'ok'
+                            ? 'border-emerald-200 bg-white text-emerald-950'
+                            : inspectionNotice.kind === 'warn'
+                              ? 'border-amber-200 bg-amber-50 text-amber-950'
+                              : 'border-red-200 bg-red-50 text-red-950'
+                        }`}
+                        role="status"
+                      >
+                        <span className="min-w-0 flex-1">{inspectionNotice.text}</span>
+                        <button
+                          type="button"
+                          onClick={() => setInspectionNotice(null)}
+                          className="shrink-0 rounded p-0.5 text-current opacity-70 hover:opacity-100"
+                          aria-label="Dismiss notice"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     )}
-                  </>
+                  </form>
+                  {aiLoading && aiCriteria.length === 0 ? (
+                    <div className="space-y-3">
+                      {[...Array(4)].map((_, i) => (
+                        <div key={i} className="h-10 animate-pulse rounded-lg bg-slate-200/60" />
+                      ))}
+                    </div>
+                  ) : aiCriteria.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                      <Sparkles className="w-8 h-8 text-slate-300 mx-auto mb-2" aria-hidden />
+                      <p className="text-sm font-semibold text-slate-700">No AI report yet</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Press <span className="font-semibold text-emerald-800">Grade with AI</span> above to generate a rubric.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className={aiLoading ? 'relative' : undefined}>
+                      {aiLoading && (
+                        <div
+                          className="pointer-events-none absolute inset-0 z-[1] rounded-xl bg-white/40 backdrop-blur-[1px]"
+                          aria-hidden
+                        />
+                      )}
+                      {aiLoading && (
+                        <p className="absolute left-1/2 top-3 z-[2] -translate-x-1/2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
+                          Updating with Gemini…
+                        </p>
+                      )}
+                      <AIDocumentEvaluationReport
+                        criteria={aiCriteria}
+                        aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
+                        teacherScorePercent={
+                          selected.status === 'reviewed' && selected.score != null ? selected.score : null
+                        }
+                        summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}
+                        showTeacherGrade={gradeMode !== 'ai'}
+                      />
+                    </div>
+                  )}
+                </section>
+                )}
+
+                {/* ─── Section 3: Teacher grade — hidden in AI-only mode ─── */}
+                {gradeMode !== 'ai' && (
+                <section
+                  id="grading-teacher-section"
+                  className="rounded-2xl border-2 border-[#84001B]/30 bg-white p-4 shadow-sm scroll-mt-4"
+                >
+                  <div className="flex items-start gap-3 mb-3">
+                    <SectionBadge
+                      n={gradeMode === 'teacher' ? 2 : 3}
+                      Icon={GraduationCap}
+                      accent="maroon"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-slate-900 inline-flex items-center gap-1.5">
+                        <GraduationCap className="w-4 h-4 text-[#84001B]" aria-hidden />
+                        Grade as teacher
+                      </h3>
+                      <p className="text-[12px] text-slate-500 leading-relaxed">
+                        Set your own grade out of 100. This is the <span className="font-semibold text-slate-700">official</span>{' '}
+                        score the student sees after publish.
+                        {gradeMode === 'teacher'
+                          ? ' Apply the grade, write feedback, then publish.'
+                          : ' Leave it blank to publish the AI score from step 2.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      applyTeacherGrade();
+                    }}
+                    className="rounded-xl border border-[#84001B]/15 bg-[#ffd21a]/8 p-3"
+                    aria-label="Teacher grade form"
+                  >
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="inline-flex items-stretch rounded-xl border-2 border-[#84001B]/25 bg-white overflow-hidden focus-within:border-[#84001B] focus-within:ring-2 focus-within:ring-[#84001B]/20">
+                        <span className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#84001B] bg-[#ffd21a]/30 border-r border-[#84001B]/15 flex items-center">
+                          Teacher
+                        </span>
+                        <input
+                          ref={teacherScoreInputRef}
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={1}
+                          inputMode="numeric"
+                          value={teacherScoreInput}
+                          onChange={(e) => {
+                            setTeacherScoreInput(e.target.value);
+                            if (teacherGradeNotice) setTeacherGradeNotice(null);
+                          }}
+                          placeholder="—"
+                          aria-label="Teacher grade out of 100"
+                          className="w-24 px-3 py-2 text-xl font-extrabold tabular-nums text-[#84001B] bg-white focus:outline-none placeholder:text-slate-300"
+                        />
+                        <span className="px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-50 border-l border-slate-200 flex items-center">
+                          / 100
+                        </span>
+                      </label>
+                      <button
+                        type="submit"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#84001B] text-white text-sm font-bold shadow-md shadow-[#84001B]/20 hover:bg-[#6b0016] disabled:opacity-60 disabled:cursor-not-allowed"
+                        title="Save the teacher grade. Press Publish in the footer to send it to the student."
+                      >
+                        <GraduationCap className="w-4 h-4" aria-hidden />
+                        Grade as teacher
+                      </button>
+                      {gradeMode !== 'teacher' && aiCriteria.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const aiTotal = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null;
+                            if (aiTotal != null) {
+                              setTeacherScoreInput(String(aiTotal));
+                              setTeacherGradeNotice(null);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-emerald-300 bg-white text-xs font-semibold text-emerald-800 hover:bg-emerald-50"
+                          title="Copy the AI rubric total into the teacher grade input."
+                        >
+                          <Sparkles className="w-3.5 h-3.5" aria-hidden />
+                          Use AI score
+                          <span className="text-emerald-900 font-bold tabular-nums ml-0.5">
+                            ({maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%)
+                          </span>
+                        </button>
+                      )}
+                      {(teacherScoreInput.trim() !== '' || appliedTeacherScore != null) && (
+                        <button
+                          type="button"
+                          onClick={() => clearTeacherGrade()}
+                          className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                        >
+                          <X className="w-3.5 h-3.5" aria-hidden />
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {appliedTeacherScore != null ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border-2 border-[#84001B]/35 bg-white px-3 py-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#84001B] text-[#ffd21a] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                          <GraduationCap className="w-3 h-3" aria-hidden />
+                          Teacher graded
+                        </span>
+                        <span className="text-lg font-extrabold tabular-nums text-[#84001B]">
+                          {appliedTeacherScore}%
+                        </span>
+                        <span className="text-[11px] text-slate-600">
+                          will be the published score · press <span className="font-semibold">Publish</span> in the footer.
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+                        {gradeMode === 'teacher'
+                          ? 'Type a grade and press Grade as teacher to apply it.'
+                          : 'Not graded yet — publish will use the AI score from step 2.'}
+                      </p>
+                    )}
+
+                    {teacherGradeNotice && (
+                      <p
+                        className={`mt-2 text-[11px] font-medium rounded-lg border px-3 py-2 ${
+                          teacherGradeNotice.kind === 'ok'
+                            ? 'text-emerald-900 bg-emerald-50 border-emerald-200'
+                            : 'text-red-800 bg-red-50 border-red-200'
+                        }`}
+                        role="status"
+                      >
+                        {teacherGradeNotice.text}
+                      </p>
+                    )}
+                  </form>
+
+                  {gradeMode === 'teacher' && teacherCriteria.length > 0 && (() => {
+                    const rubricMax = teacherCriteria.reduce((s, c) => s + c.max, 0);
+                    const rubricSum = teacherCriteria.reduce((s, c) => s + c.score, 0);
+                    return (
+                      <div className="mt-4 rounded-xl border-2 border-[#84001B]/15 bg-white p-3">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#84001B]">
+                              <GraduationCap className="h-3.5 w-3.5" aria-hidden />
+                              Teacher rubric
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                              Score each criterion below. The total auto-fills the teacher grade above.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => resetTeacherRubric()}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                            title="Clear every criterion score back to 0."
+                          >
+                            <X className="w-3 h-3" aria-hidden />
+                            Reset rubric
+                          </button>
+                        </div>
+
+                        <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 overflow-hidden">
+                          {teacherCriteria.map((c, idx) => (
+                            <div key={`${c.name}-${idx}`} className="grid gap-2 px-3 py-2.5 sm:grid-cols-[1fr_auto] sm:items-start bg-white">
+                              <div className="min-w-0">
+                                <p className="text-[13px] font-bold text-slate-800 truncate">
+                                  <span className="text-slate-400 tabular-nums mr-1.5">{idx + 1}.</span>
+                                  {c.name}
+                                </p>
+                                <textarea
+                                  value={c.comment}
+                                  onChange={(e) => updateTeacherCriterionComment(idx, e.target.value)}
+                                  rows={1}
+                                  placeholder="Optional note for this criterion (not shown to the student)."
+                                  className="mt-1.5 w-full px-2 py-1 border border-slate-200 rounded text-[12px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#84001B]/30 focus:border-[#84001B]/50 resize-none bg-white"
+                                />
+                              </div>
+                              <label className="inline-flex items-stretch rounded-lg border border-slate-300 bg-white overflow-hidden focus-within:border-[#84001B] focus-within:ring-1 focus-within:ring-[#84001B]/30 self-start">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={c.max}
+                                  step={1}
+                                  inputMode="numeric"
+                                  value={c.score}
+                                  onChange={(e) => updateTeacherCriterionScore(idx, e.target.value)}
+                                  aria-label={`Score for ${c.name}, out of ${c.max}`}
+                                  className="w-14 px-2 py-1 text-sm font-bold tabular-nums text-[#84001B] bg-white focus:outline-none text-right"
+                                />
+                                <span className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-50 border-l border-slate-200 flex items-center">
+                                  / {c.max}
+                                </span>
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-[#84001B]/20 bg-[#ffd21a]/8 px-3 py-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Rubric total</p>
+                            <p className="text-base font-extrabold tabular-nums text-[#84001B]">
+                              {rubricSum}<span className="text-slate-400 font-bold"> / {rubricMax}</span>
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTeacherScoreInput(String(rubricSum));
+                              setAppliedTeacherScore(rubricSum);
+                              setTeacherGradeNotice({
+                                kind: 'ok',
+                                text: `Teacher grade ${rubricSum}/${rubricMax} saved from rubric. Publish to make it visible to the student.`,
+                              });
+                            }}
+                            disabled={rubricMax === 0}
+                            className="inline-flex items-center gap-2 rounded-xl bg-[#84001B] text-white px-3 py-2 text-xs font-bold shadow-sm hover:bg-[#6b0016] disabled:opacity-60 disabled:cursor-not-allowed"
+                            title="Apply the rubric total as the published teacher grade."
+                          >
+                            <GraduationCap className="w-3.5 h-3.5" aria-hidden />
+                            Apply rubric total
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </section>
+                )}
+
+                {/* ─── Section 4: Feedback — hidden in AI-only mode ─── */}
+                {gradeMode !== 'ai' && (
+                <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                  <div className="flex items-start gap-3 mb-3">
+                    <SectionBadge n={gradeMode === 'teacher' ? 3 : 4} Icon={Send} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-slate-900">Write feedback for the student</h3>
+                      <p className="text-[12px] text-slate-500 leading-relaxed">
+                        Short note shown alongside the grade. Leave it blank to publish with just the AI report.
+                      </p>
+                    </div>
+                  </div>
+                  <textarea
+                    value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    rows={4}
+                    placeholder="e.g. Strong analysis, but tighten the conclusion. Watch tense agreement on page 3."
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] resize-none bg-white"
+                  />
+                </section>
                 )}
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Teacher Feedback</label>
-                <textarea value={feedback} onChange={e => setFeedback(e.target.value)} rows={4} placeholder="Write your feedback here..."
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] resize-none" />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Update Status</label>
-                <div className="relative">
-                  <select value={newStatus} onChange={e => setNewStatus(e.target.value as SubStatus)}
-                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] appearance-none">
-                    <option value="reviewed">Reviewed</option>
-                    <option value="resubmit">Needs Resubmission</option>
-                    <option value="under_review">Under Review</option>
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                </div>
-                {!readiness.ready ? (
-                  <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {readiness.message}
-                  </p>
-                ) : (
-                  <p className="mt-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                    {readiness.message}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex gap-3">
-                <button onClick={() => closeGradingModal()}
-                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
-                  Cancel
-                </button>
-                <button
-                  onClick={() => saveReview(newStatus)}
-                  disabled={saving || aiLoading}
-                  className="flex-1 flex items-center justify-center gap-2 border border-gray-200 bg-white text-gray-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-60"
-                >
-                  {saving ? 'Saving...' : 'Save Draft'}
-                </button>
-                <button
-                  onClick={() => saveReview('reviewed')}
-                  disabled={saving || aiLoading || !readiness.ready}
-                  className="flex-1 flex items-center justify-center gap-2 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-60"
-                >
-                  <CheckCircle className="w-4 h-4" />{saving ? 'Publishing...' : 'Publish to Student'}
-                </button>
-              </div>
-              </div>
+              <footer className="shrink-0 border-t border-slate-200 bg-white px-6 py-3 space-y-2.5 rounded-b-2xl">
+                {(() => {
+                  const aiPct = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null;
+                  const aiReady = aiCriteria.length > 0 && readiness.ready && !isInsufficientSubmissionText(inspectionText);
+                  const teacherReady = appliedTeacherScore != null;
+                  const canPublish = gradeMode === 'ai' ? aiReady : gradeMode === 'teacher' ? teacherReady : aiReady || teacherReady;
+                  const publishSource =
+                    gradeMode === 'ai'
+                      ? aiPct != null
+                        ? 'ai'
+                        : null
+                      : gradeMode === 'teacher'
+                        ? teacherReady
+                          ? 'teacher'
+                          : null
+                        : teacherReady
+                          ? 'teacher'
+                          : aiPct != null
+                            ? 'ai'
+                            : null;
+                  const publishValue =
+                    publishSource === 'teacher' ? appliedTeacherScore : publishSource === 'ai' ? aiPct : null;
+                  const pendingTeacherInput =
+                    gradeMode !== 'ai' &&
+                    appliedTeacherScore == null &&
+                    parseTeacherScoreInput(teacherScoreInput) != null;
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+                        {gradeMode === 'ai' ? (
+                          <>
+                            <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
+                            <ReadinessPill ok={aiCriteria.length > 0} label="AI grade" />
+                          </>
+                        ) : gradeMode === 'teacher' ? (
+                          <ReadinessPill ok={teacherReady} label="Teacher grade" />
+                        ) : (
+                          <>
+                            <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
+                            <ReadinessPill ok={aiCriteria.length > 0} label="AI grade" />
+                            <ReadinessPill ok={teacherReady} label="Teacher grade" />
+                          </>
+                        )}
+                        {pendingTeacherInput && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 text-amber-900 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                            title='Press the "Grade as teacher" button to apply the number you typed.'
+                          >
+                            <Info className="w-3 h-3" aria-hidden />
+                            Apply teacher grade
+                          </span>
+                        )}
+                        {publishSource && publishValue != null && (
+                          <span
+                            className={`inline-flex items-center gap-1 ml-auto rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              publishSource === 'teacher'
+                                ? 'border-[#84001B]/30 bg-[#ffd21a]/15 text-[#5c0014]'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                            }`}
+                            title={
+                              publishSource === 'teacher'
+                                ? 'Publishes the manual teacher grade.'
+                                : 'Publishes the AI rubric score.'
+                            }
+                          >
+                            {publishSource === 'teacher' ? (
+                              <GraduationCap className="w-3 h-3" aria-hidden />
+                            ) : (
+                              <Sparkles className="w-3 h-3" aria-hidden />
+                            )}
+                            Publish: {publishValue}% ({publishSource === 'teacher' ? 'Teacher' : 'AI'})
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => closeGradingModal()}
+                          className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveReview('resubmit')}
+                          disabled={saving || aiLoading}
+                          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-red-200 bg-white text-sm font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 disabled:opacity-60"
+                          title="Asks the student to upload a new file. Score is cleared."
+                        >
+                          <RotateCcw className="w-4 h-4" aria-hidden />
+                          Request redo
+                        </button>
+                        <div className="grow" />
+                        <button
+                          type="button"
+                          onClick={() => saveReview('reviewed')}
+                          disabled={saving || aiLoading || !canPublish}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#84001B] text-white text-sm font-bold shadow-md shadow-[#84001B]/20 hover:bg-[#6b0016] disabled:opacity-60 disabled:cursor-not-allowed"
+                          title={
+                            canPublish
+                              ? publishSource === 'teacher'
+                                ? `Publishes the teacher grade (${publishValue}%) to the student.`
+                                : `Publishes the AI grade (${publishValue}%) to the student.`
+                              : gradeMode === 'ai'
+                                ? 'Press "Grade with AI" to generate a score before publishing.'
+                                : gradeMode === 'teacher'
+                                  ? 'Type a teacher grade and press "Grade as teacher" before publishing.'
+                                  : 'Run AI in step 2 or enter a teacher grade in step 3 to publish.'
+                          }
+                        >
+                          {saving ? (
+                            <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Send className="w-4 h-4" aria-hidden />
+                          )}
+                          {saving ? 'Publishing…' : 'Publish to student'}
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </footer>
             </div>
           </div>,
           document.body
         )}
     </TeacherWorkspaceShell>
+  );
+}
+
+/** Numbered step badge for the grading modal sections. */
+function SectionBadge({
+  Icon,
+  accent = 'maroon',
+}: {
+  /** Kept for backwards-compat with existing call sites; no longer displayed. */
+  n?: number;
+  Icon: LucideIcon;
+  accent?: 'maroon' | 'emerald';
+}) {
+  const tint =
+    accent === 'emerald'
+      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+      : 'bg-[#84001B]/8 border-[#84001B]/20 text-[#84001B]';
+  return (
+    <div className="shrink-0">
+      <div className={`w-9 h-9 rounded-xl border flex items-center justify-center ${tint}`}>
+        <Icon className="w-4 h-4" aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+/** Compact ✓/✗ pill used in the modal footer readiness strip. */
+function ReadinessPill({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+        ok
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-amber-200 bg-amber-50 text-amber-900'
+      }`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`}
+        aria-hidden
+      />
+      {label}
+    </span>
   );
 }
