@@ -1,4 +1,12 @@
-import { AlertCircle, CheckCircle, GraduationCap, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  BadgeCheck,
+  CheckCircle,
+  GraduationCap,
+  Languages,
+  Sparkles,
+} from 'lucide-react';
 
 export interface AIEvaluationCriterion {
   name: string;
@@ -6,6 +14,19 @@ export interface AIEvaluationCriterion {
   max: number;
   comment: string;
 }
+
+export type AILanguageCorrectionRow = {
+  before: string;
+  after: string;
+  category?: string;
+  note?: string;
+};
+
+export type AICorrectHighlightRow = {
+  excerpt: string;
+  verification: string;
+  rubricTie?: string;
+};
 
 export type AIDocumentEvaluationReportProps = {
   /** Rubric rows from the last AI run (teacher grading). Empty = summary-only layout. */
@@ -16,9 +37,23 @@ export type AIDocumentEvaluationReportProps = {
   teacherScorePercent?: number | null;
   /** Stored or live summary (e.g. Strengths / Needs improvement lines). */
   summaryText?: string | null;
+  /** Gemini paragraph on grammar, completeness, and systematic issues (from submitted text). */
+  documentQualityNotes?: string | null;
+  /** Before → after suggested fixes grounded in the submission. */
+  languageCorrections?: AILanguageCorrectionRow[];
+  /** Excerpts the model verified as correct / well aligned with the rubric. */
+  correctHighlights?: AICorrectHighlightRow[];
   heading?: string;
   /** Hide the side-by-side "Teacher grade" tile (used by AI-only grading flow). Defaults to true. */
   showTeacherGrade?: boolean;
+  /** Larger type and tiles for the teacher grading modal. */
+  density?: 'default' | 'comfortable';
+  /**
+   * `rubric` (default): “Detailed evaluation” lists each rubric row.
+   * `narrative`: same layout as the student “Grading score” dialog — one “Automated summary” block;
+   * rubric rows are still used for strengths/gaps fallbacks when the summary has no Strengths:/Needs improvement: lines.
+   */
+  detailEvaluation?: 'rubric' | 'narrative';
 };
 
 function criterionPercent(c: AIEvaluationCriterion): number {
@@ -62,13 +97,23 @@ export default function AIDocumentEvaluationReport({
   aiScorePercent,
   teacherScorePercent,
   summaryText,
+  documentQualityNotes,
+  languageCorrections = [],
+  correctHighlights = [],
   heading = 'AI Analysis & Evaluation',
   showTeacherGrade = true,
+  density = 'default',
+  detailEvaluation = 'rubric',
 }: AIDocumentEvaluationReportProps) {
+  const comfy = density === 'comfortable';
   const executive = (summaryText ?? '').trim();
+  const qualityNotes = (documentQualityNotes ?? '').trim();
+  const corrections = languageCorrections ?? [];
+  const verifiedCorrect = correctHighlights ?? [];
   const pct = aiScorePercent != null && Number.isFinite(aiScorePercent) ? Math.max(0, Math.min(100, aiScorePercent)) : null;
+  const showRubricRows = criteria.length > 0 && detailEvaluation !== 'narrative';
   const fallbackExecutive =
-    !executive && pct != null && criteria.length === 0
+    !executive && pct != null && (criteria.length === 0 || detailEvaluation === 'narrative')
       ? `Indicative automated score: ${pct} out of 100. Your instructor may adjust this after review — see staff feedback below.`
       : '';
   const executiveDisplay = executive || fallbackExecutive;
@@ -92,13 +137,19 @@ export default function AIDocumentEvaluationReport({
   const teacherRingDeg = teacherPct != null ? (teacherPct / 100) * 360 : 0;
 
   return (
-    <div className="space-y-6">
+    <div className={comfy ? 'space-y-8' : 'space-y-6'}>
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 mb-3">{heading}</p>
-        <div className={`grid gap-3 ${showTeacherGrade ? 'sm:grid-cols-2' : 'sm:grid-cols-1'}`}>
+        <p
+          className={`font-bold uppercase tracking-[0.12em] text-slate-500 ${comfy ? 'text-xs mb-4' : 'text-[11px] mb-3'}`}
+        >
+          {heading}
+        </p>
+        <div className={`grid ${comfy ? 'gap-4' : 'gap-3'} ${showTeacherGrade ? 'sm:grid-cols-2' : 'sm:grid-cols-1'}`}>
           {/* AI grade — automated rubric aggregate */}
           <div
-            className="flex flex-col gap-4 rounded-2xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+            className={`flex flex-col rounded-2xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white shadow-sm sm:flex-row sm:items-center sm:justify-between ${
+              comfy ? 'gap-5 p-5 sm:gap-6' : 'gap-4 p-4 sm:gap-4'
+            }`}
             role="group"
             aria-label="AI grade"
           >
@@ -107,19 +158,30 @@ export default function AIDocumentEvaluationReport({
                 <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
                 AI grade
               </p>
-              <p className="text-xs text-emerald-900/80">From automated inspection (rubric).</p>
+              <p className={comfy ? 'text-sm text-emerald-900/85' : 'text-xs text-emerald-900/80'}>
+                {detailEvaluation === 'narrative'
+                  ? 'Same style of AI report students see after your staff publish this score.'
+                  : 'From automated inspection (rubric).'}
+              </p>
               {pct == null ? (
-                <p className="text-sm font-medium text-emerald-900/70 italic">Run AI inspection to get a score.</p>
+                <p className={comfy ? 'text-base font-medium text-emerald-900/70 italic' : 'text-sm font-medium text-emerald-900/70 italic'}>
+                  Run AI inspection to get a score.
+                </p>
               ) : (
-                <p className="text-2xl font-extrabold tabular-nums text-emerald-950 sm:hidden">
+                <p className={`font-extrabold tabular-nums text-emerald-950 sm:hidden ${comfy ? 'text-3xl' : 'text-2xl'}`}>
                   {pct}
-                  <span className="text-sm font-bold text-emerald-700"> / 100</span>
+                  <span className={comfy ? 'text-lg font-bold text-emerald-700' : 'text-sm font-bold text-emerald-700'}>
+                    {' '}
+                    / 100
+                  </span>
                 </p>
               )}
             </div>
             <div className="flex shrink-0 justify-center sm:pr-1">
               <div
-                className="relative grid h-24 w-24 place-items-center rounded-full sm:h-28 sm:w-28"
+                className={`relative grid place-items-center rounded-full ${
+                  comfy ? 'h-32 w-32 sm:h-36 sm:w-36' : 'h-24 w-24 sm:h-28 sm:w-28'
+                }`}
                 style={{
                   background:
                     pct == null
@@ -128,9 +190,21 @@ export default function AIDocumentEvaluationReport({
                 }}
                 aria-hidden
               >
-                <div className="absolute inset-[9px] flex flex-col items-center justify-center rounded-full bg-white shadow-inner sm:inset-[10px]">
-                  <span className="text-xl font-extrabold tabular-nums text-slate-900 sm:text-2xl">{pct ?? '—'}</span>
-                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400 sm:text-[10px]">/ 100</span>
+                <div
+                  className={`absolute flex flex-col items-center justify-center rounded-full bg-white shadow-inner ${
+                    comfy ? 'inset-[11px] sm:inset-[12px]' : 'inset-[9px] sm:inset-[10px]'
+                  }`}
+                >
+                  <span
+                    className={`font-extrabold tabular-nums text-slate-900 ${comfy ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'}`}
+                  >
+                    {pct ?? '—'}
+                  </span>
+                  <span
+                    className={`font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[10px] sm:text-[11px]' : 'text-[9px] sm:text-[10px]'}`}
+                  >
+                    / 100
+                  </span>
                 </div>
               </div>
             </div>
@@ -139,7 +213,9 @@ export default function AIDocumentEvaluationReport({
           {/* Teacher grade — published staff score only */}
           {showTeacherGrade && (
           <div
-            className={`flex flex-col gap-4 rounded-2xl border-2 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
+            className={`flex flex-col rounded-2xl border-2 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
+              comfy ? 'gap-5 p-5 sm:gap-6' : 'gap-4 p-4 sm:gap-4'
+            } ${
               teacherPct != null
                 ? 'border-[#84001B]/35 bg-gradient-to-br from-[#ffd21a]/15 to-white'
                 : 'border-slate-200 bg-gradient-to-br from-slate-50 to-white'
@@ -172,7 +248,9 @@ export default function AIDocumentEvaluationReport({
             </div>
             <div className="flex shrink-0 justify-center sm:pr-1">
               <div
-                className="relative grid h-24 w-24 place-items-center rounded-full sm:h-28 sm:w-28"
+                className={`relative grid place-items-center rounded-full ${
+                  comfy ? 'h-32 w-32 sm:h-36 sm:w-36' : 'h-24 w-24 sm:h-28 sm:w-28'
+                }`}
                 style={{
                   background:
                     teacherPct == null
@@ -181,11 +259,21 @@ export default function AIDocumentEvaluationReport({
                 }}
                 aria-hidden
               >
-                <div className="absolute inset-[9px] flex flex-col items-center justify-center rounded-full bg-white shadow-inner sm:inset-[10px]">
-                  <span className="text-xl font-extrabold tabular-nums text-[#84001B] sm:text-2xl">
+                <div
+                  className={`absolute flex flex-col items-center justify-center rounded-full bg-white shadow-inner ${
+                    comfy ? 'inset-[11px] sm:inset-[12px]' : 'inset-[9px] sm:inset-[10px]'
+                  }`}
+                >
+                  <span
+                    className={`font-extrabold tabular-nums text-[#84001B] ${comfy ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'}`}
+                  >
                     {teacherPct ?? '—'}
                   </span>
-                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400 sm:text-[10px]">/ 100</span>
+                  <span
+                    className={`font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[10px] sm:text-[11px]' : 'text-[9px] sm:text-[10px]'}`}
+                  >
+                    / 100
+                  </span>
                 </div>
               </div>
             </div>
@@ -196,83 +284,240 @@ export default function AIDocumentEvaluationReport({
 
       {executiveDisplay && (
         <div>
-          <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
-            <Sparkles className="h-4 w-4 text-pink-500" aria-hidden />
+          <div
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-600 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <Sparkles className={comfy ? 'h-5 w-5 text-pink-500' : 'h-4 w-4 text-pink-500'} aria-hidden />
             Executive summary
           </div>
-          <div className="rounded-2xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm font-bold leading-relaxed text-slate-900">
+          <div
+            className={`rounded-2xl border border-sky-100 bg-sky-50/80 font-bold leading-relaxed text-slate-900 ${
+              comfy ? 'px-5 py-4 text-base' : 'px-4 py-3 text-sm'
+            }`}
+          >
             {executiveDisplay}
           </div>
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/90 p-4 shadow-sm">
-          <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.1em] text-emerald-900">
+      {verifiedCorrect.length > 0 && (
+        <div>
+          <div
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-600 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <BadgeCheck className={comfy ? 'h-5 w-5 text-emerald-600' : 'h-4 w-4 text-emerald-600'} aria-hidden />
+            Verified correct in the submission
+          </div>
+          <p className={`mb-3 text-slate-600 ${comfy ? 'text-sm' : 'text-xs'}`}>
+            Short quotes from the file the AI checked and judged as accurate or well done, with how that supports scoring.
+          </p>
+          <ul className={`space-y-3 ${comfy ? 'text-[15px]' : 'text-sm'}`}>
+            {verifiedCorrect.map((row, i) => (
+              <li
+                key={i}
+                className={`rounded-2xl border border-emerald-200/80 bg-emerald-50/50 shadow-sm ${
+                  comfy ? 'p-4 sm:p-5' : 'p-3 sm:p-4'
+                }`}
+              >
+                <blockquote className="border-l-4 border-emerald-500 pl-3 font-semibold text-slate-900 leading-relaxed">
+                  {row.excerpt}
+                </blockquote>
+                <p className={`mt-2 leading-relaxed text-slate-800 ${comfy ? 'font-semibold' : 'font-medium'}`}>
+                  {row.verification}
+                </p>
+                {row.rubricTie ? (
+                  <p className={`mt-1.5 text-slate-500 ${comfy ? 'text-sm' : 'text-xs'}`}>
+                    <span className="font-bold uppercase tracking-wide text-slate-400">Rubric tie</span> — {row.rubricTie}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {qualityNotes && (
+        <div>
+          <div
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-600 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <Languages className={comfy ? 'h-5 w-5 text-violet-500' : 'h-4 w-4 text-violet-500'} aria-hidden />
+            Grammar, completeness & accuracy
+          </div>
+          <div
+            className={`rounded-2xl border border-violet-100 bg-violet-50/85 leading-relaxed text-slate-900 ${
+              comfy ? 'px-5 py-4 text-[15px] font-semibold' : 'px-4 py-3 text-sm font-semibold'
+            }`}
+          >
+            {qualityNotes}
+          </div>
+        </div>
+      )}
+
+      <div className={`grid md:grid-cols-2 ${comfy ? 'gap-5' : 'gap-4'}`}>
+        <div className={`rounded-2xl border border-emerald-200/80 bg-emerald-50/90 shadow-sm ${comfy ? 'p-5' : 'p-4'}`}>
+          <div
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.1em] text-emerald-900 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
             <CheckCircle className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
             Key strengths
           </div>
           {strengthsList.length > 0 ? (
-            <ul className="list-inside list-disc space-y-1.5 text-sm text-emerald-950/95">
+            <ul
+              className={`list-inside list-disc text-emerald-950/95 ${comfy ? 'space-y-2 text-[15px]' : 'space-y-1.5 text-sm'}`}
+            >
               {strengthsList.map((t, i) => (
                 <li key={i}>{t}</li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-emerald-900/80">
+            <p className={comfy ? 'text-[15px] text-emerald-900/80' : 'text-sm text-emerald-900/80'}>
               Highlights will appear after AI inspection, or when rubric sections score strongly.
             </p>
           )}
         </div>
-        <div className="rounded-2xl border border-amber-200/90 bg-amber-50/90 p-4 shadow-sm">
-          <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.1em] text-amber-950">
+        <div className={`rounded-2xl border border-amber-200/90 bg-amber-50/90 shadow-sm ${comfy ? 'p-5' : 'p-4'}`}>
+          <div
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.1em] text-amber-950 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
             <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
             Areas for improvement
           </div>
           {gapsList.length > 0 ? (
-            <ul className="list-inside list-disc space-y-1.5 text-sm text-amber-950/95">
+            <ul
+              className={`list-inside list-disc text-amber-950/95 ${comfy ? 'space-y-2 text-[15px]' : 'space-y-1.5 text-sm'}`}
+            >
               {gapsList.map((t, i) => (
                 <li key={i}>{t}</li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-amber-950/85">
+            <p className={comfy ? 'text-[15px] text-amber-950/85' : 'text-sm text-amber-950/85'}>
               No major gaps flagged in the automated pass — still review each section below and staff feedback.
             </p>
           )}
         </div>
       </div>
 
+      {corrections.length > 0 && (
+        <div>
+          <p
+            className={`mb-3 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-500 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <ArrowRight className="h-4 w-4 text-emerald-600 shrink-0" aria-hidden />
+            Suggested corrections (before → after)
+          </p>
+          <p className={`mb-3 text-slate-600 ${comfy ? 'text-sm' : 'text-xs'}`}>
+            Excerpts from your submitted text with AI-suggested improvements. Your instructor may accept, change, or
+            ignore these suggestions in the final grade.
+          </p>
+          <div className={`overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm ${comfy ? 'text-sm' : 'text-xs'}`}>
+            <table className="w-full min-w-[28rem] border-collapse text-left">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/90">
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500 w-[22%]">Type</th>
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500">Before (from submission)</th>
+                  <th className="px-2 py-2.5 w-8" aria-hidden />
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500">After (suggested)</th>
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500 w-[26%]">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {corrections.map((row, i) => (
+                  <tr key={i} className="border-b border-slate-100 last:border-0 align-top">
+                    <td className="px-3 py-3 font-semibold text-slate-700 capitalize whitespace-nowrap">
+                      {row.category || '—'}
+                    </td>
+                    <td className="px-3 py-3 text-rose-900/95 whitespace-pre-wrap break-words font-medium bg-rose-50/40">
+                      {row.before}
+                    </td>
+                    <td className="px-1 py-3 text-center text-emerald-600">
+                      <ArrowRight className="inline h-4 w-4" aria-hidden />
+                    </td>
+                    <td className="px-3 py-3 text-emerald-950 whitespace-pre-wrap break-words font-semibold bg-emerald-50/35">
+                      {row.after}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600 whitespace-pre-wrap break-words">
+                      {row.note || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div>
-        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Detailed evaluation</p>
-        <div className="space-y-4">
-          {criteria.length > 0 ? (
+        <p
+          className={`mb-3 font-bold uppercase tracking-[0.12em] text-slate-500 ${comfy ? 'text-xs' : 'text-[11px]'}`}
+        >
+          Detailed evaluation
+        </p>
+        <div className={comfy ? 'space-y-5' : 'space-y-4'}>
+          {showRubricRows ? (
             criteria.map((c, idx) => {
               const secPct = criterionPercent(c);
               return (
                 <div
                   key={`${c.name}-${idx}`}
-                  className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm sm:flex-row sm:items-stretch sm:justify-between sm:gap-6"
+                  className={`flex flex-col rounded-2xl border border-slate-200/90 bg-white shadow-sm sm:flex-row sm:items-stretch sm:justify-between ${
+                    comfy ? 'gap-5 p-5 sm:gap-8' : 'gap-4 p-4 sm:gap-6'
+                  }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-slate-400 tabular-nums">{idx + 1}</p>
-                    <h4 className="text-base font-bold text-slate-900">{c.name}</h4>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-700">{c.comment}</p>
+                    <p className={`font-bold text-slate-400 tabular-nums ${comfy ? 'text-sm' : 'text-xs'}`}>{idx + 1}</p>
+                    <h4 className={`font-bold text-slate-900 ${comfy ? 'text-lg' : 'text-base'}`}>{c.name}</h4>
+                    <p
+                      className={`mt-2 leading-relaxed text-slate-700 ${comfy ? 'text-[15px]' : 'text-sm'}`}
+                    >
+                      {c.comment}
+                    </p>
                   </div>
-                  <div className="flex w-full shrink-0 flex-col items-center justify-center rounded-xl border border-slate-100 bg-slate-50/90 px-4 py-3 sm:w-28">
-                    <span className="text-2xl font-extrabold tabular-nums text-[#84001B]">{secPct}</span>
-                    <span className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Score / 100</span>
+                  <div
+                    className={`flex w-full shrink-0 flex-col items-center justify-center rounded-xl border border-slate-100 bg-slate-50/90 px-4 py-3 ${
+                      comfy ? 'sm:w-36' : 'sm:w-28'
+                    }`}
+                  >
+                    <span className={`font-extrabold tabular-nums text-[#84001B] ${comfy ? 'text-3xl' : 'text-2xl'}`}>
+                      {secPct}
+                    </span>
+                    <span
+                      className={`mt-1 font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[11px]' : 'text-[10px]'}`}
+                    >
+                      Score / 100
+                    </span>
                   </div>
                 </div>
               );
             })
           ) : executiveDisplay ? (
-            <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
-              <h4 className="text-base font-bold text-slate-900">Automated summary</h4>
-              <p className="mt-2 text-sm font-bold leading-relaxed text-slate-800">{executiveDisplay}</p>
+            <div className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm ${comfy ? 'p-5' : 'p-4'}`}>
+              <h4 className={`font-bold text-slate-900 ${comfy ? 'text-lg' : 'text-base'}`}>Automated summary</h4>
+              <p
+                className={`mt-2 font-bold leading-relaxed text-slate-800 ${comfy ? 'text-[15px]' : 'text-sm'}`}
+              >
+                {executiveDisplay}
+              </p>
             </div>
           ) : (
-            <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-sm text-slate-500">
+            <p
+              className={`rounded-xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center text-slate-500 ${
+                comfy ? 'text-[15px]' : 'text-sm'
+              }`}
+            >
               No AI breakdown yet. After your teacher runs inspection, scores and section notes appear here.
             </p>
           )}

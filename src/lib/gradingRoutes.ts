@@ -15,3 +15,12 @@ export function gradingLinkForSubmission(submissionId: unknown): string {
   if (!isPlausibleSubmissionId(s)) return '/grading';
   return `/grading?submission=${encodeURIComponent(s)}`;
 }
+
+/** Teacher submission roster with optional focus on one upload row. */
+export function studentSubmissionsLinkForSubmission(submissionId: unknown): string {
+  if (submissionId == null) return '/student-submissions';
+  const s =
+    typeof submissionId === 'string' ? submissionId.trim() : String(submissionId).trim();
+  if (!isPlausibleSubmissionId(s)) return '/student-submissions';
+  return `/student-submissions?submission=${encodeURIComponent(s)}`;
+}

@@ -19,7 +19,7 @@ import {
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import { supabase } from '../../lib/supabase';
-import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
+import { studentSubmissionsLinkForSubmission } from '../../lib/gradingRoutes';
 import { useAuth } from '../../context/AuthContext';
 
 interface Stats {
@@ -369,8 +369,8 @@ export default function Analytics() {
 
               <div className={teacherRoundedTableShell}>
                 <TeacherAmberCue title="Recent submissions">
-                  Class-list style table: file, learner, when it landed, score if any, and a Grade shortcut. Use horizontal
-                  scroll on small viewports.
+                  Class-list style table: file, learner, when it landed, score if any, and a shortcut to that row on the
+                  submission roster. Use horizontal scroll on small viewports.
                 </TeacherAmberCue>
                 <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-100 bg-white">
                   <h2 className="font-semibold text-slate-900 text-sm flex items-center gap-2">
@@ -387,7 +387,7 @@ export default function Analytics() {
                       <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" aria-hidden />
                       <p className="text-sm font-medium text-slate-800">No submissions yet</p>
                       <p className="text-xs text-slate-500 mt-1.5 max-w-[260px] mx-auto">
-                        When students upload work, the latest files appear here with quick links to grade.
+                        When students upload work, the latest files appear here with quick links to the roster row.
                       </p>
                       <Link
                         to="/student-submissions"
@@ -446,10 +446,11 @@ export default function Analytics() {
                             </td>
                             <td className="px-4 py-3 text-right">
                               <Link
-                                to={gradingLinkForSubmission(s.id)}
+                                to={studentSubmissionsLinkForSubmission(s.id)}
                                 className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#84001B] hover:underline px-1.5 py-1 rounded-md hover:bg-red-50"
+                                title="Open submission roster on this file"
                               >
-                                Grade
+                                Review
                                 <ChevronRight className="w-3 h-3" />
                               </Link>
                             </td>

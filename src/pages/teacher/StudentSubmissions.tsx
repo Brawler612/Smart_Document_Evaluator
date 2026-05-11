@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   RefreshCw,
   Download,
@@ -8,7 +8,6 @@ import {
   FileText,
   ChevronRight,
   ClipboardList,
-  Undo2,
   Trash2,
 } from 'lucide-react';
 import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
@@ -27,7 +26,7 @@ import {
   TeacherWorkspaceShell,
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
-import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
+import { gradingLinkForSubmission, isPlausibleSubmissionId } from '../../lib/gradingRoutes';
 import type { SubStatus } from '../../types';
 
 const STATUS_CHIP: Record<SubStatus, string> = {
@@ -65,12 +64,15 @@ function relativeTime(iso: string): string {
 }
 
 export default function StudentSubmissions() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<TeacherSubmission[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  /** Brief highlight after deep-link from Inbox (Review). */
+  const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -115,6 +117,49 @@ export default function StudentSubmissions() {
       ),
     [filtered]
   );
+
+  const targetSubmissionId = useMemo(() => {
+    const raw = searchParams.get('submission');
+    if (!raw || !isPlausibleSubmissionId(raw)) return null;
+    try {
+      return decodeURIComponent(raw.trim());
+    } catch {
+      return null;
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (loading || !targetSubmissionId) return;
+    if (!rows.some((r) => r.id === targetSubmissionId)) return;
+
+    const visible = tableRows.some((r) => r.id === targetSubmissionId);
+    if (!visible) {
+      setSearch('');
+      setFilter('all');
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const desktop = document.getElementById(`submission-roster-desktop-${targetSubmissionId}`);
+      const mobile = document.getElementById(`submission-roster-mobile-${targetSubmissionId}`);
+      const candidates = [desktop, mobile].filter((n): n is HTMLElement => n != null);
+      const el = candidates.find((node) => node.offsetParent != null) ?? candidates[0];
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setJumpHighlightId(targetSubmissionId);
+        window.setTimeout(() => setJumpHighlightId(null), 4500);
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete('submission');
+            return next;
+          },
+          { replace: true }
+        );
+      }
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [loading, targetSubmissionId, rows, tableRows, setSearchParams]);
 
   async function requestResubmitFromRoster(s: TeacherSubmission) {
     const msg = `Request resubmission for “${s.file_name}”?\n\nThe student will see an alert on their dashboard and submissions list asking them to upload a revised file (e.g. empty or incomplete work).`;
@@ -223,7 +268,8 @@ export default function StudentSubmissions() {
             <Link className="font-semibold text-[#84001B] hover:underline" to="/grading">
               Grading workspace
             </Link>
-            . Desktop shows the full roster table; phones use grouped cards with Grade / Redo / Delete on each upload.
+            . Desktop shows the full roster table; phones use grouped cards with Open file, Delete, and the learner name
+            link to the grading workspace.
           </>
         }
         actions={
@@ -349,8 +395,11 @@ export default function StudentSubmissions() {
             {tableRows.length > 0 && (
               <section className={`hidden md:block ${teacherRoundedTableShell}`} aria-label="Submission spreadsheet">
                 <TeacherAmberCue title="Roster spreadsheet">
-                  Maroon column headers align with Class list and Grading. Grade / Redo / Delete mirrors the Actions column there.
-                  Scroll sideways on narrow screens.
+                  Maroon column headers align with Class list and Grading. Actions here are delete-only; open{' '}
+                  <Link className="font-semibold text-amber-950 underline-offset-2 hover:underline" to="/grading">
+                    Grading workspace
+                  </Link>{' '}
+                  to evaluate or request redo. Scroll sideways on narrow screens.
                 </TeacherAmberCue>
                 <TeacherSubmissionRosterTable
                   rows={tableRows}
@@ -360,6 +409,8 @@ export default function StudentSubmissions() {
                   onDeleteRow={(s) => void deleteSubmissionRow(s)}
                   deleteBusyId={deleteBusyId}
                   labeledActions
+                  omitGradeAndRedo
+                  highlightSubmissionId={jumpHighlightId}
                   embedded
                 />
               </section>
@@ -377,9 +428,13 @@ export default function StudentSubmissions() {
                     const name = s.users?.full_name ?? 'Learner';
                     const mail = s.users?.email ?? '';
                     return (
-                      <li key={s.id}>
+                      <li key={s.id} id={`submission-roster-mobile-${s.id}`} className="scroll-mt-24">
                         <div
-                          className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden border-l-[5px] ${STATUS_CHIP[s.status]}`}
+                          className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden border-l-[5px] ${STATUS_CHIP[s.status]} ${
+                            jumpHighlightId === s.id
+                              ? 'ring-2 ring-[#84001B]/45 ring-offset-2 ring-offset-slate-50'
+                              : ''
+                          }`}
                         >
                           <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
                             <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -390,7 +445,13 @@ export default function StudentSubmissions() {
                                 {initials(name)}
                               </div>
                               <div className="min-w-0">
-                                <p className="font-semibold text-slate-900 truncate">{name}</p>
+                                <Link
+                                  to={gradingLinkForSubmission(s.id)}
+                                  className="font-semibold text-slate-900 truncate hover:text-[#84001B] hover:underline block"
+                                  title="Open in grading workspace"
+                                >
+                                  {name}
+                                </Link>
                                 <p className="text-xs text-slate-500 truncate">{mail || 'No email on file'}</p>
                                 <p className="mt-2 text-sm text-slate-800 font-medium truncate">
                                   {s.file_name}
@@ -425,16 +486,6 @@ export default function StudentSubmissions() {
                                 )}
                                 <button
                                   type="button"
-                                  disabled={resubmitSavingId === s.id || deleteBusyId === s.id}
-                                  onClick={() => void requestResubmitFromRoster(s)}
-                                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-950 text-xs font-semibold px-3 py-2 hover:bg-amber-100 disabled:opacity-50"
-                                  title="Request resubmission (empty / incomplete file)"
-                                >
-                                  <Undo2 className="w-3.5 h-3.5" aria-hidden />
-                                  Redo
-                                </button>
-                                <button
-                                  type="button"
                                   disabled={deleteBusyId === s.id || resubmitSavingId === s.id}
                                   onClick={() => void deleteSubmissionRow(s)}
                                   className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white text-red-700 text-xs font-semibold px-3 py-2 hover:bg-red-50 disabled:opacity-50"
@@ -443,13 +494,6 @@ export default function StudentSubmissions() {
                                   <Trash2 className="w-3.5 h-3.5" aria-hidden />
                                   Delete
                                 </button>
-                                <Link
-                                  to={gradingLinkForSubmission(s.id)}
-                                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#84001B] text-white text-xs font-semibold px-3 py-2 hover:bg-[#6b0016] shadow-sm"
-                                >
-                                  Grade
-                                  <ChevronRight className="w-3.5 h-3.5 opacity-90" />
-                                </Link>
                               </div>
                             </div>
                           </div>

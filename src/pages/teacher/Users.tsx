@@ -10,7 +10,6 @@ import {
   Users,
   ClipboardList,
   FileText,
-  Undo2,
   UserMinus,
   Download,
 } from 'lucide-react';
@@ -647,8 +646,8 @@ export default function UserManagement() {
               <span className="font-semibold">date submitted</span> and{' '}
               <span className="font-semibold">last modified</span> (from their latest file), live status, and actions (
               <span className="font-semibold">Remove</span> on every row;{' '}
-              <span className="font-semibold">Grade / Redo / Delete</span> when they have uploaded a file). Scroll sideways on small
-              screens.
+              <span className="font-semibold">Delete</span> on the latest upload when present — use Grading workspace or
+              Submission roster to score or request redo. Scroll sideways on small screens.
             </p>
             <div className="max-h-[min(560px,65vh)] overflow-auto">
               <table className="w-full min-w-[1180px] border-collapse text-left antialiased [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,'Helvetica Neue',Arial,sans-serif] text-[13px] leading-snug tracking-tight">
@@ -774,24 +773,6 @@ export default function UserManagement() {
                             </button>
                             {latest ? (
                               <div className="inline-flex flex-wrap justify-end gap-1.5">
-                                <Link
-                                  to={gradingLinkForSubmission(latest.id)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors"
-                                  title={latest.file_name ? `Open grading · ${latest.file_name}` : 'Open grading'}
-                                >
-                                  Grade
-                                  <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
-                                </Link>
-                                <button
-                                  type="button"
-                                  disabled={resubmitSavingId === latest.id || deleteBusyId === latest.id}
-                                  onClick={() => void requestResubmitFromClassList(latest)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
-                                  title="Ask student to resubmit"
-                                >
-                                  <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                                  Redo
-                                </button>
                                 <button
                                   type="button"
                                   disabled={deleteBusyId === latest.id || resubmitSavingId === latest.id}
@@ -833,7 +814,8 @@ export default function UserManagement() {
               </h2>
               <p className="text-sm text-slate-600 mt-2 max-w-2xl">
                 Same columns as the grading workspace. Status shows on-time vs late when the assignment has a due date;
-                otherwise it shows review state. Use the arrow to grade, undo to request a redo, trash to remove the row.
+                otherwise it shows review state. Use trash to remove a row; open Grading workspace or Submission roster to
+                evaluate or request redo.
               </p>
             </div>
             <Link
@@ -913,6 +895,7 @@ export default function UserManagement() {
               onDeleteRow={(s) => void deleteSubmissionRow(s)}
               deleteBusyId={deleteBusyId}
               labeledActions
+              omitGradeAndRedo
             />
           )}
         </section>

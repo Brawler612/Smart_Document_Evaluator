@@ -21,7 +21,7 @@ import {
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import { supabase } from '../../lib/supabase';
-import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
+import { studentSubmissionsLinkForSubmission } from '../../lib/gradingRoutes';
 import { useAuth } from '../../context/AuthContext';
 
 type SubmissionStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
@@ -346,8 +346,8 @@ export default function TeacherDashboard() {
             {!loading && recentSubs.length > 0 && (
               <div className={teacherRoundedTableShell}>
                 <TeacherAmberCue title="Latest activity">
-                  Recent uploads from your database sample—same maroon spreadsheet header as Class list. Tap a row to open
-                  grading.
+                  Recent uploads from your database sample—same maroon spreadsheet header as Class list. Tap the file or
+                  Review to open the submission roster on that upload.
                 </TeacherAmberCue>
                 <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-100 bg-white">
                   <h2 className="font-semibold text-slate-900 text-sm">Turn-ins</h2>
@@ -366,7 +366,7 @@ export default function TeacherDashboard() {
                         <th className="px-4 py-3 font-semibold">File</th>
                         <th className="px-4 py-3 font-semibold whitespace-nowrap">Submitted</th>
                         <th className="px-4 py-3 font-semibold">Status</th>
-                        <th className="px-4 py-3 font-semibold text-right w-24">Open</th>
+                        <th className="px-4 py-3 font-semibold text-right w-24">Roster</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -374,8 +374,9 @@ export default function TeacherDashboard() {
                         <tr key={row.id} className="bg-white hover:bg-red-50/40">
                           <td className="px-4 py-3">
                             <Link
-                              to={gradingLinkForSubmission(row.id)}
+                              to={studentSubmissionsLinkForSubmission(row.id)}
                               className="flex items-center gap-2 min-w-0 group"
+                              title="View this upload on the submission roster"
                             >
                               <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#84001B] to-[#5c0014] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
                                 {(row.file_name || '?').slice(0, 1).toUpperCase()}
@@ -405,10 +406,11 @@ export default function TeacherDashboard() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <Link
-                              to={gradingLinkForSubmission(row.id)}
+                              to={studentSubmissionsLinkForSubmission(row.id)}
                               className="inline-flex items-center gap-0.5 text-xs font-semibold text-[#84001B] hover:underline"
+                              title="Open submission roster on this file"
                             >
-                              Grade
+                              Review
                               <ChevronRight className="w-3.5 h-3.5 opacity-70" />
                             </Link>
                           </td>

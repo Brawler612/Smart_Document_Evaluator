@@ -69,18 +69,71 @@ function normalizeDocType(v: unknown): DocType {
   return 'Other';
 }
 
-/** Title column in grading queue: student-chosen doc type beats assignment title (e.g. General Submission). */
+/** Same title as `ensureGeneralAssignment` in student Assignments — quick uploads without a specific task. */
+export const GENERAL_SUBMISSION_ASSIGNMENT_TITLE = 'General Submission';
+
+/**
+ * Short label from an uploaded file name, e.g. `INDIVIDUAL FINAL PROJECT.pdf` → `IFP`.
+ * Splits on spaces and common separators; uses the first letter of each word (skipping pure-number tokens’ non-letters).
+ */
+export function fileNameToTitleAcronym(fileName: string): string {
+  const trimmed = fileName.trim();
+  if (!trimmed) return '';
+
+  const lastDot = trimmed.lastIndexOf('.');
+  const ext = lastDot > 0 ? trimmed.slice(lastDot + 1) : '';
+  const base =
+    lastDot > 0 &&
+    lastDot < trimmed.length - 1 &&
+    ext.length <= 8 &&
+    /^[A-Za-z0-9]+$/.test(ext)
+      ? trimmed.slice(0, lastDot).trim()
+      : trimmed;
+
+  const normalized = base.replace(/_+/g, ' ').trim();
+  const tokens = normalized.split(/[\s\-–—.,;:&/+|]+/).filter((t) => t.length > 0);
+
+  const initials = tokens
+    .map((tok) => {
+      const m = tok.match(/[A-Za-z]/);
+      return m ? m[0].toUpperCase() : '';
+    })
+    .join('');
+
+  if (initials.length > 0) return initials;
+
+  const compact = normalized.replace(/[^A-Za-z0-9]/g, '');
+  if (!compact) return '';
+  return compact.slice(0, 12).toUpperCase();
+}
+
+/** Title column in grading queue: student-chosen doc type beats assignment title; general bucket uses file-name acronym. */
 export function submissionQueueTitle(
   s: {
     submission_doc_type?: string | null;
     assignments?: { title?: string | null } | null;
+    file_name?: string | null;
   },
   emptyFallback = '—'
 ): string {
   const d = s.submission_doc_type?.trim();
   if (d) return d;
-  const t = s.assignments?.title?.trim();
+  const t = s.assignments?.title?.trim() ?? '';
+  const isGeneralBucket = t === GENERAL_SUBMISSION_ASSIGNMENT_TITLE || t === '';
+
+  if (t && !isGeneralBucket) return t;
+
+  const fn = s.file_name?.trim();
+  if (isGeneralBucket && fn) {
+    const acronym = fileNameToTitleAcronym(fn);
+    if (acronym) return acronym;
+  }
+
   if (t) return t;
+  if (fn) {
+    const acronym = fileNameToTitleAcronym(fn);
+    if (acronym) return acronym;
+  }
   return emptyFallback;
 }
 

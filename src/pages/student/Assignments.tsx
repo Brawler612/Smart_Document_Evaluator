@@ -25,6 +25,7 @@ import { supabase } from '../../lib/supabase';
 import { resolveStudentSubmissionFileUrl } from '../../lib/submissionStorage';
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { ensureAppUserProfile } from '../../lib/userProfilePersistence';
+import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from '../../lib/teacherSubmissionLoad';
 import { useAuth } from '../../context/AuthContext';
 interface Assignment {
   id: string;
@@ -409,7 +410,7 @@ export default function StudentAssignments() {
   async function ensureGeneralAssignment(): Promise<string | null> {
     const table = await resolveAssignmentTable();
     if (!table) return null;
-    const title = 'General Submission';
+    const title = GENERAL_SUBMISSION_ASSIGNMENT_TITLE;
     const existing = await supabase
       .from(table)
       .select('id')

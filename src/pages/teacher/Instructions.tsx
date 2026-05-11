@@ -21,7 +21,7 @@ import {
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { fetchTeacherSubmissionRows, type TeacherSubmission } from '../../lib/teacherSubmissionLoad';
-import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
+import { studentSubmissionsLinkForSubmission } from '../../lib/gradingRoutes';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import type { AppUser } from '../../types';
@@ -218,9 +218,12 @@ export default function Instructions() {
 
         <section className={teacherRoundedTableShell}>
           <TeacherAmberCue title="Open items">
-            Same statuses you filter on Submission roster and Grading workspace. Tap{' '}
-            <span className="font-semibold">Review</span> to jump into scoring with the file attached. Scroll sideways on
-            narrow screens.
+            Same statuses you filter on{' '}
+            <Link className="font-semibold text-amber-950 underline-offset-2 hover:underline" to="/student-submissions">
+              Submission roster
+            </Link>{' '}
+            and Grading workspace. Tap <span className="font-semibold">Review</span> to open the roster scrolled to that
+            upload (then use the learner link or Grading workspace to score). Scroll sideways on narrow screens.
           </TeacherAmberCue>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-3.5 border-b border-slate-100 bg-white">
             <h2 className="font-semibold text-slate-900 text-sm md:text-base">Latest in queue</h2>
@@ -297,7 +300,7 @@ export default function Instructions() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <Link
-                            to={gradingLinkForSubmission(item.id)}
+                            to={studentSubmissionsLinkForSubmission(item.id)}
                             className="inline-flex items-center gap-1 rounded-lg bg-[#84001B] text-white text-xs font-semibold px-3 py-2 hover:bg-[#6b0016] shadow-sm"
                           >
                             Review
@@ -316,7 +319,7 @@ export default function Instructions() {
         <section className={`mt-10 ${teacherRoundedTableShell}`}>
           <TeacherAmberCue title="Quick roster">
             Students from Supabase <code className="text-[11px] bg-amber-100/60 px-1 rounded">users</code>. Open{' '}
-            <span className="font-semibold">Full class list</span> for Remove / Grade actions and full directory columns.
+            <span className="font-semibold">Full class list</span> for Remove / Delete actions and full directory columns.
           </TeacherAmberCue>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-3.5 border-b border-slate-100 bg-white">
             <div className="flex items-center gap-2 min-w-0">

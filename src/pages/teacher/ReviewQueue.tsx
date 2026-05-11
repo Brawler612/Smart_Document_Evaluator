@@ -57,7 +57,14 @@ import {
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
-import { formatGeminiEvaluationError, runGeminiBackedEvaluation } from '../../lib/geminiDocumentEvaluation';
+import {
+  appendPersistedAiEvalExtras,
+  formatGeminiTeacherNotice,
+  runGeminiBackedEvaluation,
+  type CorrectHighlight,
+  type LanguageCorrection,
+} from '../../lib/geminiDocumentEvaluation';
+import { extractTextFromDocxBuffer } from '../../lib/docxText';
 
 type Submission = TeacherSubmission;
 
@@ -81,6 +88,88 @@ function isInsufficientSubmissionText(text: string): boolean {
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length < 8) return true;
   return false;
+}
+
+/** Session-only: first Run AI Evaluator in Grade AI mode freezes rubric + text for this submission until publish/resubmit. */
+const AI_ONLY_EVAL_LOCK_STORAGE_KEY = 'sde_ai_only_eval_lock_v1';
+
+type AiOnlyEvalLockV1 = {
+  v: 1;
+  criteria: AICriterion[];
+  executiveSummary: string;
+  languageCorrections: LanguageCorrection[];
+  documentQualityNotes: string;
+  correctHighlights: CorrectHighlight[];
+  draftSnapshot: { score: number | null; summary: string };
+  inspectionText: string;
+  feedbackDraft: string;
+};
+
+function readAllAiOnlyEvalLocks(): Record<string, AiOnlyEvalLockV1> {
+  if (typeof sessionStorage === 'undefined') return {};
+  try {
+    const raw = sessionStorage.getItem(AI_ONLY_EVAL_LOCK_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, AiOnlyEvalLockV1>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readAiOnlyEvalLock(submissionId: string): AiOnlyEvalLockV1 | null {
+  const row = readAllAiOnlyEvalLocks()[submissionId];
+  return row?.v === 1 ? row : null;
+}
+
+function writeAiOnlyEvalLock(submissionId: string, lock: Omit<AiOnlyEvalLockV1, 'v'>): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const all = readAllAiOnlyEvalLocks();
+    all[submissionId] = { v: 1, ...lock };
+    sessionStorage.setItem(AI_ONLY_EVAL_LOCK_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* quota or private mode */
+  }
+}
+
+function removeAiOnlyEvalLock(submissionId: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const all = readAllAiOnlyEvalLocks();
+    delete all[submissionId];
+    sessionStorage.setItem(AI_ONLY_EVAL_LOCK_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
+function maybeFreezeAiOnlyEvalAfterRun(
+  gradeMode: 'ai' | 'teacher' | null,
+  submissionId: string,
+  args: {
+    criteria: AICriterion[];
+    executiveSummary: string;
+    languageCorrections: LanguageCorrection[];
+    documentQualityNotes: string;
+    correctHighlights: CorrectHighlight[];
+    draftSnapshot: { score: number | null; summary: string };
+    inspectionText: string;
+    feedbackDraft: string;
+  }
+): void {
+  if (gradeMode !== 'ai') return;
+  if (readAiOnlyEvalLock(submissionId)) return;
+  writeAiOnlyEvalLock(submissionId, {
+    criteria: args.criteria.map((c) => ({ ...c })),
+    executiveSummary: args.executiveSummary,
+    languageCorrections: args.languageCorrections.map((r) => ({ ...r })),
+    documentQualityNotes: args.documentQualityNotes,
+    correctHighlights: args.correctHighlights.map((h) => ({ ...h })),
+    draftSnapshot: { ...args.draftSnapshot },
+    inspectionText: args.inspectionText,
+    feedbackDraft: args.feedbackDraft,
+  });
 }
 
 function countRepeatedWordPairs(text: string): number {
@@ -175,6 +264,34 @@ function lengthCompletenessCriterion(content: string, docType: string, max: numb
   };
 }
 
+function insightDepthCriterion(content: string, max: number): AICriterion {
+  const keys = [
+    'analysis',
+    'evaluate',
+    'compare',
+    'contrast',
+    'limitation',
+    'recommend',
+    'conclusion',
+    'insight',
+    'discussion',
+    'improvement',
+    'future',
+    'risk',
+    'benefit',
+    'critique',
+  ];
+  const score = scoreByKeywords(content, keys, max);
+  const ratio = max > 0 ? score / max : 0;
+  const comment =
+    ratio >= 0.82
+      ? 'Strong evaluative depth: tradeoffs, recommendations, or synthesis read clearly in the draft.'
+      : ratio >= 0.55
+        ? 'Some analytical language; strengthen conclusions, risks, and concrete recommendations.'
+        : 'Limited critical analysis — expand interpretation, evaluation, and actionable takeaways.';
+  return { name: 'Critical analysis & insight', score, max, comment };
+}
+
 function runAIFromText(docType: string, content: string): AICriterion[] {
   const keywordMap: Record<string, { name: string; max: number; keys: string[] }[]> = {
     SRS: [
@@ -226,8 +343,9 @@ function runFullAIDraft(docType: string, content: string): AICriterion[] {
   const base = runAIFromText(docType, content);
   return [
     ...base,
-    grammarMechanicsCriterion(content, 22),
-    lengthCompletenessCriterion(content, docType, 22),
+    insightDepthCriterion(content, 20),
+    grammarMechanicsCriterion(content, 24),
+    lengthCompletenessCriterion(content, docType, 24),
   ];
 }
 
@@ -253,14 +371,29 @@ function buildAIFeedback(criteria: AICriterion[]): string {
 /** Snapshot persisted for students as “AI preliminary” versus teacher-adjusted `score` / `feedback`. */
 function criteriaToDraftSnapshot(
   criteria: AICriterion[],
-  executiveSummary?: string | null
+  executiveSummary?: string | null,
+  extras?: {
+    languageCorrections?: LanguageCorrection[];
+    documentQualityNotes?: string | null;
+    correctHighlights?: CorrectHighlight[];
+  } | null
 ): { score: number | null; summary: string } {
   const total = criteria.reduce((s, c) => s + c.score, 0);
   const maxTotal = criteria.reduce((s, c) => s + c.max, 0);
   const scorePct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
   const exec = executiveSummary?.trim() ?? '';
   const rubricLine = buildAIFeedback(criteria);
-  const summary = exec ? (rubricLine ? `${exec}\n\n${rubricLine}` : exec) : rubricLine;
+  let summary = exec ? (rubricLine ? `${exec}\n\n${rubricLine}` : exec) : rubricLine;
+  const cor = extras?.languageCorrections ?? [];
+  const qn = extras?.documentQualityNotes?.trim() ?? '';
+  const ch = extras?.correctHighlights ?? [];
+  if (cor.length > 0 || qn || ch.length > 0) {
+    summary = appendPersistedAiEvalExtras(summary, {
+      languageCorrections: cor,
+      documentQualityNotes: qn,
+      correctHighlights: ch,
+    });
+  }
   return { score: scorePct, summary };
 }
 
@@ -280,7 +413,7 @@ function getReadiness(criteria: AICriterion[], bodyText: string): ReadinessResul
       ready: false,
       missing: ['Document body'],
       message:
-        'Cannot accept an empty or nearly empty submission. Paste extracted text above (try Open file) or choose Needs resubmission.',
+        'Cannot accept an empty or nearly empty submission for the AI evaluator. Add submission text (from the file or storage) in the evaluator panel, or choose Needs resubmission.',
     };
   }
   if (criteria.length === 0) {
@@ -316,6 +449,23 @@ function base64ToUtf8(b64: string): string {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const clean = b64.replace(/\s/g, '');
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function submissionLooksLikeDocx(sub: Submission, httpUrl: string): boolean {
+  const fn = (sub.file_name || '').toLowerCase();
+  if (fn.endsWith('.docx')) return true;
+  const path = httpUrl.split(/[?#]/)[0].toLowerCase();
+  if (path.endsWith('.docx')) return true;
+  if (/[?&](?:file)?name=[^&]*\.docx\b/i.test(httpUrl)) return true;
+  return false;
 }
 
 function looksLikeTextualHttpUrl(u: string): boolean {
@@ -366,6 +516,35 @@ async function loadSubmissionInspectionPayload(sub: Submission): Promise<{
     }
     const { mime, isBase64, data } = parsed;
     const lower = mime.toLowerCase();
+    if (lower.includes('wordprocessingml.document') || lower.includes('officedocument.wordprocessingml.document')) {
+      if (!isBase64) {
+        return {
+          text: '',
+          hint: 'This Word data URL is not base64-encoded; cannot extract text for the AI.',
+          openHref: href,
+        };
+      }
+      try {
+        const buf = base64ToArrayBuffer(data);
+        const extracted = (await extractTextFromDocxBuffer(buf)).trim();
+        if (extracted.length === 0) {
+          return {
+            text: '',
+            hint: 'This .docx has no extractable text (e.g. images only). Open the file or paste the body.',
+            openHref: href,
+          };
+        }
+        const capped =
+          extracted.length > 500_000 ? `${extracted.slice(0, 500_000)}\n\n…(truncated)` : extracted;
+        return { text: capped, hint: null, openHref: href };
+      } catch {
+        return {
+          text: '',
+          hint: 'Could not read this Word document from the data URL.',
+          openHref: href,
+        };
+      }
+    }
     if (lower.includes('pdf') || lower.startsWith('image/')) {
       return {
         text: '',
@@ -385,6 +564,46 @@ async function loadSubmissionInspectionPayload(sub: Submission): Promise<{
 
   if (/^https?:\/\//i.test(httpFetchUrl)) {
     const fetchHref = httpFetchUrl;
+
+    if (submissionLooksLikeDocx(sub, fetchHref)) {
+      try {
+        const res = await fetch(fetchHref);
+        if (!res.ok) {
+          return {
+            text: '',
+            hint: `Could not download the Word file (${res.status}). Use Open file or paste text.`,
+            openHref: href,
+          };
+        }
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength < 64) {
+          return {
+            text: '',
+            hint: 'Downloaded file is too small to be a valid .docx.',
+            openHref: href,
+          };
+        }
+        const extracted = (await extractTextFromDocxBuffer(buf)).trim();
+        if (extracted.length > 0) {
+          const capped =
+            extracted.length > 500_000 ? `${extracted.slice(0, 500_000)}\n\n…(truncated)` : extracted;
+          return { text: capped, hint: null, openHref: href };
+        }
+        return {
+          text: '',
+          hint: 'This .docx has no readable body text (e.g. scanned pages as images). Open the file or paste text.',
+          openHref: href,
+        };
+      } catch (e) {
+        console.warn('[grading] .docx text extract failed:', e);
+        return {
+          text: '',
+          hint: 'Could not read text from this .docx (network, CORS, or corrupt file). Open in Word and paste here, or export as PDF.',
+          openHref: href,
+        };
+      }
+    }
+
     if (looksLikeBinaryHttpUrl(fetchHref)) {
       return {
         text: '',
@@ -414,11 +633,27 @@ async function loadSubmissionInspectionPayload(sub: Submission): Promise<{
         return { text: '', hint: 'Binary content — use Open file.', openHref: href };
       }
       if (res.ok) {
-        const t = await res.text();
-        const sample = t.slice(0, 4000);
-        if (t.length < 2_000_000 && !sampleHasSuspiciousBinaryControls(sample)) {
-          const capped = t.length > 500_000 ? `${t.slice(0, 500_000)}\n\n…(truncated)` : t;
-          return { text: capped, hint: null, openHref: href };
+        if (ct.includes('wordprocessingml.document')) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength >= 64) {
+            try {
+              const extracted = (await extractTextFromDocxBuffer(buf)).trim();
+              if (extracted.length > 0) {
+                const capped =
+                  extracted.length > 500_000 ? `${extracted.slice(0, 500_000)}\n\n…(truncated)` : extracted;
+                return { text: capped, hint: null, openHref: href };
+              }
+            } catch (e) {
+              console.warn('[grading] Content-Type docx extract failed:', e);
+            }
+          }
+        } else {
+          const t = await res.text();
+          const sample = t.slice(0, 4000);
+          if (t.length < 2_000_000 && !sampleHasSuspiciousBinaryControls(sample)) {
+            const capped = t.length > 500_000 ? `${t.slice(0, 500_000)}\n\n…(truncated)` : t;
+            return { text: capped, hint: null, openHref: href };
+          }
         }
       }
     } catch {
@@ -447,7 +682,14 @@ export default function ReviewQueue() {
   /** Manual per-criterion rubric the teacher scores in Grade-as-teacher mode. Same shape as AI rubric. */
   const [teacherCriteria, setTeacherCriteria] = useState<AICriterion[]>([]);
   const [aiExecutiveSummary, setAiExecutiveSummary] = useState('');
+  /** Structured language fixes from the last Gemini run (also embedded in `ai_draft_summary` on publish). */
+  const [aiLanguageCorrections, setAiLanguageCorrections] = useState<LanguageCorrection[]>([]);
+  const [aiDocumentQualityNotes, setAiDocumentQualityNotes] = useState('');
+  /** Passages the model verified as correct in the submission (persisted in `ai_draft_summary`). */
+  const [aiCorrectHighlights, setAiCorrectHighlights] = useState<CorrectHighlight[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
+  /** Grade AI: first successful Run AI Evaluator freezes rubric + text (session lock); no re-run. */
+  const [aiOnlyEvalLocked, setAiOnlyEvalLocked] = useState(false);
   const [inspectionNotice, setInspectionNotice] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [inspectionText, setInspectionText] = useState('');
   /** Immutable snapshot when the grading modal loads (student text before teacher edits). */
@@ -468,7 +710,7 @@ export default function ReviewQueue() {
   const headerSelectAllRef = useRef<HTMLInputElement>(null);
   /** Latest automated AI run (“before” teacher tweaks criterion sliders). Persisted as `ai_draft_*` when saving. */
   const aiDraftSnapshotRef = useRef<{ score: number | null; summary: string } | null>(null);
-  /** Which grade flow the teacher wanted when opening the modal ('ai' | 'teacher'). Drives auto-scroll + auto-run. */
+  /** Which grade flow the teacher wanted when opening the modal ('ai' | 'teacher'). Drives auto-scroll to the right section. */
   const pendingGradeIntentRef = useRef<'ai' | 'teacher' | null>(null);
   /** Focus target for the teacher-grade input when the "Grade (Teacher)" row button is pressed. */
   const teacherScoreInputRef = useRef<HTMLInputElement>(null);
@@ -481,8 +723,13 @@ export default function ReviewQueue() {
   function closeGradingModal() {
     setSelected(null);
     setGradeMode(null);
+    setAiOnlyEvalLocked(false);
     setFileOpenHref(null);
     setAiExecutiveSummary('');
+    setAiLanguageCorrections([]);
+    setAiDocumentQualityNotes('');
+    setAiCorrectHighlights([]);
+    setInspectionText('');
     setInspectionNotice(null);
     setTeacherScoreInput('');
     setAppliedTeacherScore(null);
@@ -661,6 +908,9 @@ export default function ReviewQueue() {
     setFeedback(sub.feedback || '');
     setAiCriteria([]);
     setAiExecutiveSummary('');
+    setAiLanguageCorrections([]);
+    setAiDocumentQualityNotes('');
+    setAiCorrectHighlights([]);
     setInspectionNotice(null);
     setInspectionText('');
     setFileOpenHref(null);
@@ -680,21 +930,43 @@ export default function ReviewQueue() {
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
     const payload = await loadSubmissionInspectionPayload(sub);
-    setInspectionText(payload.text);
     setFileOpenHref(payload.openHref);
-    const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
-    aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
-    setAiCriteria(criteria);
-    if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
-    /** Seed the teacher's rubric with the same criterion names but normalize maxes to sum to 100 points. */
-    setTeacherCriteria(buildTeacherRubricOutOfHundred(criteria));
+    setAiOnlyEvalLocked(false);
+    /** Grade AI: no heuristic rubric until Run AI Evaluator; session lock restores the first-run score if present. */
+    if (intent === 'ai') {
+      const lock = readAiOnlyEvalLock(sub.id);
+      if (lock) {
+        setInspectionText(lock.inspectionText);
+        aiDraftSnapshotRef.current = lock.draftSnapshot;
+        setAiCriteria(lock.criteria);
+        setAiExecutiveSummary(lock.executiveSummary);
+        setAiLanguageCorrections(lock.languageCorrections);
+        setAiDocumentQualityNotes(lock.documentQualityNotes);
+        setAiCorrectHighlights(lock.correctHighlights);
+        setFeedback(sub.feedback?.trim() ? sub.feedback : lock.feedbackDraft);
+        setTeacherCriteria([]);
+        setAiOnlyEvalLocked(true);
+      } else {
+        setInspectionText(payload.text);
+        aiDraftSnapshotRef.current = null;
+        setTeacherCriteria([]);
+      }
+    } else {
+      setInspectionText(payload.text);
+      const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
+      aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
+      setAiCriteria(criteria);
+      if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
+      /** Seed the teacher's rubric with the same criterion names but normalize maxes to sum to 100 points. */
+      setTeacherCriteria(buildTeacherRubricOutOfHundred(criteria));
+    }
     setAiLoading(false);
   }
 
   /**
-   * After the modal opens AND the initial AI draft finishes, jump the teacher to the section that
-   * matches the row button they pressed: AI section (and auto-trigger Gemini) for "Grade AI",
-   * Teacher section (and focus the score input) for "Grade Teacher".
+   * After the modal opens and payload load finishes, jump the teacher to the section that matches
+   * the row button: AI section for "Grade AI" (no scores until Run AI Evaluator), Teacher section
+   * (and focus the score input) for "Grade Teacher".
    */
   useEffect(() => {
     if (!selected || aiLoading) return;
@@ -702,7 +974,6 @@ export default function ReviewQueue() {
     if (!intent) return;
     pendingGradeIntentRef.current = null;
     if (intent === 'ai') {
-      void runInspectionNow();
       const el = document.getElementById('grading-ai-section');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else if (intent === 'teacher') {
@@ -749,6 +1020,8 @@ export default function ReviewQueue() {
 
   async function runInspectionNow() {
     if (!selected) return;
+    if (gradeMode === 'ai' && readAiOnlyEvalLock(selected.id)) return;
+
     const docType = gradingDocTypeForAI(selected);
     const template = runFullAIDraft(docType, inspectionText);
     const evalUrl = (import.meta.env.VITE_GEMINI_EVAL_URL as string | undefined)?.trim();
@@ -756,10 +1029,26 @@ export default function ReviewQueue() {
     const model = (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim();
 
     if (!evalUrl && !apiKey) {
-      aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+      const snap = criteriaToDraftSnapshot(template, null);
+      aiDraftSnapshotRef.current = snap;
       setAiCriteria(template);
       setAiExecutiveSummary('');
-      if (!feedback.trim()) setFeedback(buildAIFeedback(template));
+      setAiLanguageCorrections([]);
+      setAiDocumentQualityNotes('');
+      setAiCorrectHighlights([]);
+      const autoFb = buildAIFeedback(template);
+      if (!feedback.trim()) setFeedback(autoFb);
+      maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
+        criteria: template,
+        executiveSummary: '',
+        languageCorrections: [],
+        documentQualityNotes: '',
+        correctHighlights: [],
+        draftSnapshot: snap,
+        inspectionText,
+        feedbackDraft: autoFb,
+      });
+      if (gradeMode === 'ai') setAiOnlyEvalLocked(true);
       return;
     }
 
@@ -775,31 +1064,96 @@ export default function ReviewQueue() {
         model: model || null,
       });
       if (result) {
-        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(result.criteria, result.executiveSummary);
+        const snap = criteriaToDraftSnapshot(result.criteria, result.executiveSummary, {
+          languageCorrections: result.languageCorrections,
+          documentQualityNotes: result.documentQualityNotes,
+          correctHighlights: result.correctHighlights,
+        });
+        aiDraftSnapshotRef.current = snap;
         setAiCriteria(result.criteria);
         setAiExecutiveSummary(result.executiveSummary);
-        if (!feedback.trim()) setFeedback(buildAIFeedback(result.criteria));
+        setAiLanguageCorrections(result.languageCorrections);
+        setAiDocumentQualityNotes(result.documentQualityNotes);
+        setAiCorrectHighlights(result.correctHighlights);
+        const autoFb = buildAIFeedback(result.criteria);
+        if (!feedback.trim()) setFeedback(autoFb);
+        maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
+          criteria: result.criteria,
+          executiveSummary: result.executiveSummary,
+          languageCorrections: result.languageCorrections,
+          documentQualityNotes: result.documentQualityNotes,
+          correctHighlights: result.correctHighlights,
+          draftSnapshot: snap,
+          inspectionText,
+          feedbackDraft: autoFb,
+        });
+        if (gradeMode === 'ai') setAiOnlyEvalLocked(true);
         setInspectionNotice({
           kind: 'ok',
-          text: 'Gemini updated scores, comments, and the executive summary. Fine-tune below if needed, then save.',
+          text:
+            gradeMode === 'ai'
+              ? 'AI score is set from this run and cannot be changed — publish when ready.'
+              : 'AI evaluator refreshed scores, verified-correct excerpts, issues, before/after fixes, and the executive summary. Adjust rubric cells if needed, then save or publish.',
         });
       } else {
-        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+        const snap = criteriaToDraftSnapshot(template, null);
+        aiDraftSnapshotRef.current = snap;
         setAiCriteria(template);
         setAiExecutiveSummary('');
-        if (!feedback.trim()) setFeedback(buildAIFeedback(template));
+        setAiLanguageCorrections([]);
+        setAiDocumentQualityNotes('');
+        setAiCorrectHighlights([]);
+        const autoFb = buildAIFeedback(template);
+        if (!feedback.trim()) setFeedback(autoFb);
+        maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
+          criteria: template,
+          executiveSummary: '',
+          languageCorrections: [],
+          documentQualityNotes: '',
+          correctHighlights: [],
+          draftSnapshot: snap,
+          inspectionText,
+          feedbackDraft: autoFb,
+        });
+        if (gradeMode === 'ai') setAiOnlyEvalLocked(true);
         setInspectionNotice({
           kind: 'warn',
-          text: 'Gemini did not return usable JSON. Using the built-in draft. Open DevTools → Console for details.',
+          text:
+            gradeMode === 'ai'
+              ? 'Using the built-in draft for this run — this score is now fixed for publish. Open DevTools → Console if you expected Gemini JSON.'
+              : 'Gemini did not return usable JSON. Using the built-in draft. Open DevTools → Console for details.',
         });
       }
     } catch (e) {
       console.error('[grading] Gemini / eval URL failed:', e);
-      aiDraftSnapshotRef.current = criteriaToDraftSnapshot(template, null);
+      const snap = criteriaToDraftSnapshot(template, null);
+      aiDraftSnapshotRef.current = snap;
       setAiCriteria(template);
       setAiExecutiveSummary('');
-      if (!feedback.trim()) setFeedback(buildAIFeedback(template));
-      setInspectionNotice({ kind: 'err', text: formatGeminiEvaluationError(e) });
+      setAiLanguageCorrections([]);
+      setAiDocumentQualityNotes('');
+      setAiCorrectHighlights([]);
+      const autoFb = buildAIFeedback(template);
+      if (!feedback.trim()) setFeedback(autoFb);
+      maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
+        criteria: template,
+        executiveSummary: '',
+        languageCorrections: [],
+        documentQualityNotes: '',
+        correctHighlights: [],
+        draftSnapshot: snap,
+        inspectionText,
+        feedbackDraft: autoFb,
+      });
+      if (gradeMode === 'ai') setAiOnlyEvalLocked(true);
+      const notice = formatGeminiTeacherNotice(e);
+      setInspectionNotice({
+        kind: notice.kind,
+        text:
+          gradeMode === 'ai'
+            ? `${notice.text} This built-in draft score is now fixed for publish.`
+            : notice.text,
+      });
     } finally {
       setAiLoading(false);
     }
@@ -818,11 +1172,21 @@ export default function ReviewQueue() {
           );
           return;
         }
+      } else if (gradeMode === 'ai') {
+        /** AI-only: teacher accepts the last run’s rubric total; no per-row readiness floor. */
+        if (isInsufficientSubmissionText(inspectionText)) {
+          alert(getReadiness(aiCriteria, inspectionText).message);
+          return;
+        }
+        if (aiCriteria.length === 0) {
+          alert('Run AI Evaluator first so there is a rubric score to publish.');
+          return;
+        }
       } else {
-        /** AI mode (or legacy): need a usable AI grade. */
-        const canPublish = getReadiness(aiCriteria, inspectionText);
-        if (!canPublish.ready) {
-          alert(canPublish.message);
+        /** Combined / legacy modal: keep per-criterion readiness for AI-based publish. */
+        const gate = getReadiness(aiCriteria, inspectionText);
+        if (!gate.ready) {
+          alert(gate.message);
           return;
         }
       }
@@ -905,6 +1269,7 @@ export default function ReviewQueue() {
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
     setSaving(false);
+    removeAiOnlyEvalLock(selected.id);
     closeGradingModal();
     load();
   }
@@ -921,6 +1286,7 @@ export default function ReviewQueue() {
         return;
       }
       if (selected?.id === sub.id) closeGradingModal();
+      removeAiOnlyEvalLock(sub.id);
       await load();
     } finally {
       setResubmitSavingId(null);
@@ -1014,7 +1380,7 @@ export default function ReviewQueue() {
         description={
           <>
             AI drafts scores and feedback; you review, adjust, then publish. Each row has two grade buttons —{' '}
-            <span className="font-semibold text-emerald-800">Grade AI</span> auto-runs the rubric,{' '}
+            <span className="font-semibold text-emerald-800">Grade AI</span> opens the AI step (press Run when ready),{' '}
             <span className="font-semibold text-[#84001B]">Grade Teacher</span> jumps to the manual score — plus{' '}
             <span className="font-semibold text-slate-800">Redo · Delete</span>. Same tools as{' '}
             <Link className="font-semibold text-[#84001B] hover:underline" to="/class-list">
@@ -1324,7 +1690,7 @@ export default function ReviewQueue() {
                               disabled={deleting || resubmitSavingId === s.id}
                               onClick={() => void openReview(s, 'ai')}
                               className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-400 transition-colors disabled:opacity-50"
-                              title="Open grading and run the AI rubric automatically"
+                              title="Open grading in AI mode — run the evaluator when you are ready"
                             >
                               <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
                               Grade AI
@@ -1455,7 +1821,7 @@ export default function ReviewQueue() {
                             disabled={deleting || resubmitSavingId === s.id}
                             onClick={() => void openReview(s, 'ai')}
                             className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                            title="Grade with AI"
+                            title="Open AI evaluator"
                           >
                             <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
                             AI
@@ -1495,7 +1861,7 @@ export default function ReviewQueue() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="grading-modal-title"
-              className="relative flex w-full max-w-5xl flex-col rounded-2xl bg-white shadow-2xl my-auto max-h-[min(90vh,calc(100vh-2rem))]"
+              className="relative flex w-full max-w-[min(92rem,calc(100vw-0.5rem))] flex-col rounded-2xl bg-white shadow-2xl my-auto max-h-[min(94vh,calc(100vh-0.5rem))]"
               onMouseDown={(e) => e.stopPropagation()}
             >
               <button
@@ -1522,9 +1888,9 @@ export default function ReviewQueue() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h2 id="grading-modal-title" className="font-bold text-slate-900 text-lg leading-tight">
+                    <h2 id="grading-modal-title" className="font-bold text-slate-900 text-xl md:text-2xl leading-tight">
                       {gradeMode === 'ai'
-                        ? 'Grade with AI'
+                        ? 'AI evaluator'
                         : gradeMode === 'teacher'
                           ? 'Grade as teacher'
                           : 'Grade submission'}
@@ -1575,7 +1941,7 @@ export default function ReviewQueue() {
                 </ol>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/30">
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-7 space-y-6 bg-slate-50/30">
                 {/* ─── Section 1: Open the file ─── */}
                 <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
                   <div className="flex items-start gap-3 mb-3">
@@ -1618,168 +1984,221 @@ export default function ReviewQueue() {
                 {gradeMode !== 'teacher' && (
                 <section
                   id="grading-ai-section"
-                  className="rounded-2xl border-2 border-emerald-200/80 bg-white p-4 shadow-sm scroll-mt-4"
+                  className="rounded-2xl border-2 border-emerald-300/70 bg-gradient-to-b from-white to-emerald-50/20 p-5 sm:p-7 shadow-lg scroll-mt-4"
                 >
-                  <div className="flex items-start gap-3 mb-3">
+                  <div className="flex items-start gap-3 mb-5">
                     <SectionBadge n={2} Icon={Sparkles} accent="emerald" />
                     <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-bold text-slate-900 inline-flex items-center gap-1.5">
-                        <Sparkles className="w-4 h-4 text-emerald-600" aria-hidden />
-                        Grade with AI
+                      <h3 className="text-base sm:text-lg font-bold text-slate-900 inline-flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-emerald-600 shrink-0" aria-hidden />
+                        AI document evaluator
                       </h3>
-                      <p className="text-[12px] text-slate-500 leading-relaxed">
-                        Automated rubric for <span className="font-semibold text-slate-700">{gradingDocTypeForAI(selected)}</span>{' '}
-                        plus grammar and length checks.{' '}
+                      <p className="text-sm text-slate-600 leading-relaxed mt-1.5">
+                        Gemini scores this submission from the text below: rubric, what is{' '}
+                        <span className="font-semibold text-slate-800">correct vs wrong</span>, suggested fixes, and an
+                        executive summary — all generated by the model for{' '}
+                        <span className="font-semibold text-slate-800">{gradingDocTypeForAI(selected)}</span>.{' '}
                         {import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY
-                          ? 'Gemini refines scores and comments on each run.'
-                          : 'Add VITE_GEMINI_EVAL_URL (recommended) or VITE_GEMINI_API_KEY in .env to use Gemini.'}
+                          ? gradeMode === 'ai'
+                            ? 'Grade AI: the first successful Run AI Evaluator fixes the rubric and score for this submission until you publish or request a redo.'
+                            : 'Nothing here is hand-authored rubric fill-in; press run to regenerate from the file text.'
+                          : 'Add VITE_GEMINI_EVAL_URL or VITE_GEMINI_API_KEY in .env to enable the live evaluator.'}
                         {gradeMode === 'ai'
-                          ? ' This score will be published directly to the student.'
-                          : ' Use this as a starting point — your manual grade in step 3 wins on publish.'}
+                          ? ' The draft total is what you can publish to the student.'
+                          : ' Use as a draft — your teacher grade in the next step wins on publish.'}
                       </p>
                     </div>
                   </div>
-                  <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50/40 group">
-                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-100/60 rounded-lg flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5">
-                        <Wand2 className="w-3 h-3" aria-hidden />
-                        Document text the AI will grade
-                      </span>
-                      <span className="text-[10px] font-medium text-slate-500 normal-case tracking-normal tabular-nums">
-                        {inspectionText.trim().split(/\s+/).filter(Boolean).length.toLocaleString()} words
-                        <ChevronDown className="w-3.5 h-3.5 inline ml-1 -mt-0.5 group-open:rotate-180 transition-transform" aria-hidden />
-                      </span>
-                    </summary>
-                    <div className="border-t border-slate-200 px-3 py-2.5">
-                      <textarea
-                        value={inspectionText}
-                        onChange={(e) => setInspectionText(e.target.value)}
-                        rows={6}
-                        placeholder="Paste or fix document text here if the extraction is empty or wrong…"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/25 focus:border-[#84001B] resize-y bg-white"
-                      />
+
+                  <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+                    <div className="min-w-0 flex-1 space-y-4 xl:w-[min(100%,42rem)] xl:shrink-0">
+                      <details open className="rounded-xl border border-slate-200 bg-white shadow-sm group">
+                        <summary className="cursor-pointer select-none px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-700 hover:bg-slate-50 rounded-t-xl flex items-center justify-between gap-2 list-none [&::-webkit-details-marker]:hidden">
+                          <span className="inline-flex items-center gap-2">
+                            <Wand2 className="w-4 h-4 text-emerald-600" aria-hidden />
+                            Submission text the AI evaluates
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-500 normal-case tracking-normal tabular-nums">
+                            {inspectionText.trim().split(/\s+/).filter(Boolean).length.toLocaleString()} words
+                            <ChevronDown className="w-4 h-4 inline ml-1 -mt-0.5 group-open:rotate-180 transition-transform" aria-hidden />
+                          </span>
+                        </summary>
+                        <div className="border-t border-slate-200 px-4 py-3">
+                          <p className="text-[11px] text-slate-500 mb-2 leading-snug">
+                            This is the only text the evaluator sees. <span className="font-semibold text-slate-600">.docx</span>{' '}
+                            uploads are unpacked here when the file URL can be fetched (signed links from your bucket work in
+                            this browser session). If word count stays at 0, open the file and paste the body, or check CORS /
+                            storage on the download URL.
+                          </p>
+                          <textarea
+                            value={inspectionText}
+                            onChange={(e) => setInspectionText(e.target.value)}
+                            readOnly={gradeMode === 'ai' && aiOnlyEvalLocked}
+                            rows={16}
+                            placeholder="Submission body for the AI evaluator (loaded when possible)…"
+                            className={`w-full min-h-[16rem] px-3 py-3 border border-slate-200 rounded-lg text-[15px] leading-7 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 resize-y font-sans ${
+                              gradeMode === 'ai' && aiOnlyEvalLocked
+                                ? 'bg-slate-50 text-slate-700 cursor-not-allowed'
+                                : 'bg-white'
+                            }`}
+                          />
+                        </div>
+                      </details>
                     </div>
-                  </details>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (!aiLoading) void runInspectionNow();
-                    }}
-                    className="mb-3 rounded-xl border border-emerald-200/70 bg-emerald-50/40 p-3"
-                    aria-label="AI grade form"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="submit"
-                        disabled={aiLoading}
-                        className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60 ${
-                          import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY
-                            ? 'bg-emerald-700 text-white hover:bg-emerald-800 focus:ring-emerald-600/40 shadow-emerald-700/20'
-                            : 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 focus:ring-slate-300'
-                        }`}
-                        title="Run the automated rubric. Result becomes a draft you can override in step 3."
+
+                    <div className="min-w-0 flex-1 space-y-4">
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!aiLoading) void runInspectionNow();
+                        }}
+                        className="rounded-xl border border-emerald-200/80 bg-white/90 p-4 shadow-sm"
+                        aria-label="AI document evaluator"
                       >
-                        {aiLoading ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                        ) : (
-                          <Sparkles className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="submit"
+                            disabled={aiLoading || (gradeMode === 'ai' && aiOnlyEvalLocked)}
+                            className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-base font-bold shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
+                              import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY
+                                ? 'bg-emerald-700 text-white hover:bg-emerald-800 focus:ring-emerald-600/50 shadow-emerald-800/25'
+                                : 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50 focus:ring-slate-300'
+                            }`}
+                            title={
+                              gradeMode === 'ai' && aiOnlyEvalLocked
+                                ? 'The AI score from your first successful run is fixed until you publish or request a redo.'
+                                : 'Run Gemini on the submission text and full rubric (or heuristic draft if no API key).'
+                            }
+                          >
+                            {aiLoading ? (
+                              <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
+                            ) : (
+                              <Sparkles className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
+                            )}
+                            {aiLoading ? 'Running AI Evaluator…' : 'Run AI Evaluator'}
+                          </button>
+                          {(import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY) && (
+                            <span
+                              className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600"
+                              title="API key or eval URL is set in .env."
+                            >
+                              Gemini configured
+                            </span>
+                          )}
+                          {aiCriteria.length > 0 && !aiLoading && (
+                            <span className="text-sm font-semibold text-slate-600 tabular-nums ml-auto">
+                              Draft total:{' '}
+                              <span className="text-emerald-800 text-lg font-extrabold">
+                                {maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                        {gradeMode === 'ai' && aiOnlyEvalLocked && (
+                          <p className="mt-3 text-[11px] font-medium text-slate-600 leading-snug">
+                            This submission’s AI rubric and score are set from your first successful run and cannot be
+                            changed here. Publish to send it to the student, or use Request redo so they can upload a new
+                            file (which clears this lock).
+                          </p>
                         )}
-                        {aiLoading ? 'Grading with AI…' : aiCriteria.length === 0 ? 'Grade with AI' : 'Re-grade with AI'}
-                      </button>
-                      {(import.meta.env.VITE_GEMINI_EVAL_URL || import.meta.env.VITE_GEMINI_API_KEY) && (
-                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
-                          Gemini connected
-                        </span>
-                      )}
-                      {aiCriteria.length > 0 && !aiLoading && (
-                        <span className="text-[11px] font-semibold text-slate-600 tabular-nums ml-auto">
-                          Draft total: <span className="text-emerald-800 text-sm">{maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%</span>
-                        </span>
-                      )}
-                    </div>
 
-                    {aiCriteria.length > 0 && !aiLoading ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border-2 border-emerald-300/70 bg-white px-3 py-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 text-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
-                          <Sparkles className="w-3 h-3" aria-hidden />
-                          AI graded
-                        </span>
-                        <span className="text-lg font-extrabold tabular-nums text-emerald-800">
-                          {maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%
-                        </span>
-                        <span className="text-[11px] text-slate-600">
-                          {gradeMode === 'ai'
-                            ? 'this is the score that will be published.'
-                            : 'draft score · used when no teacher grade is applied in step 3.'}
-                        </span>
-                      </div>
-                    ) : (
-                      <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-                        Not graded yet — press <span className="font-semibold">Grade with AI</span> to generate a draft rubric.
-                      </p>
-                    )}
+                        {aiLoading && aiCriteria.length > 0 ? (
+                          <p className="mt-4 text-xs font-medium text-emerald-900 leading-relaxed">
+                            Running AI Evaluator — updating rubric and analysis from the submission text…
+                          </p>
+                        ) : aiCriteria.length > 0 && !aiLoading ? (
+                          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border-2 border-emerald-300/80 bg-emerald-50/80 px-3 py-2.5">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 text-white px-3 py-1 text-[11px] font-bold uppercase tracking-wide">
+                              <Sparkles className="w-3.5 h-3.5" aria-hidden />
+                              AI graded
+                            </span>
+                            <span className="text-2xl font-extrabold tabular-nums text-emerald-900">
+                              {maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%
+                            </span>
+                            <span className="text-xs text-slate-700">
+                              {gradeMode === 'ai'
+                                ? 'This is the score you can publish to the student.'
+                                : 'Draft only unless you publish without a teacher override.'}
+                            </span>
+                          </div>
+                        ) : !aiLoading ? (
+                          <p className="mt-4 text-xs text-slate-600 leading-relaxed">
+                            Not run yet — confirm submission text on the left, then press{' '}
+                            <span className="font-semibold text-emerald-800">Run AI Evaluator</span>.
+                          </p>
+                        ) : null}
 
-                    {inspectionNotice && (
-                      <div
-                        className={`mt-2 flex gap-2 rounded-lg border px-3 py-2 text-xs leading-snug ${
-                          inspectionNotice.kind === 'ok'
-                            ? 'border-emerald-200 bg-white text-emerald-950'
-                            : inspectionNotice.kind === 'warn'
-                              ? 'border-amber-200 bg-amber-50 text-amber-950'
-                              : 'border-red-200 bg-red-50 text-red-950'
-                        }`}
-                        role="status"
-                      >
-                        <span className="min-w-0 flex-1">{inspectionNotice.text}</span>
-                        <button
-                          type="button"
-                          onClick={() => setInspectionNotice(null)}
-                          className="shrink-0 rounded p-0.5 text-current opacity-70 hover:opacity-100"
-                          aria-label="Dismiss notice"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </form>
-                  {aiLoading && aiCriteria.length === 0 ? (
-                    <div className="space-y-3">
-                      {[...Array(4)].map((_, i) => (
-                        <div key={i} className="h-10 animate-pulse rounded-lg bg-slate-200/60" />
-                      ))}
-                    </div>
-                  ) : aiCriteria.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
-                      <Sparkles className="w-8 h-8 text-slate-300 mx-auto mb-2" aria-hidden />
-                      <p className="text-sm font-semibold text-slate-700">No AI report yet</p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Press <span className="font-semibold text-emerald-800">Grade with AI</span> above to generate a rubric.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className={aiLoading ? 'relative' : undefined}>
-                      {aiLoading && (
-                        <div
-                          className="pointer-events-none absolute inset-0 z-[1] rounded-xl bg-white/40 backdrop-blur-[1px]"
-                          aria-hidden
-                        />
+                        {inspectionNotice && (
+                          <div
+                            className={`mt-3 flex gap-2 rounded-lg border px-3 py-2.5 text-sm leading-snug ${
+                              inspectionNotice.kind === 'ok'
+                                ? 'border-emerald-200 bg-emerald-50/90 text-emerald-950'
+                                : inspectionNotice.kind === 'warn'
+                                  ? 'border-amber-200 bg-amber-50 text-amber-950'
+                                  : 'border-red-200 bg-red-50 text-red-950'
+                            }`}
+                            role="status"
+                          >
+                            <span className="min-w-0 flex-1">{inspectionNotice.text}</span>
+                            <button
+                              type="button"
+                              onClick={() => setInspectionNotice(null)}
+                              className="shrink-0 rounded p-0.5 text-current opacity-70 hover:opacity-100"
+                              aria-label="Dismiss notice"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
+                      </form>
+
+                      {aiLoading && aiCriteria.length === 0 ? (
+                        <div className="space-y-3">
+                          {[...Array(5)].map((_, i) => (
+                            <div key={i} className="h-12 animate-pulse rounded-xl bg-slate-200/70" />
+                          ))}
+                        </div>
+                      ) : aiCriteria.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center">
+                          <Sparkles className="w-10 h-10 text-emerald-200 mx-auto mb-3" aria-hidden />
+                          <p className="text-base font-semibold text-slate-800">No rubric report yet</p>
+                          <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
+                            Run AI Evaluator to fill rubric scores, what is correct in the file, what needs fixing, and the
+                            executive summary — all model-generated from this submission.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className={aiLoading ? 'relative' : undefined}>
+                          {aiLoading && (
+                            <div
+                              className="pointer-events-none absolute inset-0 z-[1] rounded-xl bg-white/50 backdrop-blur-[1px]"
+                              aria-hidden
+                            />
+                          )}
+                          {aiLoading && (
+                            <p className="absolute left-1/2 top-4 z-[2] -translate-x-1/2 rounded-full border border-emerald-200 bg-white px-4 py-1.5 text-xs font-semibold text-emerald-900 shadow-md">
+                              Running AI Evaluator…
+                            </p>
+                          )}
+                          <AIDocumentEvaluationReport
+                            criteria={aiCriteria}
+                            aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
+                            teacherScorePercent={
+                              selected.status === 'reviewed' && selected.score != null ? selected.score : null
+                            }
+                            summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}
+                            documentQualityNotes={aiDocumentQualityNotes.trim() || null}
+                            languageCorrections={aiLanguageCorrections}
+                            correctHighlights={aiCorrectHighlights}
+                            showTeacherGrade={gradeMode !== 'ai'}
+                            heading={gradeMode === 'ai' ? 'Grading score' : 'AI evaluator — analysis & rubric'}
+                            density="comfortable"
+                            detailEvaluation="narrative"
+                          />
+                        </div>
                       )}
-                      {aiLoading && (
-                        <p className="absolute left-1/2 top-3 z-[2] -translate-x-1/2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 shadow-sm">
-                          Updating with Gemini…
-                        </p>
-                      )}
-                      <AIDocumentEvaluationReport
-                        criteria={aiCriteria}
-                        aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
-                        teacherScorePercent={
-                          selected.status === 'reviewed' && selected.score != null ? selected.score : null
-                        }
-                        summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}
-                        showTeacherGrade={gradeMode !== 'ai'}
-                      />
                     </div>
-                  )}
+                  </div>
                 </section>
                 )}
 
@@ -2037,7 +2456,10 @@ export default function ReviewQueue() {
               <footer className="shrink-0 border-t border-slate-200 bg-white px-6 py-3 space-y-2.5 rounded-b-2xl">
                 {(() => {
                   const aiPct = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null;
-                  const aiReady = aiCriteria.length > 0 && readiness.ready && !isInsufficientSubmissionText(inspectionText);
+                  const aiReady =
+                    aiCriteria.length > 0 &&
+                    !isInsufficientSubmissionText(inspectionText) &&
+                    (gradeMode === 'ai' || readiness.ready);
                   const teacherReady = appliedTeacherScore != null;
                   const canPublish = gradeMode === 'ai' ? aiReady : gradeMode === 'teacher' ? teacherReady : aiReady || teacherReady;
                   const publishSource =
@@ -2066,14 +2488,22 @@ export default function ReviewQueue() {
                         {gradeMode === 'ai' ? (
                           <>
                             <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
-                            <ReadinessPill ok={aiCriteria.length > 0} label="AI grade" />
+                            <ReadinessPill
+                              ok={aiCriteria.length > 0 && !isInsufficientSubmissionText(inspectionText)}
+                              label="AI grade"
+                              title="Green after Run AI Evaluator returns a rubric and submission text is usable."
+                            />
                           </>
                         ) : gradeMode === 'teacher' ? (
                           <ReadinessPill ok={teacherReady} label="Teacher grade" />
                         ) : (
                           <>
                             <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
-                            <ReadinessPill ok={aiCriteria.length > 0} label="AI grade" />
+                            <ReadinessPill
+                              ok={aiCriteria.length > 0 && readiness.ready}
+                              label="AI grade"
+                              title="AI-based publish needs each criterion above the app’s minimum; use teacher grade instead if you accept the draft as-is."
+                            />
                             <ReadinessPill ok={teacherReady} label="Teacher grade" />
                           </>
                         )}
@@ -2089,14 +2519,18 @@ export default function ReviewQueue() {
                         {publishSource && publishValue != null && (
                           <span
                             className={`inline-flex items-center gap-1 ml-auto rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                              publishSource === 'teacher'
-                                ? 'border-[#84001B]/30 bg-[#ffd21a]/15 text-[#5c0014]'
-                                : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                              !canPublish
+                                ? 'border-amber-300 bg-amber-50 text-amber-950'
+                                : publishSource === 'teacher'
+                                  ? 'border-[#84001B]/30 bg-[#ffd21a]/15 text-[#5c0014]'
+                                  : 'border-emerald-200 bg-emerald-50 text-emerald-900'
                             }`}
                             title={
-                              publishSource === 'teacher'
-                                ? 'Publishes the manual teacher grade.'
-                                : 'Publishes the AI rubric score.'
+                              !canPublish && publishSource === 'ai'
+                                ? readiness.message
+                                : publishSource === 'teacher'
+                                  ? 'Publishes the manual teacher grade.'
+                                  : 'Publishes the AI rubric score.'
                             }
                           >
                             {publishSource === 'teacher' ? (
@@ -2105,9 +2539,17 @@ export default function ReviewQueue() {
                               <Sparkles className="w-3 h-3" aria-hidden />
                             )}
                             Publish: {publishValue}% ({publishSource === 'teacher' ? 'Teacher' : 'AI'})
+                            {!canPublish && publishSource === 'ai' ? ' — blocked' : ''}
                           </span>
                         )}
                       </div>
+                      {!canPublish && !saving && !aiLoading && gradeMode === 'ai' && (
+                        <p className="text-[11px] font-medium text-amber-950 leading-snug rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                          {isInsufficientSubmissionText(inspectionText)
+                            ? readiness.message
+                            : 'Press Run AI Evaluator to generate a rubric score before publishing.'}
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
@@ -2138,7 +2580,11 @@ export default function ReviewQueue() {
                                 ? `Publishes the teacher grade (${publishValue}%) to the student.`
                                 : `Publishes the AI grade (${publishValue}%) to the student.`
                               : gradeMode === 'ai'
-                                ? 'Press "Grade with AI" to generate a score before publishing.'
+                                ? isInsufficientSubmissionText(inspectionText)
+                                  ? readiness.message
+                                  : aiCriteria.length === 0
+                                    ? 'Press Run AI Evaluator to generate a score before publishing.'
+                                    : undefined
                                 : gradeMode === 'teacher'
                                   ? 'Type a teacher grade and press "Grade as teacher" before publishing.'
                                   : 'Run AI in step 2 or enter a teacher grade in step 3 to publish.'
@@ -2188,9 +2634,10 @@ function SectionBadge({
 }
 
 /** Compact ✓/✗ pill used in the modal footer readiness strip. */
-function ReadinessPill({ ok, label }: { ok: boolean; label: string }) {
+function ReadinessPill({ ok, label, title }: { ok: boolean; label: string; title?: string }) {
   return (
     <span
+      title={title}
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
         ok
           ? 'border-emerald-200 bg-emerald-50 text-emerald-800'

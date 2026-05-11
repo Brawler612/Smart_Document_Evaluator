@@ -8,6 +8,7 @@ import {
   rosterStatusChip,
   studentIdBadge,
 } from '../../lib/submissionRosterPresentation';
+import { teacherMaroonTheadClasses } from './TeacherWorkspaceChrome';
 
 type Props = {
   rows: TeacherSubmission[];
@@ -19,6 +20,10 @@ type Props = {
   deleteBusyId?: string | null;
   /** Larger labeled buttons — matches directory / grading toolbar style for discoverability. */
   labeledActions?: boolean;
+  /** Hide Evaluate / Resubmit controls (e.g. roster defers to Grading workspace for those actions). */
+  omitGradeAndRedo?: boolean;
+  /** When set, that row gets a short focus ring (e.g. deep-link from Inbox). */
+  highlightSubmissionId?: string | null;
   /** Omit outer chrome when parent already wraps with class-list shell + amber cue. */
   embedded?: boolean;
 };
@@ -31,8 +36,11 @@ export default function TeacherSubmissionRosterTable({
   onDeleteRow,
   deleteBusyId,
   labeledActions = false,
+  omitGradeAndRedo = false,
+  highlightSubmissionId = null,
   embedded = false,
 }: Props) {
+  const actionsMin = labeledActions ? (omitGradeAndRedo ? 'min-w-[120px]' : 'min-w-[220px]') : 'min-w-[140px]';
   return (
     <div
       className={
@@ -44,7 +52,7 @@ export default function TeacherSubmissionRosterTable({
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1200px] text-sm border-collapse">
           <thead>
-            <tr className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
+            <tr className={teacherMaroonTheadClasses}>
               <th className="px-3 py-3 text-left min-w-[96px]">Title</th>
               <th className="px-3 py-3 text-left min-w-[140px]">File name</th>
               <th className="px-3 py-3 text-left min-w-[120px]">Student ID</th>
@@ -56,7 +64,7 @@ export default function TeacherSubmissionRosterTable({
               <th className="px-3 py-3 text-left min-w-[72px]">SY</th>
               <th className="px-3 py-3 text-left min-w-[72px]">Semester</th>
               <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
-              <th className={`px-3 py-3 text-right ${labeledActions ? 'min-w-[220px]' : 'min-w-[140px]'}`}>
+              <th className={`px-3 py-3 text-right ${actionsMin}`}>
                 Actions
               </th>
             </tr>
@@ -67,7 +75,15 @@ export default function TeacherSubmissionRosterTable({
               const modDm = formatStackedDateTime(s.updated_at ?? s.submitted_at);
               const roster = rosterStatusChip(s);
               return (
-                <tr key={s.id} className="hover:bg-gray-50/80 transition-colors">
+                <tr
+                  key={s.id}
+                  id={`submission-roster-desktop-${s.id}`}
+                  className={`hover:bg-gray-50/80 transition-colors scroll-mt-24 ${
+                    highlightSubmissionId && highlightSubmissionId === s.id
+                      ? 'outline outline-2 outline-offset-[-2px] outline-[#84001B]/40 bg-[#fff8f9]'
+                      : ''
+                  }`}
+                >
                   <td className="px-3 py-3 align-middle text-gray-900 font-medium min-w-0">
                     <span className="truncate block max-w-[14rem]" title={submissionQueueTitle(s)}>
                       {submissionQueueTitle(s)}
@@ -150,24 +166,28 @@ export default function TeacherSubmissionRosterTable({
                   <td className="px-3 py-3 align-middle text-right">
                     {labeledActions ? (
                       <div className="inline-flex flex-wrap justify-end gap-1.5">
-                        <Link
-                          to={gradeHref(s.id)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors"
-                          title={s.file_name ? `Grade · ${s.file_name}` : 'Open grading'}
-                        >
-                          Grade
-                          <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
-                        </Link>
-                        <button
-                          type="button"
-                          disabled={resubmitSavingId === s.id || deleteBusyId === s.id}
-                          onClick={() => onRequestResubmit(s)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
-                          title="Request resubmission"
-                        >
-                          <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                          Redo
-                        </button>
+                        {!omitGradeAndRedo ? (
+                          <>
+                            <Link
+                              to={gradeHref(s.id)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors"
+                              title={s.file_name ? `Evaluate · ${s.file_name}` : 'Open grading workspace'}
+                            >
+                              Evaluate
+                              <ChevronRight className="w-3.5 h-3.5 opacity-80" aria-hidden />
+                            </Link>
+                            <button
+                              type="button"
+                              disabled={resubmitSavingId === s.id || deleteBusyId === s.id}
+                              onClick={() => onRequestResubmit(s)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
+                              title="Request resubmission"
+                            >
+                              <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                              Redo
+                            </button>
+                          </>
+                        ) : null}
                         {onDeleteRow ? (
                           <button
                             type="button"
@@ -178,28 +198,34 @@ export default function TeacherSubmissionRosterTable({
                           >
                             Delete
                           </button>
+                        ) : omitGradeAndRedo ? (
+                          <span className="text-xs text-gray-400">—</span>
                         ) : null}
                       </div>
                     ) : (
                       <div className="flex justify-end items-center gap-1">
-                        <Link
-                          to={gradeHref(s.id)}
-                          className="inline-flex items-center justify-center p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-[#84001B]"
-                          aria-label="Open grading"
-                          title="Grade / evaluate"
-                        >
-                          <ChevronRight className="w-4 h-4" aria-hidden />
-                        </Link>
-                        <button
-                          type="button"
-                          disabled={resubmitSavingId === s.id || deleteBusyId === s.id}
-                          onClick={() => onRequestResubmit(s)}
-                          className="inline-flex items-center justify-center p-2 rounded-lg border border-amber-200 bg-amber-50/80 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-                          aria-label={`Request resubmission for ${s.file_name}`}
-                          title="Request resubmission (empty / incomplete file)"
-                        >
-                          <Undo2 className="w-3.5 h-3.5" aria-hidden />
-                        </button>
+                        {!omitGradeAndRedo ? (
+                          <>
+                            <Link
+                              to={gradeHref(s.id)}
+                              className="inline-flex items-center justify-center p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-[#84001B]"
+                              aria-label="Open grading workspace"
+                              title="Evaluate in grading workspace"
+                            >
+                              <ChevronRight className="w-4 h-4" aria-hidden />
+                            </Link>
+                            <button
+                              type="button"
+                              disabled={resubmitSavingId === s.id || deleteBusyId === s.id}
+                              onClick={() => onRequestResubmit(s)}
+                              className="inline-flex items-center justify-center p-2 rounded-lg border border-amber-200 bg-amber-50/80 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                              aria-label={`Request resubmission for ${s.file_name}`}
+                              title="Request resubmission (empty / incomplete file)"
+                            >
+                              <Undo2 className="w-3.5 h-3.5" aria-hidden />
+                            </button>
+                          </>
+                        ) : null}
                         {onDeleteRow ? (
                           <button
                             type="button"
@@ -211,6 +237,8 @@ export default function TeacherSubmissionRosterTable({
                           >
                             <Trash2 className="w-3.5 h-3.5" aria-hidden />
                           </button>
+                        ) : omitGradeAndRedo ? (
+                          <span className="text-xs text-gray-400 pr-2">—</span>
                         ) : null}
                       </div>
                     )}

@@ -23,6 +23,7 @@ import { normalizeSubStatus, submissionQueueTitle } from '../../lib/teacherSubmi
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
+import { parsePersistedAiDraftSummary } from '../../lib/geminiDocumentEvaluation';
 import { useSubmissionFileMeta } from '../../lib/submissionFileMeta';
 import {
   deleteStudentSubmission,
@@ -133,7 +134,11 @@ function pickAssignmentJoin(rel: unknown): { title: string; document_type: strin
 
 function submissionHeading(s: Submission): string {
   return submissionQueueTitle(
-    { submission_doc_type: s.submission_doc_type, assignments: s.assignments },
+    {
+      submission_doc_type: s.submission_doc_type,
+      assignments: s.assignments,
+      file_name: s.file_name,
+    },
     'General Submission'
   );
 }
@@ -176,6 +181,8 @@ export default function MySubmissions() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [selected, setSelected] = useState<Submission | null>(null);
+  /** Which view of the modal to show: file/status/feedback details, or just the grading score. */
+  const [selectedView, setSelectedView] = useState<'details' | 'score'>('details');
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
   /** Two-step inline confirm — id of the row currently asking "are you sure?" */
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
@@ -485,7 +492,7 @@ export default function MySubmissions() {
               <li key={s.id} data-submission-row={s.id}>
                 <div
                   className={`bg-white border rounded-2xl p-4 md:p-5 shadow-sm hover:shadow-md transition-all ${
-                    confirmRemoveId === s.id
+                    confirmRemoveId === s.id && !(selected?.id === s.id && selectedView === 'score')
                       ? 'border-red-300 ring-2 ring-red-100'
                       : 'border-slate-200/90 hover:border-[#84001B]/15'
                   }`}
@@ -569,7 +576,11 @@ export default function MySubmissions() {
                       {((pv.normalized === 'reviewed' && s.score != null) || s.ai_draft_score != null) && (
                         <button
                           type="button"
-                          onClick={() => setSelected(s)}
+                          onClick={() => {
+                            setConfirmRemoveId(null);
+                            setSelectedView('score');
+                            setSelected(s);
+                          }}
                           className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 text-white px-3 py-2 text-xs font-bold hover:bg-emerald-700 shadow-sm shadow-emerald-600/20"
                           title="Grading is done — open this submission to see the AI and Teacher scores."
                         >
@@ -579,51 +590,57 @@ export default function MySubmissions() {
                       )}
                       <button
                         type="button"
-                        onClick={() => setSelected(s)}
+                        onClick={() => {
+                          setConfirmRemoveId(null);
+                          setSelectedView('details');
+                          setSelected(s);
+                        }}
                         className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#84001B] text-white px-3 py-2 text-xs font-semibold hover:bg-[#6b0016] shadow-sm"
+                        title="Open the submission file info, status, and staff feedback (no score)."
                       >
                         <MessageSquare className="w-3.5 h-3.5" />
                         Details
                       </button>
-                      {confirmRemoveId === s.id ? (
-                        <div className="flex gap-1.5">
+                      {!(selected?.id === s.id && selectedView === 'score') &&
+                        (confirmRemoveId === s.id ? (
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleRemoveSubmission(s)}
+                              disabled={removingId === s.id}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 text-white px-3 py-2 text-xs font-bold hover:bg-red-700 shadow-sm disabled:opacity-60"
+                            >
+                              {removingId === s.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                              {removingId === s.id ? 'Removing…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmRemoveId(null)}
+                              disabled={removingId === s.id}
+                              className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
                           <button
                             type="button"
-                            onClick={() => void handleRemoveSubmission(s)}
-                            disabled={removingId === s.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 text-white px-3 py-2 text-xs font-bold hover:bg-red-700 shadow-sm disabled:opacity-60"
+                            onClick={() => {
+                              setConfirmRemoveId(s.id);
+                              setRemoveError(null);
+                            }}
+                            disabled={removingId !== null}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 disabled:opacity-60"
+                            title="Remove this submission"
                           >
-                            {removingId === s.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                            {removingId === s.id ? 'Removing…' : 'Confirm'}
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Remove
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmRemoveId(null)}
-                            disabled={removingId === s.id}
-                            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setConfirmRemoveId(s.id);
-                            setRemoveError(null);
-                          }}
-                          disabled={removingId !== null}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 disabled:opacity-60"
-                          title="Remove this submission"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Remove
-                        </button>
-                      )}
+                        ))}
                     </div>
                   </div>
                 </div>
@@ -670,18 +687,8 @@ export default function MySubmissions() {
       {selected && (
         <SubmissionDetailsDialog
           selected={selected}
+          view={selectedView}
           onClose={() => setSelected(null)}
-          onRequestRemove={() => {
-            setConfirmRemoveId(selected.id);
-            setRemoveError(null);
-            setSelected(null);
-            requestAnimationFrame(() => {
-              document.querySelector(`[data-submission-row="${selected.id}"]`)?.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center',
-              });
-            });
-          }}
         />
       )}
     </div>
@@ -735,22 +742,30 @@ function FileChipStrip({ fileUrl, fileName }: { fileUrl: string | null; fileName
 
 function SubmissionDetailsDialog({
   selected,
+  view,
   onClose,
-  onRequestRemove,
 }: {
   selected: Submission;
+  /** 'details' hides the grading score block; 'score' surfaces the AI / Teacher score panel. */
+  view: 'details' | 'score';
   onClose: () => void;
-  onRequestRemove: () => void;
 }) {
   const selPv = statusPresentation(selected.status);
   const { meta: selMeta, measuring } = useSubmissionFileMeta(selected.file_url, selected.file_name);
+  const isScoreView = view === 'score';
+  const aiDraftParsed = useMemo(
+    () => parsePersistedAiDraftSummary((selected.ai_draft_summary ?? '').trim()),
+    [selected.ai_draft_summary]
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200/90 max-h-[min(92vh,48rem)] flex flex-col">
         <div className="flex shrink-0 items-start justify-between p-6 border-b border-slate-100 gap-4">
           <div className="min-w-0">
-            <h2 className="font-bold text-slate-900 text-lg">Submission details</h2>
+            <h2 className="font-bold text-slate-900 text-lg">
+              {isScoreView ? 'Grading score' : 'Submission details'}
+            </h2>
             <p className="text-sm text-slate-500 truncate mt-0.5">{selected.file_name}</p>
             <p className="text-[11px] text-slate-400 mt-1 tabular-nums" title={selected.id}>
               Ref {shortId(selected.id)}
@@ -777,63 +792,61 @@ function SubmissionDetailsDialog({
               </p>
             </div>
           )}
-          {((selPv.normalized === 'reviewed' && selected.score != null) ||
-            selected.ai_draft_score != null ||
-            (selected.ai_draft_summary ?? '').trim().length > 0) && (
-            <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Grades for this submission
-                  </p>
-                  <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
-                    Two side-by-side scores so you can compare the AI rubric draft with what your instructor finally
-                    published.
-                  </p>
+          {isScoreView &&
+            ((selPv.normalized === 'reviewed' && selected.score != null) ||
+              selected.ai_draft_score != null ||
+              (selected.ai_draft_summary ?? '').trim().length > 0) && (
+              <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Grades for this submission
+                    </p>
+                    <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
+                      Two side-by-side scores so you can compare the AI rubric draft with what your instructor finally
+                      published.
+                    </p>
+                  </div>
                 </div>
+                <AIDocumentEvaluationReport
+                  criteria={[]}
+                  aiScorePercent={selected.ai_draft_score}
+                  teacherScorePercent={
+                    selected.status === 'reviewed' && selected.score != null ? selected.score : null
+                  }
+                  summaryText={aiDraftParsed.visibleSummary || undefined}
+                  documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
+                  languageCorrections={aiDraftParsed.languageCorrections}
+                  correctHighlights={aiDraftParsed.correctHighlights}
+                  heading="AI and Teacher score"
+                />
               </div>
-              <AIDocumentEvaluationReport
-                criteria={[]}
-                aiScorePercent={selected.ai_draft_score}
-                teacherScorePercent={
-                  selected.status === 'reviewed' && selected.score != null ? selected.score : null
-                }
-                summaryText={selected.ai_draft_summary}
-                heading="AI and Teacher score"
-              />
+            )}
+          {isScoreView && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Status</p>
+              <span
+                className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-xl font-semibold ${selPv.chip}`}
+              >
+                {selPv.label}
+              </span>
             </div>
           )}
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Status</p>
-            <span
-              className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-xl font-semibold ${selPv.chip}`}
-            >
-              {selPv.label}
-            </span>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-              Staff feedback
-            </p>
-            {selected.feedback ? (
-              <div className="bg-slate-50 rounded-xl p-4 text-sm font-bold text-slate-800 leading-relaxed border border-slate-100">
-                {selected.feedback}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">
-                No written comments yet.
+          {isScoreView && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
+                Staff feedback
               </p>
-            )}
-          </div>
-          {submissionHasOpenableFileUrl(selected.file_url) && (
-            <SubmissionOpenLink
-              raw={selected.file_url!.trim()}
-              fileName={selected.file_name}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/30 bg-[#84001B]/8 px-3 py-2 text-sm font-semibold text-[#84001B] hover:bg-[#84001B]/12 w-fit"
-            >
-              <ExternalLink className="w-4 h-4" />
-              Open your file
-            </SubmissionOpenLink>
+              {selected.feedback ? (
+                <div className="bg-slate-50 rounded-xl p-4 text-sm font-bold text-slate-800 leading-relaxed border border-slate-100">
+                  {selected.feedback}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">
+                  No written comments yet.
+                </p>
+              )}
+            </div>
           )}
           {selPv.normalized === 'resubmit' && (
             <Link
@@ -844,90 +857,72 @@ function SubmissionDetailsDialog({
               <ChevronRight className="w-4 h-4" />
             </Link>
           )}
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">File details</p>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs">
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Name</dt>
-                <dd className="text-slate-800 font-medium break-all" title={selected.file_name}>
-                  {selected.file_name}
-                </dd>
-              </div>
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Size</dt>
-                <dd
-                  className="text-slate-800 font-bold tabular-nums"
-                  title={
-                    selMeta.bytes != null
-                      ? `${selMeta.bytes.toLocaleString()} bytes`
-                      : measuring
-                      ? 'Measuring file size…'
-                      : 'Size could not be determined for this URL'
-                  }
-                >
-                  {selMeta.bytes != null ? (
-                    selMeta.sizeLabel
-                  ) : measuring ? (
-                    <span className="inline-flex items-center gap-1.5 text-slate-500 font-medium normal-case">
-                      <span
-                        className="w-3 h-3 rounded-full border-2 border-slate-300 border-t-[#84001B] animate-spin"
-                        aria-hidden
-                      />
-                      Measuring…
-                    </span>
-                  ) : (
-                    <>
-                      —
-                      <span className="ml-1 text-[10px] font-medium text-slate-400 normal-case">
-                        (size unavailable)
+          {!isScoreView && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">File details</p>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs">
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Name</dt>
+                  <dd className="text-slate-800 font-medium break-all" title={selected.file_name}>
+                    {selected.file_name}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Size</dt>
+                  <dd
+                    className="text-slate-800 font-bold tabular-nums"
+                    title={
+                      selMeta.bytes != null
+                        ? `${selMeta.bytes.toLocaleString()} bytes`
+                        : measuring
+                        ? 'Measuring file size…'
+                        : 'Size could not be determined for this URL'
+                    }
+                  >
+                    {selMeta.bytes != null ? (
+                      selMeta.sizeLabel
+                    ) : measuring ? (
+                      <span className="inline-flex items-center gap-1.5 text-slate-500 font-medium normal-case">
+                        <span
+                          className="w-3 h-3 rounded-full border-2 border-slate-300 border-t-[#84001B] animate-spin"
+                          aria-hidden
+                        />
+                        Measuring…
                       </span>
-                    </>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Type</dt>
-                <dd className="text-slate-800 font-medium break-all">
-                  {selMeta.extension || '—'}
-                  <span className="text-slate-400"> · {selMeta.mime}</span>
-                </dd>
-              </div>
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Storage</dt>
-                <dd className="text-slate-800 font-medium">{selMeta.urlKindLabel}</dd>
-              </div>
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Task</dt>
-                <dd className="text-slate-800 font-medium">{submissionHeading(selected)}</dd>
-              </div>
-              <div>
-                <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Sent</dt>
-                <dd className="text-slate-800 font-medium">
-                  {new Date(selected.submitted_at).toLocaleString()}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-        <div className="shrink-0 border-t border-slate-100 px-6 py-3 bg-slate-50/60 flex items-center justify-between gap-3 rounded-b-2xl">
-          <div className="text-[11px] text-slate-500 leading-tight">
-            {selPv.normalized === 'reviewed' ? (
-              <span className="inline-flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-hidden />
-                Already graded — removing also deletes the score from your record.
-              </span>
-            ) : (
-              'Removing deletes the file and this row for you.'
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onRequestRemove}
-            className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 hover:border-red-300 shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Remove submission
-          </button>
+                    ) : (
+                      <>
+                        —
+                        <span className="ml-1 text-[10px] font-medium text-slate-400 normal-case">
+                          (size unavailable)
+                        </span>
+                      </>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Type</dt>
+                  <dd className="text-slate-800 font-medium break-all">
+                    {selMeta.extension || '—'}
+                    <span className="text-slate-400"> · {selMeta.mime}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Storage</dt>
+                  <dd className="text-slate-800 font-medium">{selMeta.urlKindLabel}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Task</dt>
+                  <dd className="text-slate-800 font-medium">{submissionHeading(selected)}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Sent</dt>
+                  <dd className="text-slate-800 font-medium">
+                    {new Date(selected.submitted_at).toLocaleString()}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )}
         </div>
       </div>
     </div>
