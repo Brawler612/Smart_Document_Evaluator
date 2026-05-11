@@ -27,6 +27,7 @@ import {
   deleteStudentSubmission,
   getStudentHiddenSubmissionIds,
 } from '../../lib/studentDeleteSubmission';
+import { emitStudentSubmissionRemoved } from '../../lib/studentWorkspaceData';
 import type { SubStatus } from '../../types';
 
 interface Submission {
@@ -219,6 +220,8 @@ export default function MySubmissions() {
         ? `Removed ${target.file_name} from your view (kept on the instructor's queue).`
         : `Removed ${target.file_name}${res.localOnly ? ' (browser copy)' : ''}.`
     );
+    /** Tell every other workspace page (Dashboard / Tasks / Drive / etc.) to drop this row. */
+    emitStudentSubmissionRemoved(target.id);
   }
 
   async function resolveSubmissionTable(): Promise<'submissions' | 'submission' | null> {

@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import { syncLocalSubmissionsToSupabase } from './localSubmissionSync';
+import { getStudentHiddenSubmissionIds } from './studentDeleteSubmission';
 import { useAuth } from '../context/AuthContext';
+
+/**
+ * Broadcast channel name fired by `studentDeleteSubmission` whenever a row is
+ * soft- or hard-removed. Every page that consumes `useStudentWorkspace` listens
+ * for this event and refreshes (or filters) immediately so the deleted row
+ * vanishes from Dashboard / Tasks / Boards / Drive / Sheets / Analytics in the
+ * same tick the Remove confirmation finishes.
+ */
+export const STUDENT_SUBMISSION_REMOVED_EVENT = 'sde:student:submission-removed';
 
 export type SubStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
 
@@ -107,8 +117,10 @@ export function useStudentWorkspace(): StudentWorkspaceData {
         /* best-effort sync; ignore failures */
       }
       const [a, s] = await Promise.all([safeFetchAssignments(), safeFetchSubmissions(user.id)]);
+      /** Honor the per-browser soft-delete set so removed rows disappear everywhere. */
+      const hidden = getStudentHiddenSubmissionIds();
       setAssignments(a);
-      setSubmissions(s);
+      setSubmissions(hidden.size === 0 ? s : s.filter((row) => !hidden.has(row.id)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspace');
     } finally {
@@ -120,7 +132,34 @@ export function useStudentWorkspace(): StudentWorkspaceData {
     void refresh();
   }, [refresh]);
 
+  /**
+   * Listen for removal events from any page (e.g. Submissions). When fired we
+   * also instantly prune the local state so the rest of the workspace pages
+   * update without waiting for the network round-trip from `refresh()`.
+   */
+  useEffect(() => {
+    function handleRemoved(e: Event) {
+      const detail = (e as CustomEvent<{ id?: string }>).detail;
+      if (detail?.id) {
+        setSubmissions((rows) => rows.filter((r) => r.id !== detail.id));
+      }
+      /** Also re-pull from Supabase to catch any hard-delete that happened. */
+      void refresh();
+    }
+    window.addEventListener(STUDENT_SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
+    return () =>
+      window.removeEventListener(STUDENT_SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
+  }, [refresh]);
+
   return { loading, error, assignments, submissions, refresh };
+}
+
+/** Convenience emitter so pages don't need to know the event-name string. */
+export function emitStudentSubmissionRemoved(id: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(STUDENT_SUBMISSION_REMOVED_EVENT, { detail: { id } })
+  );
 }
 
 /**
