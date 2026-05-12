@@ -12,6 +12,7 @@ import {
   Inbox,
   AlertTriangle,
   Trash2,
+  Trash,
   Loader2,
   CheckCircle2,
   Sparkles,
@@ -211,6 +212,10 @@ export default function MySubmissions() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removedToast, setRemovedToast] = useState<string | null>(null);
+  /** Row-selection set for the bulk "Delete selected" toolbar above the list. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Disables the bulk action button while the network requests are in flight. */
+  const [bulkRemoving, setBulkRemoving] = useState(false);
 
   /** Auto-dismiss the success toast after a few seconds. */
   useEffect(() => {
@@ -252,6 +257,80 @@ export default function MySubmissions() {
     );
     /** Tell every other workspace page (Dashboard / Tasks / Drive / etc.) to drop this row. */
     emitStudentSubmissionRemoved(target.id);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(scope: Submission[], selectAll: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) for (const s of scope) next.add(s.id);
+      else for (const s of scope) next.delete(s.id);
+      return next;
+    });
+  }
+
+  /**
+   * Remove the currently selected submissions in one pass. We reuse the same per-row API as the
+   * inline Remove button, but skip the two-step confirm UI; the toolbar shows a single confirm
+   * before we start so the action keeps the friendly "are you sure?" guardrail.
+   */
+  async function removeSelectedSubmissions(scope: Submission[]) {
+    if (!user?.id) return;
+    const targets = scope.filter((s) => selectedIds.has(s.id));
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `Remove ${targets.length} selected submission${targets.length === 1 ? '' : 's'}? Teacher copies stay on their queue; your view drops them.`
+      )
+    )
+      return;
+    setBulkRemoving(true);
+    setRemoveError(null);
+    /** Optimistic: drop the rows now; we re-add them only if the API later complains. */
+    const targetIds = new Set(targets.map((t) => t.id));
+    const prev = submissions;
+    setSubmissions((rows) => rows.filter((r) => !targetIds.has(r.id)));
+    if (selected && targetIds.has(selected.id)) setSelected(null);
+    setSelectedIds(new Set());
+
+    let removedCount = 0;
+    const failed: string[] = [];
+    for (const target of targets) {
+      const res = await deleteStudentSubmission({
+        id: target.id,
+        studentId: user.id,
+        fileUrl: target.file_url,
+      });
+      if (res.ok) {
+        emitStudentSubmissionRemoved(target.id);
+        removedCount += 1;
+      } else {
+        failed.push(`${target.file_name}: ${res.message}`);
+      }
+    }
+
+    setBulkRemoving(false);
+
+    if (failed.length > 0) {
+      /** Roll back rows that the API rejected so the user can retry them individually. */
+      const failedNames = new Set(failed.map((line) => line.split(':')[0]));
+      const rollback = prev.filter((row) => failedNames.has(row.file_name));
+      if (rollback.length > 0) setSubmissions((rows) => [...rollback, ...rows]);
+      setRemoveError(
+        `Removed ${removedCount}/${targets.length}. Could not remove:\n${failed.join('\n')}`
+      );
+      return;
+    }
+
+    setRemovedToast(`Removed ${removedCount} submission${removedCount === 1 ? '' : 's'} from your view.`);
   }
 
   async function resolveSubmissionTable(): Promise<'submissions' | 'submission' | null> {
@@ -507,6 +586,47 @@ export default function MySubmissions() {
             </Link>
           </div>
         ) : (
+          <>
+          <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 mb-3 rounded-2xl border border-slate-200/90 bg-slate-50/95 shadow-sm">
+            <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                aria-label={
+                  filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))
+                    ? 'Deselect all uploads in this view'
+                    : 'Select all uploads in this view'
+                }
+                checked={filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))}
+                ref={(el) => {
+                  if (!el) return;
+                  const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+                  el.indeterminate = sel > 0 && sel < filtered.length;
+                }}
+                onChange={(e) => toggleSelectAll(filtered, e.target.checked)}
+                className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+              />
+              Select all in view
+            </label>
+            {(() => {
+              const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+              return (
+                <button
+                  type="button"
+                  disabled={sel === 0 || bulkRemoving || removingId !== null}
+                  onClick={() => void removeSelectedSubmissions(filtered)}
+                  className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  title={
+                    sel === 0
+                      ? 'Tick cards below (or use Select all) to enable bulk delete'
+                      : `Remove the ${sel} selected upload${sel === 1 ? '' : 's'} from your view`
+                  }
+                >
+                  <Trash className="w-3 h-3 shrink-0" aria-hidden />
+                  Delete selected{sel > 0 ? ` (${sel})` : ''}
+                </button>
+              );
+            })()}
+          </div>
           <ul className="space-y-3">
             {filtered.map((s) => {
               const pv = studentStatusPresentation(s);
@@ -521,6 +641,13 @@ export default function MySubmissions() {
                 >
                   <div className="flex flex-col sm:flex-row sm:items-stretch gap-4">
                     <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select submission ${s.file_name}`}
+                        checked={selectedIds.has(s.id)}
+                        onChange={() => toggleSelected(s.id)}
+                        className="mt-4 h-3.5 w-3.5 accent-[#84001B] cursor-pointer shrink-0"
+                      />
                       <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#ffd21a] to-[#f5c400] flex items-center justify-center shrink-0 text-[#84001B]">
                         <FileText className="w-6 h-6" aria-hidden />
                       </div>
@@ -686,6 +813,7 @@ export default function MySubmissions() {
               );
             })}
           </ul>
+          </>
         )}
       </div>
 

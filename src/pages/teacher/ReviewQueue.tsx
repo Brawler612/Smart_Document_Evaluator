@@ -13,6 +13,7 @@ import {
   Inbox,
   ArrowRight,
   Trash2,
+  Trash,
   Undo2,
   Loader2,
   Sparkles,
@@ -831,6 +832,8 @@ export default function ReviewQueue() {
   const [teacherGradeNotice, setTeacherGradeNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  /** Row-selection set for the bulk "Delete selected" toolbar above the queue. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
   const [viewScoreOpen, setViewScoreOpen] = useState<{ row: Submission; focus: 'ai' | 'teacher' } | null>(null);
   const [fileOpenHref, setFileOpenHref] = useState<string | null>(null);
@@ -938,6 +941,36 @@ export default function ReviewQueue() {
     setTeacherScoreInput('');
     setAppliedTeacherScore(null);
     setTeacherGradeNotice(null);
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(scope: Submission[], selectAll: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) for (const s of scope) next.add(s.id);
+      else for (const s of scope) next.delete(s.id);
+      return next;
+    });
+  }
+
+  async function deleteSelected(scope: Submission[]) {
+    const ids = scope.filter((s) => selectedIds.has(s.id)).map((s) => s.id);
+    if (ids.length === 0) return;
+    /** Drop the local selection now so the toolbar reflects the action immediately. */
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    await deleteByIds(ids);
   }
 
   async function deleteByIds(ids: string[]) {
@@ -1840,6 +1873,46 @@ export default function ReviewQueue() {
             <TeacherAmberCue title="Submission queue">
               Maroon header matches Class list. Scroll sideways on narrow screens if columns are clipped.
             </TeacherAmberCue>
+            <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 border-b border-slate-200/90 bg-slate-50/95">
+              <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  aria-label={
+                    filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))
+                      ? 'Deselect all submissions in this view'
+                      : 'Select all submissions in this view'
+                  }
+                  checked={filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))}
+                  ref={(el) => {
+                    if (!el) return;
+                    const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+                    el.indeterminate = sel > 0 && sel < filtered.length;
+                  }}
+                  onChange={(e) => toggleSelectAll(filtered, e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+                />
+                Select all in view
+              </label>
+              {(() => {
+                const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+                return (
+                  <button
+                    type="button"
+                    disabled={sel === 0 || deleting}
+                    onClick={() => void deleteSelected(filtered)}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title={
+                      sel === 0
+                        ? 'Tick rows below (or use Select all) to enable bulk delete'
+                        : `Delete the ${sel} selected submission${sel === 1 ? '' : 's'}`
+                    }
+                  >
+                    <Trash className="w-3 h-3 shrink-0" aria-hidden />
+                    Delete selected{sel > 0 ? ` (${sel})` : ''}
+                  </button>
+                );
+              })()}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1200px] text-sm border-collapse">
                 <thead>
@@ -1916,6 +1989,15 @@ export default function ReviewQueue() {
                         </td>
                         <td className="px-3 py-3 align-middle">
                           <div className="flex flex-col gap-1.5 items-end">
+                            <div className="inline-flex items-center gap-1.5 justify-end w-full">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select submission ${s.file_name}`}
+                                checked={selectedIds.has(s.id)}
+                                onChange={() => toggleSelected(s.id)}
+                                className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+                              />
+                            </div>
                             <div className="inline-flex flex-row-reverse items-center gap-1 flex-wrap justify-end max-w-[20rem] ml-auto">
                               <button
                                 type="button"
@@ -1994,10 +2076,54 @@ export default function ReviewQueue() {
           </div>
 
           {/* mobile cards */}
-          <div className="md:hidden space-y-3">
+          <div className="md:hidden">
+            <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 mb-3 rounded-xl border border-slate-200/90 bg-slate-50/95">
+              <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  aria-label={
+                    filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))
+                      ? 'Deselect all submissions in this view'
+                      : 'Select all submissions in this view'
+                  }
+                  checked={filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))}
+                  ref={(el) => {
+                    if (!el) return;
+                    const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+                    el.indeterminate = sel > 0 && sel < filtered.length;
+                  }}
+                  onChange={(e) => toggleSelectAll(filtered, e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+                />
+                Select all
+              </label>
+              {(() => {
+                const sel = filtered.reduce((acc, s) => (selectedIds.has(s.id) ? acc + 1 : acc), 0);
+                return (
+                  <button
+                    type="button"
+                    disabled={sel === 0 || deleting}
+                    onClick={() => void deleteSelected(filtered)}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={sel === 0 ? 'Tick rows to enable bulk delete' : `Delete the ${sel} selected`}
+                  >
+                    <Trash className="w-3 h-3 shrink-0" aria-hidden />
+                    Delete selected{sel > 0 ? ` (${sel})` : ''}
+                  </button>
+                );
+              })()}
+            </div>
+            <div className="space-y-3">
             {filtered.map(s => (
               <div key={s.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-sm hover:border-gray-200 transition-all">
                 <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select submission ${s.file_name}`}
+                    checked={selectedIds.has(s.id)}
+                    onChange={() => toggleSelected(s.id)}
+                    className="mt-3 h-3.5 w-3.5 accent-[#84001B] cursor-pointer shrink-0"
+                  />
                   <div className="w-10 h-10 bg-[#84001B]/10 rounded-xl flex items-center justify-center flex-shrink-0">
                     <FileText className="w-5 h-5 text-[#84001B]" />
                   </div>
@@ -2124,6 +2250,7 @@ export default function ReviewQueue() {
                 </div>
               </div>
             ))}
+            </div>
           </div>
         </>
       )}
