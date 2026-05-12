@@ -3,10 +3,14 @@ import {
   AlertCircle,
   ArrowRight,
   BadgeCheck,
+  BookOpen,
   CheckCircle,
   GraduationCap,
+  Image as ImageIcon,
   Languages,
+  LayoutGrid,
   Sparkles,
+  Table2,
 } from 'lucide-react';
 
 export interface AIEvaluationCriterion {
@@ -29,6 +33,28 @@ export type AICorrectHighlightRow = {
   rubricTie?: string;
 };
 
+export type AIPageRewriteRow = {
+  page: number;
+  pageLabel?: string;
+  before: string;
+  after: string;
+  issues?: string[];
+  imagesObserved?: string[];
+  rubricTie?: string;
+};
+
+export type AIPageOverviewScoreRow = {
+  pageRange: string;
+  scoreOutOf10: number;
+  evaluation: string;
+};
+
+export type AIDiagramEvaluationRow = {
+  diagram: string;
+  evaluation: string;
+  scoreOutOf10: number;
+};
+
 export type AIDocumentEvaluationReportProps = {
   /** Rubric rows from the last AI run (teacher grading). Empty = summary-only layout. */
   criteria: AIEvaluationCriterion[];
@@ -44,6 +70,12 @@ export type AIDocumentEvaluationReportProps = {
   languageCorrections?: AILanguageCorrectionRow[];
   /** Excerpts the model verified as correct / well aligned with the rubric. */
   correctHighlights?: AICorrectHighlightRow[];
+  /** Per-page before → after rewrites covering every page / section / slide / moment in the submission. */
+  pageRewrites?: AIPageRewriteRow[];
+  /** Page-range narrative scores (e.g. “Pages 1–2 — Title”, 9/10) mirroring long Gemini-style document reviews. */
+  documentOverviewScores?: AIPageOverviewScoreRow[];
+  /** Table-style diagram / figure critiques (DFD, sequence, architecture, etc.). */
+  diagramEvaluations?: AIDiagramEvaluationRow[];
   heading?: string;
   /** Hide the AI grade tile (teacher-only / instructor views). Defaults to true. */
   showAiGrade?: boolean;
@@ -107,6 +139,9 @@ export default function AIDocumentEvaluationReport({
   documentQualityNotes,
   languageCorrections = [],
   correctHighlights = [],
+  pageRewrites = [],
+  documentOverviewScores = [],
+  diagramEvaluations = [],
   heading = 'AI Analysis & Evaluation',
   showAiGrade = true,
   showTeacherGrade = true,
@@ -122,6 +157,9 @@ export default function AIDocumentEvaluationReport({
   const qualityNotes = (documentQualityNotes ?? '').trim();
   const corrections = languageCorrections ?? [];
   const verifiedCorrect = correctHighlights ?? [];
+  const pageWalkthrough = (pageRewrites ?? []).filter((p) => p && (p.before?.trim() || p.after?.trim()));
+  const overviewRows = (documentOverviewScores ?? []).filter((r) => r && r.pageRange?.trim() && r.evaluation?.trim());
+  const diagramRows = (diagramEvaluations ?? []).filter((r) => r && r.diagram?.trim() && r.evaluation?.trim());
   const pct = aiScorePercent != null && Number.isFinite(aiScorePercent) ? Math.max(0, Math.min(100, aiScorePercent)) : null;
   const showRubricRows = criteria.length > 0 && detailEvaluation !== 'narrative';
   const fallbackExecutive =
@@ -449,6 +487,186 @@ export default function AIDocumentEvaluationReport({
           )}
         </div>
       </div>
+
+      {overviewRows.length > 0 && (
+        <div>
+          <p
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-500 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <LayoutGrid className="h-4 w-4 text-sky-600 shrink-0" aria-hidden />
+            Document overview & scoring
+          </p>
+          <p className={`mb-4 text-slate-600 ${comfy ? 'text-sm' : 'text-xs'}`}>
+            Section-by-section quality the model inferred from the submission (page ranges, chapters, or time spans for
+            media). Scores are out of 10 for that span only — not the course grade.
+          </p>
+          <ul className={`space-y-3 ${comfy ? 'text-[15px]' : 'text-sm'}`}>
+            {overviewRows.map((row, i) => (
+              <li
+                key={`${row.pageRange}-${i}`}
+                className={`rounded-2xl border border-sky-200/80 bg-sky-50/50 shadow-sm ${
+                  comfy ? 'p-4 sm:p-5' : 'p-3 sm:p-4'
+                }`}
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+                  <span className="font-bold text-slate-900">{row.pageRange}</span>
+                  <span className="tabular-nums rounded-lg bg-sky-900 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">
+                    {row.scoreOutOf10}/10
+                  </span>
+                </div>
+                <p className={`leading-relaxed text-slate-800 whitespace-pre-wrap ${comfy ? 'font-semibold' : 'font-medium'}`}>
+                  {row.evaluation}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {diagramRows.length > 0 && (
+        <div>
+          <p
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-500 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <Table2 className="h-4 w-4 text-violet-600 shrink-0" aria-hidden />
+            Visual & diagram evaluation
+          </p>
+          <p className={`mb-3 text-slate-600 ${comfy ? 'text-sm' : 'text-xs'}`}>
+            Each row is one figure or diagram the model identified (including screenshots and photos of boards). Treat
+            scores as advisory until you have confirmed against the real file.
+          </p>
+          <div className={`overflow-x-auto rounded-2xl border border-violet-200/90 bg-white shadow-sm ${comfy ? 'text-sm' : 'text-xs'}`}>
+            <table className="w-full min-w-[36rem] border-collapse text-left">
+              <thead>
+                <tr className="border-b border-violet-100 bg-violet-50/90">
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500 w-[22%]">Diagram / image</th>
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500">Evaluation</th>
+                  <th className="px-3 py-2.5 font-bold uppercase tracking-wide text-slate-500 w-[6rem] text-right">
+                    Score
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {diagramRows.map((row, i) => (
+                  <tr key={`${row.diagram}-${i}`} className="border-b border-slate-100 last:border-0 align-top">
+                    <td className="px-3 py-3 font-semibold text-slate-800 whitespace-pre-wrap break-words">
+                      {row.diagram}
+                    </td>
+                    <td className="px-3 py-3 text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
+                      {row.evaluation}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums font-bold text-violet-900 whitespace-nowrap">
+                      {row.scoreOutOf10}/10
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {pageWalkthrough.length > 0 && (
+        <div>
+          <p
+            className={`mb-2 flex items-center gap-2 font-bold uppercase tracking-[0.12em] text-slate-500 ${
+              comfy ? 'text-xs' : 'text-[11px]'
+            }`}
+          >
+            <BookOpen className="h-4 w-4 text-[#84001B] shrink-0" aria-hidden />
+            Per-page walkthrough (before → after)
+          </p>
+          <p className={`mb-4 text-slate-600 ${comfy ? 'text-sm' : 'text-xs'}`}>
+            One card for every page / slide / section / moment Gemini found in the submission — SRS, SDD, SPMP, STD, lab
+            reports, slide decks, scanned pages, photographed work, audio / video clips are all covered. The left column shows
+            what is currently on that page; the right column is the AI&apos;s improved version applying the listed fixes.
+          </p>
+          <ol className={`space-y-4 ${comfy ? 'text-[15px]' : 'text-sm'}`}>
+            {pageWalkthrough.map((row, idx) => {
+              const issues = row.issues ?? [];
+              const images = row.imagesObserved ?? [];
+              const label = row.pageLabel?.trim() || `Page ${row.page}`;
+              return (
+                <li
+                  key={`${row.page}-${idx}`}
+                  className="rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden"
+                >
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-[#fff8f9] via-white to-emerald-50/40 px-4 py-2.5">
+                    <span className="inline-flex items-center justify-center min-w-[2.25rem] h-7 px-2 rounded-lg bg-[#84001B] text-white text-[11px] font-bold tabular-nums tracking-wide">
+                      {row.page}
+                    </span>
+                    <span className={`font-bold text-slate-900 ${comfy ? 'text-base' : 'text-sm'}`}>{label}</span>
+                    {row.rubricTie ? (
+                      <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900">
+                        <Sparkles className="h-3 w-3" aria-hidden />
+                        {row.rubricTie}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2 p-4">
+                    <div className="rounded-xl border border-rose-200/80 bg-rose-50/55 p-3">
+                      <p className="mb-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900/90">
+                        <AlertCircle className="h-3.5 w-3.5" aria-hidden />
+                        Before — on the page now
+                      </p>
+                      <p className={`whitespace-pre-wrap leading-relaxed text-rose-950 ${comfy ? 'text-[14px]' : 'text-[13px]'}`}>
+                        {row.before || '— (no content extracted for this page)'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/55 p-3">
+                      <p className="mb-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900/90">
+                        <CheckCircle className="h-3.5 w-3.5" aria-hidden />
+                        After — AI improved version
+                      </p>
+                      <p className={`whitespace-pre-wrap leading-relaxed text-emerald-950 ${comfy ? 'text-[14px]' : 'text-[13px]'}`}>
+                        {row.after || '— (no rewrite suggested for this page)'}
+                      </p>
+                    </div>
+                  </div>
+                  {(issues.length > 0 || images.length > 0) && (
+                    <div className="grid gap-3 md:grid-cols-2 px-4 pb-4 -mt-1">
+                      {issues.length > 0 ? (
+                        <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 p-3">
+                          <p className="mb-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-900/90">
+                            <AlertCircle className="h-3.5 w-3.5" aria-hidden />
+                            Issues on this page
+                          </p>
+                          <ul className="list-disc list-inside text-amber-950/95 text-[12.5px] leading-relaxed space-y-1">
+                            {issues.map((it, i) => (
+                              <li key={i}>{it}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div aria-hidden />
+                      )}
+                      {images.length > 0 ? (
+                        <div className="rounded-xl border border-violet-200/80 bg-violet-50/60 p-3">
+                          <p className="mb-1.5 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-900/90">
+                            <ImageIcon className="h-3.5 w-3.5" aria-hidden />
+                            Images / diagrams seen
+                          </p>
+                          <ul className="list-disc list-inside text-violet-950/95 text-[12.5px] leading-relaxed space-y-1">
+                            {images.map((it, i) => (
+                              <li key={i}>{it}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div aria-hidden />
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
 
       {corrections.length > 0 && (
         <div>

@@ -9,7 +9,6 @@ import {
   ChevronDown,
   Calendar,
   Download,
-  Printer,
   ClipboardList,
   Inbox,
   ArrowRight,
@@ -64,9 +63,17 @@ import {
   formatGeminiTeacherNotice,
   runGeminiBackedEvaluation,
   type CorrectHighlight,
+  type DiagramEvaluation,
   type LanguageCorrection,
+  type PageOverviewScore,
+  type PageRewrite,
 } from '../../lib/geminiDocumentEvaluation';
 import { extractTextFromDocxBuffer } from '../../lib/docxText';
+import {
+  loadSubmissionAttachmentsForGemini,
+  summarizeAttachmentsForNotice,
+  type GeminiInlineAttachment,
+} from '../../lib/geminiAttachments';
 
 type Submission = TeacherSubmission;
 
@@ -102,6 +109,10 @@ type AiOnlyEvalLockV1 = {
   languageCorrections: LanguageCorrection[];
   documentQualityNotes: string;
   correctHighlights: CorrectHighlight[];
+  /** Per-page Before → After rewrites from the locked AI run (optional for old locks). */
+  pageRewrites?: PageRewrite[];
+  documentOverviewScores?: PageOverviewScore[];
+  diagramEvaluations?: DiagramEvaluation[];
   draftSnapshot: { score: number | null; summary: string };
   inspectionText: string;
   feedbackDraft: string;
@@ -155,6 +166,9 @@ function maybeFreezeAiOnlyEvalAfterRun(
     languageCorrections: LanguageCorrection[];
     documentQualityNotes: string;
     correctHighlights: CorrectHighlight[];
+    pageRewrites: PageRewrite[];
+    documentOverviewScores: PageOverviewScore[];
+    diagramEvaluations: DiagramEvaluation[];
     draftSnapshot: { score: number | null; summary: string };
     inspectionText: string;
     feedbackDraft: string;
@@ -168,6 +182,9 @@ function maybeFreezeAiOnlyEvalAfterRun(
     languageCorrections: args.languageCorrections.map((r) => ({ ...r })),
     documentQualityNotes: args.documentQualityNotes,
     correctHighlights: args.correctHighlights.map((h) => ({ ...h })),
+    pageRewrites: args.pageRewrites.map((r) => ({ ...r })),
+    documentOverviewScores: args.documentOverviewScores.map((r) => ({ ...r })),
+    diagramEvaluations: args.diagramEvaluations.map((r) => ({ ...r })),
     draftSnapshot: { ...args.draftSnapshot },
     inspectionText: args.inspectionText,
     feedbackDraft: args.feedbackDraft,
@@ -185,6 +202,13 @@ function patchAiOnlyEvalLock(submissionId: string, patch: Partial<Omit<AiOnlyEva
       patch.languageCorrections?.map((r) => ({ ...r })) ?? cur.languageCorrections.map((r) => ({ ...r })),
     documentQualityNotes: patch.documentQualityNotes ?? cur.documentQualityNotes,
     correctHighlights: patch.correctHighlights?.map((h) => ({ ...h })) ?? cur.correctHighlights.map((h) => ({ ...h })),
+    pageRewrites:
+      patch.pageRewrites?.map((r) => ({ ...r })) ?? (cur.pageRewrites ?? []).map((r) => ({ ...r })),
+    documentOverviewScores:
+      patch.documentOverviewScores?.map((r) => ({ ...r })) ??
+      (cur.documentOverviewScores ?? []).map((r) => ({ ...r })),
+    diagramEvaluations:
+      patch.diagramEvaluations?.map((r) => ({ ...r })) ?? (cur.diagramEvaluations ?? []).map((r) => ({ ...r })),
     draftSnapshot: patch.draftSnapshot ? { ...patch.draftSnapshot } : { ...cur.draftSnapshot },
     inspectionText: patch.inspectionText ?? cur.inspectionText,
     feedbackDraft: patch.feedbackDraft ?? cur.feedbackDraft,
@@ -455,6 +479,9 @@ function criteriaToDraftSnapshot(
     languageCorrections?: LanguageCorrection[];
     documentQualityNotes?: string | null;
     correctHighlights?: CorrectHighlight[];
+    pageRewrites?: PageRewrite[];
+    documentOverviewScores?: PageOverviewScore[];
+    diagramEvaluations?: DiagramEvaluation[];
   } | null
 ): { score: number | null; summary: string } {
   const total = criteria.reduce((s, c) => s + c.score, 0);
@@ -472,11 +499,17 @@ function criteriaToDraftSnapshot(
   const cor = extras?.languageCorrections ?? [];
   const qn = extras?.documentQualityNotes?.trim() ?? '';
   const ch = extras?.correctHighlights ?? [];
-  if (cor.length > 0 || qn || ch.length > 0) {
+  const pr = extras?.pageRewrites ?? [];
+  const ov = extras?.documentOverviewScores ?? [];
+  const dg = extras?.diagramEvaluations ?? [];
+  if (cor.length > 0 || qn || ch.length > 0 || pr.length > 0 || ov.length > 0 || dg.length > 0) {
     summary = appendPersistedAiEvalExtras(summary, {
       languageCorrections: cor,
       documentQualityNotes: qn,
       correctHighlights: ch,
+      pageRewrites: pr,
+      documentOverviewScores: ov,
+      diagramEvaluations: dg,
     });
   }
   return { score: scorePct, summary };
@@ -772,11 +805,22 @@ export default function ReviewQueue() {
   const [aiDocumentQualityNotes, setAiDocumentQualityNotes] = useState('');
   /** Passages the model verified as correct in the submission (persisted in `ai_draft_summary`). */
   const [aiCorrectHighlights, setAiCorrectHighlights] = useState<CorrectHighlight[]>([]);
+  /** Per-page Before → After rewrites Gemini produced for this submission. */
+  const [aiPageRewrites, setAiPageRewrites] = useState<PageRewrite[]>([]);
+  const [aiDocumentOverviewScores, setAiDocumentOverviewScores] = useState<PageOverviewScore[]>([]);
+  const [aiDiagramEvaluations, setAiDiagramEvaluations] = useState<DiagramEvaluation[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   /** Grade AI: first successful Run AI Evaluator freezes rubric + text (session lock); no re-run. */
   const [aiOnlyEvalLocked, setAiOnlyEvalLocked] = useState(false);
   const [inspectionNotice, setInspectionNotice] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [inspectionText, setInspectionText] = useState('');
+  /**
+   * Binary parts (PDF pages, images, audio, video, images extracted from a
+   * .docx) shipped to Gemini as `inlineData` so it can actually read visual,
+   * auditory, and rich-format content — not just the text we already
+   * scrape into `inspectionText`.
+   */
+  const [inspectionAttachments, setInspectionAttachments] = useState<GeminiInlineAttachment[]>([]);
   /** Immutable snapshot when the grading modal loads (student text before teacher edits). */
   const [feedback, setFeedback] = useState('');
   /** Working value in the teacher-grade input (string while editing). */
@@ -808,7 +852,11 @@ export default function ReviewQueue() {
     setAiLanguageCorrections([]);
     setAiDocumentQualityNotes('');
     setAiCorrectHighlights([]);
+    setAiPageRewrites([]);
+    setAiDocumentOverviewScores([]);
+    setAiDiagramEvaluations([]);
     setInspectionText('');
+    setInspectionAttachments([]);
     setInspectionNotice(null);
     setTeacherScoreInput('');
     setAppliedTeacherScore(null);
@@ -1023,8 +1071,12 @@ export default function ReviewQueue() {
     setAiLanguageCorrections([]);
     setAiDocumentQualityNotes('');
     setAiCorrectHighlights([]);
+    setAiPageRewrites([]);
+    setAiDocumentOverviewScores([]);
+    setAiDiagramEvaluations([]);
     setInspectionNotice(null);
     setInspectionText('');
+    setInspectionAttachments([]);
     setFileOpenHref(null);
 
     if (teacherDraftEarly) {
@@ -1056,8 +1108,19 @@ export default function ReviewQueue() {
       const updated = localRows.map((row) => (row.id === sub.id ? { ...row, status: 'under_review' as SubStatus } : row));
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
-    const payload = await loadSubmissionInspectionPayload(sub);
+    const [payload, attachments] = await Promise.all([
+      loadSubmissionInspectionPayload(sub),
+      loadSubmissionAttachmentsForGemini(sub),
+    ]);
     setFileOpenHref(payload.openHref);
+    setInspectionAttachments(attachments);
+    if (attachments.length > 0) {
+      const summary = summarizeAttachmentsForNotice(attachments);
+      setInspectionNotice({
+        kind: 'ok',
+        text: `Loaded ${summary} for Gemini to inspect directly — diagrams, images, scanned pages, audio and video will be graded alongside any extracted text. Press Run AI Evaluator to score everything.`,
+      });
+    }
     setAiOnlyEvalLocked(false);
     /** Grade AI: no heuristic rubric until Run AI Evaluator; session lock restores the first-run score if present. */
     if (intent === 'ai') {
@@ -1070,6 +1133,9 @@ export default function ReviewQueue() {
         setAiLanguageCorrections(lock.languageCorrections);
         setAiDocumentQualityNotes(lock.documentQualityNotes);
         setAiCorrectHighlights(lock.correctHighlights);
+        setAiPageRewrites(lock.pageRewrites ?? []);
+        setAiDocumentOverviewScores(lock.documentOverviewScores ?? []);
+        setAiDiagramEvaluations(lock.diagramEvaluations ?? []);
         setFeedback(sub.feedback?.trim() ? sub.feedback : lock.feedbackDraft);
         setTeacherCriteria([]);
         setAiOnlyEvalLocked(true);
@@ -1176,6 +1242,9 @@ export default function ReviewQueue() {
       setAiLanguageCorrections([]);
       setAiDocumentQualityNotes('');
       setAiCorrectHighlights([]);
+      setAiPageRewrites([]);
+      setAiDocumentOverviewScores([]);
+      setAiDiagramEvaluations([]);
       const autoFb = buildAIFeedback(template);
       if (!feedback.trim()) setFeedback(autoFb);
       maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
@@ -1184,6 +1253,9 @@ export default function ReviewQueue() {
         languageCorrections: [],
         documentQualityNotes: '',
         correctHighlights: [],
+        pageRewrites: [],
+        documentOverviewScores: [],
+        diagramEvaluations: [],
         draftSnapshot: snap,
         inspectionText,
         feedbackDraft: autoFb,
@@ -1199,6 +1271,7 @@ export default function ReviewQueue() {
         docType,
         content: inspectionText,
         template,
+        attachments: inspectionAttachments,
         evalUrl: evalUrl || null,
         apiKey: apiKey || null,
         model: model || null,
@@ -1208,6 +1281,9 @@ export default function ReviewQueue() {
           languageCorrections: result.languageCorrections,
           documentQualityNotes: result.documentQualityNotes,
           correctHighlights: result.correctHighlights,
+          pageRewrites: result.pageRewrites,
+          documentOverviewScores: result.documentOverviewScores,
+          diagramEvaluations: result.diagramEvaluations,
         });
         aiDraftSnapshotRef.current = snap;
         setAiCriteria(result.criteria);
@@ -1215,6 +1291,9 @@ export default function ReviewQueue() {
         setAiLanguageCorrections(result.languageCorrections);
         setAiDocumentQualityNotes(result.documentQualityNotes);
         setAiCorrectHighlights(result.correctHighlights);
+        setAiPageRewrites(result.pageRewrites);
+        setAiDocumentOverviewScores(result.documentOverviewScores);
+        setAiDiagramEvaluations(result.diagramEvaluations);
         const autoFb = buildAIFeedback(result.criteria);
         if (!feedback.trim()) setFeedback(autoFb);
         maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
@@ -1223,17 +1302,35 @@ export default function ReviewQueue() {
           languageCorrections: result.languageCorrections,
           documentQualityNotes: result.documentQualityNotes,
           correctHighlights: result.correctHighlights,
+          pageRewrites: result.pageRewrites,
+          documentOverviewScores: result.documentOverviewScores,
+          diagramEvaluations: result.diagramEvaluations,
           draftSnapshot: snap,
           inspectionText,
           feedbackDraft: autoFb,
         });
         if (gradeMode === 'ai') setAiOnlyEvalLocked(true);
+        const mediaSummary = summarizeAttachmentsForNotice(inspectionAttachments);
+        const mediaSuffix = mediaSummary
+          ? ` Gemini also evaluated ${mediaSummary} sent as inline media.`
+          : '';
+        const pageSuffix = result.pageRewrites.length > 0
+          ? ` Per-page Before → After is ready for ${result.pageRewrites.length} page${result.pageRewrites.length === 1 ? '' : 's'} — scroll the AI evaluator to review.`
+          : '';
+        const overviewSuffix =
+          result.documentOverviewScores.length > 0
+            ? ` Document overview spans ${result.documentOverviewScores.length} section${result.documentOverviewScores.length === 1 ? '' : 's'}.`
+            : '';
+        const diagramSuffix =
+          result.diagramEvaluations.length > 0
+            ? ` Visual & diagram evaluation covers ${result.diagramEvaluations.length} figure${result.diagramEvaluations.length === 1 ? '' : 's'}.`
+            : '';
         setInspectionNotice({
           kind: 'ok',
           text:
             gradeMode === 'ai'
-              ? 'AI score is set from this run and cannot be changed — publish when ready.'
-              : 'AI evaluator refreshed scores, verified-correct excerpts, issues, before/after fixes, and the executive summary. Adjust rubric cells if needed, then save or publish.',
+              ? `AI score is set from this run and cannot be changed — publish when ready.${mediaSuffix}${pageSuffix}${overviewSuffix}${diagramSuffix}`
+              : `AI evaluator refreshed scores, verified-correct excerpts, issues, before/after fixes, and the executive summary. Adjust rubric cells if needed, then save or publish.${mediaSuffix}${pageSuffix}${overviewSuffix}${diagramSuffix}`,
         });
       } else {
         const snap = criteriaToDraftSnapshot(template, null);
@@ -1243,6 +1340,9 @@ export default function ReviewQueue() {
         setAiLanguageCorrections([]);
         setAiDocumentQualityNotes('');
         setAiCorrectHighlights([]);
+        setAiPageRewrites([]);
+        setAiDocumentOverviewScores([]);
+        setAiDiagramEvaluations([]);
         const autoFb = buildAIFeedback(template);
         if (!feedback.trim()) setFeedback(autoFb);
         maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
@@ -1251,6 +1351,9 @@ export default function ReviewQueue() {
           languageCorrections: [],
           documentQualityNotes: '',
           correctHighlights: [],
+          pageRewrites: [],
+          documentOverviewScores: [],
+          diagramEvaluations: [],
           draftSnapshot: snap,
           inspectionText,
           feedbackDraft: autoFb,
@@ -1273,6 +1376,9 @@ export default function ReviewQueue() {
       setAiLanguageCorrections([]);
       setAiDocumentQualityNotes('');
       setAiCorrectHighlights([]);
+      setAiPageRewrites([]);
+      setAiDocumentOverviewScores([]);
+      setAiDiagramEvaluations([]);
       const autoFb = buildAIFeedback(template);
       if (!feedback.trim()) setFeedback(autoFb);
       maybeFreezeAiOnlyEvalAfterRun(gradeMode, selected.id, {
@@ -1281,6 +1387,9 @@ export default function ReviewQueue() {
         languageCorrections: [],
         documentQualityNotes: '',
         correctHighlights: [],
+        pageRewrites: [],
+        documentOverviewScores: [],
+        diagramEvaluations: [],
         draftSnapshot: snap,
         inspectionText,
         feedbackDraft: autoFb,
@@ -1314,7 +1423,7 @@ export default function ReviewQueue() {
         }
       } else if (gradeMode === 'ai') {
         /** AI-only: teacher accepts the last run’s rubric total; no per-row readiness floor. */
-        if (isInsufficientSubmissionText(inspectionText)) {
+        if (isInsufficientSubmissionText(inspectionText) && inspectionAttachments.length === 0) {
           alert(getReadiness(aiCriteria, inspectionText).message);
           return;
         }
@@ -1540,6 +1649,14 @@ export default function ReviewQueue() {
   const totalScore = aiCriteria.reduce((s, c) => s + c.score, 0);
   const maxScore = aiCriteria.reduce((s, c) => s + c.max, 0);
   const readiness = useMemo(() => getReadiness(aiCriteria, inspectionText), [aiCriteria, inspectionText]);
+  /**
+   * Treat the submission as gradeable when EITHER the extracted text is
+   * substantive OR Gemini has multimodal attachments to read directly
+   * (PDF pages, images, audio, video, docx-embedded images). Otherwise the
+   * AI Evaluator and Publish actions are gated as before.
+   */
+  const submissionIsGradeable =
+    !isInsufficientSubmissionText(inspectionText) || inspectionAttachments.length > 0;
 
   /** Fallback when `fileOpenHref` is not set yet; modal uses `SubmissionOpenLink`. */
   const submissionFileOpenUrl = selected?.file_url?.trim() || '';
@@ -1582,14 +1699,6 @@ export default function ReviewQueue() {
             >
               <Download className="w-3.5 h-3.5" aria-hidden />
               Export grades CSV
-            </button>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              <Printer className="w-3.5 h-3.5" aria-hidden />
-              Print
             </button>
           </>
         }
@@ -1740,11 +1849,6 @@ export default function ReviewQueue() {
                     <th className="px-3 py-3 text-left min-w-[120px] text-white">Student ID</th>
                     <th className="px-3 py-3 text-left min-w-[140px] text-white">Student name</th>
                     <th className="px-3 py-3 text-left min-w-[112px] text-white">Date submitted</th>
-                    <th className="px-3 py-3 text-left min-w-[112px] text-white">Last modified</th>
-                    <th className="px-3 py-3 text-left min-w-[100px] text-white">Course & year</th>
-                    <th className="px-3 py-3 text-left min-w-[72px] text-white">Team code</th>
-                    <th className="px-3 py-3 text-left min-w-[72px] text-white">SY</th>
-                    <th className="px-3 py-3 text-left min-w-[72px] text-white">Semester</th>
                     <th className="px-3 py-3 text-left min-w-[100px] text-white">Status</th>
                     <th className="px-3 py-3 text-right min-w-[320px] text-white">Actions</th>
                   </tr>
@@ -1752,7 +1856,6 @@ export default function ReviewQueue() {
                 <tbody className="divide-y divide-gray-50">
                   {filtered.map((s) => {
                     const subDm = formatStackedDateTime(s.submitted_at);
-                    const modDm = formatStackedDateTime(s.updated_at ?? s.submitted_at);
                     const roster = rosterStatusChip(s);
                     return (
                       <tr key={s.id} className="hover:bg-gray-50/80 transition-colors">
@@ -1803,24 +1906,6 @@ export default function ReviewQueue() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 py-3 align-middle">
-                          <div className="inline-flex gap-2 text-xs text-gray-600">
-                            <Calendar className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" aria-hidden />
-                            <div>
-                              <div>{modDm.line1}</div>
-                              {modDm.line2 ? <div className="text-gray-400">{modDm.line2}</div> : null}
-                            </div>
-                          </div>
-                        </td>
-                        <td
-                          className="px-3 py-3 align-middle text-gray-800 truncate max-w-[7rem]"
-                          title={s.users?.course_year ?? ''}
-                        >
-                          {s.users?.course_year ?? '—'}
-                        </td>
-                        <td className="px-3 py-3 align-middle text-gray-800">{s.team_code ?? '—'}</td>
-                        <td className="px-3 py-3 align-middle text-gray-800">{s.school_year ?? '—'}</td>
-                        <td className="px-3 py-3 align-middle text-gray-800 uppercase">{s.semester ?? '—'}</td>
                         <td className="px-3 py-3 align-middle">
                           <span
                             className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-semibold ${roster.className}`}
@@ -2220,11 +2305,34 @@ export default function ReviewQueue() {
                         </summary>
                         <div className="border-t border-slate-200 px-4 py-3">
                           <p className="text-[11px] text-slate-500 mb-2 leading-snug">
-                            This is the only text the evaluator sees. <span className="font-semibold text-slate-600">.docx</span>{' '}
+                            This is the text the evaluator sees. <span className="font-semibold text-slate-600">.docx</span>{' '}
                             uploads are unpacked here when the file URL can be fetched (signed links from your bucket work in
                             this browser session). If word count stays at 0, open the file and paste the body, or check CORS /
                             storage on the download URL.
                           </p>
+                          {inspectionAttachments.length > 0 && (
+                            <div className="mb-3 rounded-lg border border-emerald-200/80 bg-emerald-50/70 px-2.5 py-2">
+                              <p className="text-[11px] font-semibold text-emerald-900 uppercase tracking-wide">
+                                Also sent to Gemini (multimodal)
+                              </p>
+                              <p className="text-[11px] text-emerald-900/90 mt-1 leading-snug">
+                                {summarizeAttachmentsForNotice(inspectionAttachments)} — diagrams, scanned pages, photos, charts,
+                                code-in-image, audio, and video are read directly by the model alongside any text above.
+                              </p>
+                              <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                                {inspectionAttachments.map((a, i) => (
+                                  <li
+                                    key={`${a.mimeType}-${i}`}
+                                    className="inline-flex items-center gap-1 rounded-full border border-emerald-300/80 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-900"
+                                    title={a.fileName || a.mimeType}
+                                  >
+                                    <Sparkles className="w-3 h-3" aria-hidden />
+                                    {a.role || a.mimeType}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           <textarea
                             value={inspectionText}
                             onChange={(e) => setInspectionText(e.target.value)}
@@ -2383,6 +2491,9 @@ export default function ReviewQueue() {
                             documentQualityNotes={aiDocumentQualityNotes.trim() || null}
                             languageCorrections={aiLanguageCorrections}
                             correctHighlights={aiCorrectHighlights}
+                            pageRewrites={aiPageRewrites}
+                            documentOverviewScores={aiDocumentOverviewScores}
+                            diagramEvaluations={aiDiagramEvaluations}
                             showTeacherGrade={gradeMode !== 'ai'}
                             heading={gradeMode === 'ai' ? 'Grading score' : 'AI evaluator — analysis & rubric'}
                             density="comfortable"
@@ -2663,7 +2774,7 @@ export default function ReviewQueue() {
                   const aiPct = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null;
                   const aiReady =
                     aiCriteria.length > 0 &&
-                    !isInsufficientSubmissionText(inspectionText) &&
+                    submissionIsGradeable &&
                     (gradeMode === 'ai' || readiness.ready);
                   const teacherInputMatchesApplied =
                     appliedTeacherScore != null &&
@@ -2700,18 +2811,34 @@ export default function ReviewQueue() {
                       <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
                         {gradeMode === 'ai' ? (
                           <>
-                            <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
                             <ReadinessPill
-                              ok={aiCriteria.length > 0 && !isInsufficientSubmissionText(inspectionText)}
+                              ok={submissionIsGradeable}
+                              label={inspectionAttachments.length > 0 ? 'Text + media' : 'Text'}
+                              title={
+                                inspectionAttachments.length > 0
+                                  ? 'Gemini will read the attached PDF / images / audio / video directly, even if there is little or no extracted text.'
+                                  : 'Green when enough text was extracted from the submission to score.'
+                              }
+                            />
+                            <ReadinessPill
+                              ok={aiCriteria.length > 0 && submissionIsGradeable}
                               label="AI grade"
-                              title="Green after Run AI Evaluator returns a rubric and submission text is usable."
+                              title="Green after Run AI Evaluator returns a rubric and the submission has usable text or media."
                             />
                           </>
                         ) : gradeMode === 'teacher' ? (
                           <ReadinessPill ok={teacherReady} label="Teacher grade" />
                         ) : (
                           <>
-                            <ReadinessPill ok={!isInsufficientSubmissionText(inspectionText)} label="Text" />
+                            <ReadinessPill
+                              ok={submissionIsGradeable}
+                              label={inspectionAttachments.length > 0 ? 'Text + media' : 'Text'}
+                              title={
+                                inspectionAttachments.length > 0
+                                  ? 'Gemini will read the attached PDF / images / audio / video directly, even if there is little or no extracted text.'
+                                  : 'Green when enough text was extracted from the submission to score.'
+                              }
+                            />
                             <ReadinessPill
                               ok={aiCriteria.length > 0 && readiness.ready}
                               label="AI grade"
@@ -2767,7 +2894,7 @@ export default function ReviewQueue() {
                       </div>
                       {!canPublish && !saving && !aiLoading && gradeMode === 'ai' && (
                         <p className="text-[11px] font-medium text-amber-950 leading-snug rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-                          {isInsufficientSubmissionText(inspectionText)
+                          {!submissionIsGradeable
                             ? readiness.message
                             : 'Press Run AI Evaluator to generate a rubric score before publishing.'}
                         </p>
@@ -2802,7 +2929,7 @@ export default function ReviewQueue() {
                                 ? `Publishes your teacher score and feedback — the AI draft on file is not changed.`
                                 : `Publishes the AI draft score and report — the instructor-published score (if any) is not changed.`
                               : gradeMode === 'ai'
-                                ? isInsufficientSubmissionText(inspectionText)
+                                ? !submissionIsGradeable
                                   ? readiness.message
                                   : aiCriteria.length === 0
                                     ? 'Press Run AI Evaluator to generate a score before publishing.'

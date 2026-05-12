@@ -89,9 +89,9 @@ export default function Team14() {
           <table className="w-full min-w-[720px] border-collapse text-left [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,sans-serif] text-[13px] leading-snug">
             <thead>
               <tr className={teacherMaroonTheadClasses}>
-                <th className="px-4 py-3.5 whitespace-nowrap">Student</th>
+                <th className="px-4 py-3.5 whitespace-nowrap">Student name</th>
                 <th className="px-3 py-3.5 text-center whitespace-nowrap">Student ID</th>
-                <th className="px-3 py-3.5 whitespace-nowrap">Course</th>
+                <th className="px-3 py-3.5 whitespace-nowrap">Course &amp; year</th>
                 <th className="px-3 py-3.5 min-w-[10rem]">CIT email</th>
                 <th className="px-4 py-3.5 min-w-[10rem]">Gmail</th>
               </tr>

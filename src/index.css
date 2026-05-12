@@ -11,6 +11,13 @@
    */
   html {
     height: 100%;
+    /*
+     Root font-size pinned to the browser default (16px = 1rem). Tailwind's
+     rem-based utilities (text-sm, p-4, w-10, gap-3, max-w-7xl, …) then render at
+     the size they were designed for at 100% browser zoom — neither shrunken nor
+     inflated. Adjust here if a global resize is needed again.
+     */
+    font-size: 16px;
   }
 
   body {

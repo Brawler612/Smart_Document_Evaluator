@@ -209,11 +209,6 @@ export default function TeacherSubmissionRosterTable({
               <th className="px-3 py-3 text-left min-w-[120px]">Student ID</th>
               <th className="px-3 py-3 text-left min-w-[140px]">Student name</th>
               <th className="px-3 py-3 text-left min-w-[112px]">Date submitted</th>
-              <th className="px-3 py-3 text-left min-w-[112px]">Last modified</th>
-              <th className="px-3 py-3 text-left min-w-[100px]">Course & year</th>
-              <th className="px-3 py-3 text-left min-w-[72px]">Team code</th>
-              <th className="px-3 py-3 text-left min-w-[72px]">SY</th>
-              <th className="px-3 py-3 text-left min-w-[72px]">Semester</th>
               <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
               <th className={`px-3 py-3 text-right ${actionsMin}`}>Actions</th>
             </tr>
@@ -221,7 +216,6 @@ export default function TeacherSubmissionRosterTable({
           <tbody className="divide-y divide-gray-50">
             {rows.map((s) => {
               const subDm = formatStackedDateTime(s.submitted_at);
-              const modDm = formatStackedDateTime(s.updated_at ?? s.submitted_at);
               const roster = rosterStatusChip(s);
               return (
                 <tr
@@ -286,24 +280,6 @@ export default function TeacherSubmissionRosterTable({
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-3 align-middle">
-                    <div className="inline-flex gap-2 text-xs text-gray-600">
-                      <Calendar className="w-4 h-4 text-gray-400 shrink-0 mt-0.5" aria-hidden />
-                      <div>
-                        <div>{modDm.line1}</div>
-                        {modDm.line2 ? <div className="text-gray-400">{modDm.line2}</div> : null}
-                      </div>
-                    </div>
-                  </td>
-                  <td
-                    className="px-3 py-3 align-middle text-gray-800 truncate max-w-[7rem]"
-                    title={s.users?.course_year ?? ''}
-                  >
-                    {s.users?.course_year ?? '—'}
-                  </td>
-                  <td className="px-3 py-3 align-middle text-gray-800">{s.team_code ?? '—'}</td>
-                  <td className="px-3 py-3 align-middle text-gray-800">{s.school_year ?? '—'}</td>
-                  <td className="px-3 py-3 align-middle text-gray-800 uppercase">{s.semester ?? '—'}</td>
                   <td className="px-3 py-3 align-middle">
                     <span
                       className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full font-semibold ${roster.className}`}

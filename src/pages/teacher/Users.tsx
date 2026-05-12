@@ -12,6 +12,7 @@ import {
   FileText,
   UserMinus,
   Download,
+  Printer,
 } from 'lucide-react';
 import {
   isStudentHiddenFromTeacherDirectory,
@@ -345,7 +346,8 @@ export default function UserManagement() {
       return 'Awaiting upload';
     };
     const headers = [
-      'Name',
+      'No.',
+      'Student name',
       'Student ID',
       'Team code',
       'Group',
@@ -355,12 +357,12 @@ export default function UserManagement() {
       'Live status',
       'Latest file',
       'Submitted',
-      'Last modified',
     ];
-    const lines = filtered.map((u) => {
+    const lines = filtered.map((u, idx) => {
       const latest = latestSubmissionByStudentId.get(u.id) ?? null;
       const group = it332TeamGroupLabel(u.team_code) ?? '';
       return [
+        csvCell(String(idx + 1)),
         csvCell(u.full_name),
         csvCell(u.student_number ?? ''),
         csvCell(u.team_code ?? ''),
@@ -371,7 +373,6 @@ export default function UserManagement() {
         csvCell(statusFor(u, latest)),
         csvCell(latest?.file_name ?? ''),
         csvCell(latest ? formatClassListDateTime(latest.submitted_at) : ''),
-        csvCell(latest?.updated_at ? formatClassListDateTime(latest.updated_at) : ''),
       ].join(',');
     });
     const stamp = new Date().toISOString().slice(0, 10);
@@ -397,7 +398,7 @@ export default function UserManagement() {
                 Class list
               </h1>
               <p className="text-slate-600 text-sm mt-2 max-w-2xl leading-relaxed">
-                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> (G1–G7) first, then everyone else.
+                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> (G1–G65) first, then everyone else.
                 <span className="font-medium text-slate-800"> Awaiting sign-in</span> — roster only until Google matches email or ID.
                 <span className="font-medium text-slate-800"> Uploaded files</span> — grade, resubmit, or delete like grading. Groups:{' '}
                 <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
@@ -428,6 +429,16 @@ export default function UserManagement() {
               >
                 <Download className="w-3.5 h-3.5" aria-hidden />
                 Export
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                disabled={loading || filtered.length === 0}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                title="Print the class list as it appears on screen"
+              >
+                <Printer className="w-3.5 h-3.5" aria-hidden />
+                Print
               </button>
               <Link
                 to="/inbox"
@@ -643,64 +654,61 @@ export default function UserManagement() {
             <p className="px-4 py-2.5 md:px-5 text-[12px] text-slate-800 bg-amber-50/80 border-b border-amber-100/90 leading-relaxed">
               <span className="font-semibold text-amber-950">Directory</span>: name and team/group tags on the left; columns
               to the right — ID, team code, course, school year, email,{' '}
-              <span className="font-semibold">date submitted</span> and{' '}
-              <span className="font-semibold">last modified</span> (from their latest file), live status, and actions (
+              <span className="font-semibold">date submitted</span> (from their latest file), live status, and actions (
               <span className="font-semibold">Remove</span> on every row;{' '}
               <span className="font-semibold">Delete</span> on the latest upload when present — use Grading workspace or
               Submission roster to score or request redo. Scroll sideways on small screens.
             </p>
-            <div className="max-h-[min(560px,65vh)] overflow-auto">
-              <table className="w-full min-w-[1180px] border-collapse text-left antialiased [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,'Helvetica Neue',Arial,sans-serif] text-[13px] leading-snug tracking-tight">
+            <div className="max-h-[min(720px,78vh)] overflow-auto">
+              <table className="w-full min-w-[1180px] border-collapse text-left antialiased text-[13px] leading-snug">
                 <thead>
                   <tr className="border-b border-[#5c0013] bg-[#84001B] text-[11px] font-semibold uppercase tracking-[0.06em] text-white shadow-sm">
-                    <th className="px-5 py-3.5 align-bottom font-semibold">Student</th>
-                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap text-center font-semibold">Student ID</th>
-                    <th className="px-3 py-3.5 align-bottom min-w-[8.75rem] font-semibold">Team code</th>
-                    <th className="px-3 py-3.5 align-bottom min-w-[7rem] font-semibold">Course / term</th>
-                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold">School yr</th>
-                    <th className="px-3 py-3.5 align-bottom min-w-[11rem] font-semibold">Email</th>
-                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold tabular-nums">
+                    <th className="px-3 py-3 align-bottom text-center font-semibold tabular-nums w-[3.25rem]">No.</th>
+                    <th className="px-4 py-3 align-bottom font-semibold min-w-[12rem]">Student name</th>
+                    <th className="px-2.5 py-3 align-bottom whitespace-nowrap text-center font-semibold">Student ID</th>
+                    <th className="px-2.5 py-3 align-bottom min-w-[8.5rem] font-semibold">Team code</th>
+                    <th className="px-2.5 py-3 align-bottom min-w-[7rem] font-semibold">Course / term</th>
+                    <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">School yr</th>
+                    <th className="px-3 py-3 align-bottom min-w-[11rem] font-semibold">Email</th>
+                    <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold tabular-nums">
                       Date submitted
                     </th>
-                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold tabular-nums">
-                      Last modified
-                    </th>
-                    <th className="px-3 py-3.5 align-bottom whitespace-nowrap font-semibold">Status</th>
-                    <th className="px-5 py-3.5 align-bottom text-right whitespace-nowrap font-semibold">Actions</th>
+                    <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">Status</th>
+                    <th className="px-4 py-3 align-bottom text-right whitespace-nowrap font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filtered.map((u) => {
+                  {filtered.map((u, idx) => {
                     const latest = directoryRowExtras(u);
                     const teamG = it332TeamGroupLabel(u.team_code);
                     const submittedAt =
                       latest && latest.submitted_at?.trim() !== ''
                         ? formatClassListDateTime(latest.submitted_at)
                         : '—';
-                    const modifiedAt = latest
-                      ? formatClassListDateTime(latest.updated_at ?? latest.submitted_at)
-                      : '—';
                     return (
                       <tr key={u.id} className="group hover:bg-[#fff8f9] align-middle bg-white border-b border-slate-100/90 transition-colors">
-                        <td className="px-5 py-3 min-w-[10rem]">
+                        <td className="px-3 py-3 text-center text-[12px] font-semibold text-slate-500 tabular-nums w-[3.25rem]">
+                          {idx + 1}
+                        </td>
+                        <td className="px-4 py-3 min-w-[12rem]">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-[11px] font-bold bg-gradient-to-br from-[#ffd21a] to-[#f5c400] text-[#84001B]">
+                            <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-[11px] font-bold bg-gradient-to-br from-[#ffd21a] to-[#f5c400] text-[#84001B]">
                               {initials(u.full_name, u.email)}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-semibold text-[15px] text-slate-950 truncate tracking-tight">
+                              <p className="font-semibold text-[13.5px] text-slate-900 truncate tracking-tight">
                                 {u.full_name?.trim() || 'Unnamed'}
                               </p>
                               {teamG && (
-                                <p className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                <p className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                                   <span className="font-medium">{teamG}</span>
                                   {u.roster_member_number === 1 && (
-                                    <span className="text-[9px] font-semibold uppercase tracking-wide text-[#84001B]/90">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-[#84001B]/90">
                                       Lead
                                     </span>
                                   )}
                                   {u.roster_pending && (
-                                    <span className="text-[9px] font-medium text-amber-900 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded">
+                                    <span className="text-[10px] font-medium text-amber-900 bg-amber-50 border border-amber-100 px-1.5 py-0 rounded">
                                       Awaiting sign-in
                                     </span>
                                   )}
@@ -709,40 +717,37 @@ export default function UserManagement() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-2 py-3 text-[11px] font-mono text-slate-800 tabular-nums text-center">
-                          <span className="inline-block max-w-[5.5rem] truncate align-middle" title={u.student_number ?? ''}>
+                        <td className="px-2 py-3 text-[12.5px] font-mono font-semibold text-slate-900 tabular-nums text-center">
+                          <span className="inline-block max-w-[7rem] truncate align-middle" title={u.student_number ?? ''}>
                             {u.student_number?.trim() || '—'}
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-[11px] font-mono text-slate-800">
+                        <td className="px-2 py-3 text-[12.5px] font-mono font-semibold text-slate-900">
                           <span className="line-clamp-2 break-all" title={u.team_code ?? ''}>
                             {u.team_code?.trim() || '—'}
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-[11px] text-slate-800">
+                        <td className="px-2 py-3 text-[12.5px] font-semibold text-slate-900">
                           <span className="line-clamp-2" title={u.course_year ?? ''}>
                             {u.course_year?.trim() || '—'}
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-[11px] text-slate-800 whitespace-nowrap">
+                        <td className="px-2 py-3 text-[12.5px] font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                           {u.school_year?.trim() || '—'}
                         </td>
-                        <td className="px-3 py-3 min-w-[10rem]">
-                          <span className="flex items-start gap-2 text-slate-700">
-                            <Mail className="w-4 h-4 text-[#84001B]/50 shrink-0 mt-0.5" aria-hidden />
+                        <td className="px-3 py-3 min-w-[11rem]">
+                          <span className="flex items-start gap-2 text-slate-800 text-[12.5px] font-medium">
+                            <Mail className="w-3.5 h-3.5 text-[#84001B]/70 shrink-0 mt-0.5" aria-hidden />
                             <span className="truncate">{u.email || '—'}</span>
                           </span>
                         </td>
-                        <td className="px-3 py-3 text-[12px] text-slate-800 tabular-nums whitespace-nowrap">
+                        <td className="px-2.5 py-3 text-[12px] font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden />
+                            <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden />
                             <span title={latest?.submitted_at}>{submittedAt}</span>
                           </span>
                         </td>
-                        <td className="px-3 py-3 text-[12px] text-slate-800 tabular-nums whitespace-nowrap">
-                          <span title={latest?.updated_at ?? latest?.submitted_at}>{modifiedAt}</span>
-                        </td>
-                        <td className="px-3 py-3">
+                        <td className="px-2.5 py-3">
                           {latest ? (
                             <span
                               className={`inline-flex text-[11px] font-semibold px-2.5 py-1 rounded-full shadow-sm ${DIRECTORY_STATUS_CHIP[latest.status]}`}
@@ -755,7 +760,7 @@ export default function UserManagement() {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-3 text-right">
+                        <td className="px-4 py-3 text-right">
                           <div className="inline-flex flex-col items-end gap-1.5 max-w-[13rem]">
                             <button
                               type="button"

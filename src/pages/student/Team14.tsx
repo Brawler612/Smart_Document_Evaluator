@@ -71,9 +71,9 @@ export default function StudentTeam14() {
           <table className="w-full min-w-[680px] border-collapse text-left text-[13px] leading-snug">
             <thead>
               <tr className="bg-[#84001B] text-white text-[11px] font-semibold uppercase tracking-wide">
-                <th className="px-4 py-3 whitespace-nowrap">Student</th>
+                <th className="px-4 py-3 whitespace-nowrap">Student name</th>
                 <th className="px-3 py-3 text-center whitespace-nowrap">Student ID</th>
-                <th className="px-3 py-3 whitespace-nowrap">Course</th>
+                <th className="px-3 py-3 whitespace-nowrap">Course &amp; year</th>
                 <th className="px-3 py-3 min-w-[10rem]">CIT email</th>
                 <th className="px-4 py-3 min-w-[10rem]">Gmail</th>
               </tr>

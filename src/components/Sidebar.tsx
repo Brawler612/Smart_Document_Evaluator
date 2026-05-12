@@ -33,14 +33,25 @@ interface NavSection {
 
 const TEACHER_SECTIONS: NavSection[] = [
   {
+    label: 'Workspace',
     items: [
       { to: '/dashboard', icon: Home, label: 'Dashboard' },
       { to: '/inbox', icon: Inbox, label: 'Inbox' },
+    ],
+  },
+  {
+    label: 'Teaching',
+    items: [
       { to: '/class-list', icon: Users, label: 'Class list' },
       { to: '/student-submissions', icon: FileText, label: 'Student Submissions' },
       { to: '/grading', icon: ClipboardList, label: 'Grading System' },
-      { to: '/team-14', icon: UsersRound, label: 'Team 14' },
       { to: '/reports', icon: CheckSquare, label: 'Reports' },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [
+      { to: '/team-14', icon: UsersRound, label: 'Team 14' },
       { to: '/teacher-settings', icon: Settings, label: 'Settings' },
     ],
   },

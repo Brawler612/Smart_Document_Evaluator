@@ -61,6 +61,9 @@ export default function TeacherViewScoreModal({
         documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
         languageCorrections={aiDraftParsed.languageCorrections}
         correctHighlights={aiDraftParsed.correctHighlights}
+        pageRewrites={aiDraftParsed.pageRewrites}
+        documentOverviewScores={aiDraftParsed.documentOverviewScores}
+        diagramEvaluations={aiDraftParsed.diagramEvaluations}
         heading="AI score"
         detailEvaluation="narrative"
         density="comfortable"
@@ -77,6 +80,9 @@ export default function TeacherViewScoreModal({
         documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
         languageCorrections={aiDraftParsed.languageCorrections}
         correctHighlights={aiDraftParsed.correctHighlights}
+        pageRewrites={aiDraftParsed.pageRewrites}
+        documentOverviewScores={aiDraftParsed.documentOverviewScores}
+        diagramEvaluations={aiDraftParsed.diagramEvaluations}
         heading="AI and Teacher score"
         detailEvaluation="narrative"
         density="comfortable"

@@ -100,12 +100,12 @@ function SubmitUploadFields({
   onPickDocType?: (code: string) => void;
 }) {
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5">
       {variant === 'quick' && quickDocType != null && onPickDocType && (
-        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
+        <section>
           <label
             htmlFor="quick-doc-type-select"
-            className="block text-sm font-semibold text-slate-800 mb-2"
+            className="block text-sm font-semibold text-slate-800 mb-1.5"
           >
             Document type
           </label>
@@ -128,146 +128,98 @@ function SubmitUploadFields({
               aria-hidden
             />
           </div>
-          <p className="text-[11px] text-slate-500 mt-2 leading-snug">
-            This label appears as the <span className="font-semibold text-slate-700">Title</span> in your instructor&apos;s grading queue.
+          <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">
+            Shown as the <span className="font-semibold text-slate-700">Title</span> in your instructor&apos;s grading queue.
           </p>
         </section>
       )}
 
-      <div className="rounded-xl border border-[#84001B]/20 bg-[#84001B]/10 px-4 py-3.5">
-        <div className="flex gap-2.5">
+      <div className="rounded-lg border border-[#84001B]/20 bg-[#84001B]/10 px-3 py-2.5">
+        <div className="flex gap-2">
           {variant === 'quick' ? (
             <Zap className="w-4 h-4 text-[#84001B] shrink-0 mt-0.5" aria-hidden />
           ) : (
             <FileText className="w-4 h-4 text-[#84001B] shrink-0 mt-0.5" aria-hidden />
           )}
-          <div className="min-w-0 text-xs text-slate-700 leading-relaxed space-y-2">
+          <div className="min-w-0 text-[11px] text-slate-700 leading-snug">
             {variant === 'quick' ? (
               <p>
-                <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path · </span>
-                Optionally choose a document type above, upload one file—it queues for staff. Confirm on{' '}
-                <span className="font-semibold text-slate-900">Submission status</span>. Course staff finalize scores in the
-                grading workspace.
+                <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path</span> · Pick a type (optional), attach one file. Confirm on{' '}
+                <span className="font-semibold text-slate-900">Submission status</span>.
               </p>
             ) : (
-              <>
-                <p className="font-bold text-[#84001B] uppercase tracking-wide mb-2">Linked to your task</p>
-                <ul className="space-y-2">
-                  <li>
-                    <span className="font-semibold text-slate-900">Task:</span>{' '}
-                    <span className="font-medium text-[#84001B]">{taskTitle || 'Course submission'}</span> — graders group
-                    your file here.
-                  </li>
-                  <li>
-                    <span className="font-semibold text-slate-900">Status:</span> same tracker as Quick submit—Submission
-                    status shows submitted → in review → graded.
-                  </li>
-                  <li>
-                    <span className="font-semibold text-slate-900">Text box:</span> Optional paste helps tooling read PDF /
-                    Word; staff still download your uploaded file as the official copy.
-                  </li>
-                </ul>
-              </>
+              <p>
+                <span className="font-bold text-[#84001B] uppercase tracking-wide">Linked task</span> ·{' '}
+                <span className="font-medium text-[#84001B]">{taskTitle || 'Course submission'}</span>. Track progress on{' '}
+                <span className="font-semibold text-slate-900">Submission status</span>.
+              </p>
             )}
           </div>
         </div>
       </div>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#84001B] text-white text-[11px]">
-            1
-          </span>
-          {variant === 'quick' ? 'One file is enough' : 'Attach & label'}
-        </div>
-        <p className="text-[11px] text-slate-500 -mt-1">
-          {variant === 'quick'
-            ? 'Choosing a file fills the display name automatically. That’s all most people need for a fast drop-off.'
-            : 'Pick your artifact first, tweak the visible name so graders recognize it instantly.'}
-        </p>
-        <div>
-          <label htmlFor={`su-file-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
-            Attach file
-          </label>
+      <div>
+        <label htmlFor={`su-file-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
+          Attach file
+        </label>
+        <input
+          id={`su-file-${variant}`}
+          type="file"
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setSelectedFile(f);
+            if (f) {
+              if (variant === 'quick' && quickDocType) setFileName(`${quickDocType}_${f.name}`);
+              else setFileName(f.name);
+            }
+          }}
+          className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1.5 file:px-3 file:border-0 file:rounded-lg file:bg-[#84001B] file:text-white file:text-xs file:font-semibold bg-white"
+        />
+        {selectedFile && (
+          <p className="text-[11px] text-slate-600 mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1 border border-slate-100">
+            <span className="font-semibold">Selected:</span> {selectedFile.name}{' '}
+            <span className="tabular-nums text-slate-500">
+              ({selectedFile.size < 1048576
+                ? `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`
+                : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
+              )
+            </span>
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor={`su-name-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
+          Display name <span className="text-slate-400 font-normal text-xs font-medium">— required if no file</span>
+        </label>
+        <div className="relative">
+          <FileText className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden />
           <input
-            id={`su-file-${variant}`}
-            type="file"
-            onChange={(e) => {
-              const f = e.target.files?.[0] ?? null;
-              setSelectedFile(f);
-              if (f) {
-                if (variant === 'quick' && quickDocType) setFileName(`${quickDocType}_${f.name}`);
-                else setFileName(f.name);
-              }
-            }}
-            className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1.5 file:px-3 file:border-0 file:rounded-lg file:bg-[#84001B] file:text-white file:text-xs file:font-semibold bg-white"
+            id={`su-name-${variant}`}
+            value={fileName}
+            onChange={(e) => setFileName(e.target.value)}
+            placeholder={variant === 'quick' ? 'Fills when you choose a file' : 'e.g. SRS_final_Group3.pdf'}
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] bg-white"
           />
-          {selectedFile && (
-            <p className="text-[11px] text-slate-600 mt-2 rounded-lg bg-slate-50 px-2.5 py-1.5 border border-slate-100">
-              <span className="font-semibold">Selected:</span> {selectedFile.name}{' '}
-              <span className="tabular-nums text-slate-500">
-                ({selectedFile.size < 1048576
-                  ? `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`
-                  : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
-                )
-              </span>
-            </p>
-          )}
         </div>
-        <div>
-          <label htmlFor={`su-name-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
-            Display name <span className="text-slate-400 font-normal text-xs font-medium">— required if no file</span>
-          </label>
-          <div className="relative">
-            <FileText className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden />
-            <input
-              id={`su-name-${variant}`}
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              placeholder={variant === 'quick' ? 'Fills when you choose a file' : 'e.g. SRS_final_Group3.pdf'}
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] bg-white"
-            />
-          </div>
-        </div>
-      </section>
+      </div>
 
       {variant === 'task' && (
-        <section className="space-y-3 rounded-xl border border-slate-100 bg-slate-50/50 p-4">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
-            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-slate-300 text-slate-800 text-[11px]">
-              2
-            </span>
-            Plain-text copy{' '}
-            <span className="font-normal text-slate-400 normal-case font-medium">Optional</span>
-          </div>
-          <div>
-            <label htmlFor={`su-text-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
-              Paste for search & assists
-            </label>
-            <textarea
-              id={`su-text-${variant}`}
-              value={submissionText}
-              onChange={(e) => setSubmissionText(e.target.value)}
-              rows={5}
-              placeholder="Only if helpful: paste the body of your report so review tools don’t rely on PDF/Word alone…"
-              className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] resize-y bg-white leading-relaxed"
-            />
-            <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
-              Not duplicated grading—the upload stays the official file. Paste is backup text for scanners and reviewer
-              search when the attachment isn’t plain text.
-            </p>
-          </div>
-        </section>
+        <div>
+          <label htmlFor={`su-text-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
+            Paste for search & assists{' '}
+            <span className="text-slate-400 font-normal text-xs font-medium">— optional</span>
+          </label>
+          <textarea
+            id={`su-text-${variant}`}
+            value={submissionText}
+            onChange={(e) => setSubmissionText(e.target.value)}
+            rows={3}
+            placeholder="Optional: paste your report body so review tools can search inside it."
+            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] resize-y bg-white leading-relaxed"
+          />
+        </div>
       )}
-
-      <div className="flex gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-3 text-[11px] text-slate-600 leading-relaxed">
-        <ListChecks className="w-4 h-4 text-[#84001B] shrink-0 mt-0.5" aria-hidden />
-        <p>
-          After <span className="font-semibold text-slate-800">Send upload</span>, open{' '}
-          <span className="font-semibold text-[#84001B]">Submission status</span> to verify. Posted scores only after
-          course staff completes review—not from this dialogue alone.
-        </p>
-      </div>
     </div>
   );
 }
@@ -978,6 +930,7 @@ export default function StudentAssignments() {
                 {visibleTasks.map((a) => {
                   const due = describeDueDate(a.due_date);
                   const isSent = !!a.submitted;
+                  const isGeneralBucket = a.title === GENERAL_SUBMISSION_ASSIGNMENT_TITLE;
                   return (
                     <li
                       key={a.id}
@@ -1046,7 +999,14 @@ export default function StudentAssignments() {
                               )}
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
-                              {!isSent ? (
+                              {isGeneralBucket || isSent ? (
+                                <Link
+                                  to="/my-submissions"
+                                  className="text-xs font-semibold text-[#84001B] hover:underline whitespace-nowrap"
+                                >
+                                  View status →
+                                </Link>
+                              ) : (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1066,13 +1026,6 @@ export default function StudentAssignments() {
                                   <Upload className="w-3.5 h-3.5" aria-hidden />
                                   Turn in
                                 </button>
-                              ) : (
-                                <Link
-                                  to="/my-submissions"
-                                  className="text-xs font-semibold text-[#84001B] hover:underline whitespace-nowrap"
-                                >
-                                  View status →
-                                </Link>
                               )}
                             </div>
                           </div>
@@ -1176,23 +1129,20 @@ export default function StudentAssignments() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="turn-in-title"
-              className="my-auto w-full max-w-lg max-h-[min(calc(100dvh-2rem),56rem)] overflow-y-auto rounded-2xl bg-white shadow-2xl border border-slate-200/80"
+              className="my-auto w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200/80"
             >
-            <div className="flex items-start justify-between gap-3 p-6 border-b border-slate-100 bg-slate-50/60 shrink-0">
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100 bg-slate-50/60 shrink-0">
               <div className="min-w-0">
-                <h2 id="turn-in-title" className="font-bold text-slate-900 text-lg leading-tight">
+                <h2 id="turn-in-title" className="font-bold text-slate-900 text-base leading-tight">
                   Turn in work
                 </h2>
-                <p className="text-xs font-semibold text-[#84001B] mt-2 uppercase tracking-wide">Linked task</p>
-                <p className="text-sm text-slate-700 font-medium truncate" title={submitting.title}>{submitting.title}</p>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Type:{' '}
-                  <span className="font-semibold text-slate-700">{submitting.document_type}</span>
+                <p className="text-sm text-slate-700 font-medium truncate mt-1" title={submitting.title}>
+                  {submitting.title}
                 </p>
               </div>
-              <button type="button" onClick={() => setSubmitting(null)} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-xl transition-colors shrink-0"><X className="w-5 h-5" /></button>
+              <button type="button" onClick={() => setSubmitting(null)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors shrink-0"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 pb-7">
+            <form onSubmit={handleSubmit} className="px-5 py-4">
               <SubmitUploadFields
                 key="turn-in-fields"
                 variant="task"
@@ -1205,15 +1155,15 @@ export default function StudentAssignments() {
                 setSubmissionText={setSubmissionText}
               />
               {!canSendUpload && (
-                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-4">
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5 mt-3">
                   Choose a file or type a display name before sending.
                 </p>
               )}
-              <div className={`flex gap-3 pt-4 border-t border-slate-100 ${canSendUpload ? 'mt-6' : 'mt-4'}`}>
+              <div className="flex gap-2.5 pt-3 border-t border-slate-100 mt-4">
                 <button type="button" onClick={() => setSubmitting(null)}
-                  className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
+                  className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
                 <button type="submit" disabled={saving || !canSendUpload || submissionSchemaMissing}
-                  className="flex-1 bg-[#84001B] text-white px-4 py-3 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
+                  className="flex-1 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
                   {saving ? 'Sending…' : 'Send upload'}
                 </button>
               </div>
@@ -1230,17 +1180,15 @@ export default function StudentAssignments() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="quick-submit-modal-title"
-              className="my-auto w-full max-w-lg max-h-[min(calc(100dvh-2rem),56rem)] overflow-y-auto rounded-2xl bg-white shadow-2xl border border-slate-200/80"
+              className="my-auto w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200/80"
             >
-            <div className="flex items-start justify-between gap-3 p-6 border-b border-slate-100 bg-slate-50/60 shrink-0">
-              <div>
-                <h2 id="quick-submit-modal-title" className="font-bold text-slate-900 text-lg leading-tight">
-                  Quick submit
-                </h2>
-              </div>
-              <button type="button" onClick={() => setQuickSubmitOpen(false)} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-xl transition-colors shrink-0"><X className="w-5 h-5" /></button>
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100 bg-slate-50/60 shrink-0">
+              <h2 id="quick-submit-modal-title" className="font-bold text-slate-900 text-base leading-tight">
+                Quick submit
+              </h2>
+              <button type="button" onClick={() => setQuickSubmitOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors shrink-0"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={handleQuickSubmit} className="p-6 pb-7">
+            <form onSubmit={handleQuickSubmit} className="px-5 py-4">
               <SubmitUploadFields
                 key="quick-fields"
                 variant="quick"
@@ -1262,15 +1210,15 @@ export default function StudentAssignments() {
                 setSubmissionText={setSubmissionText}
               />
               {!canSendUpload && (
-                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-4 mb-[-0.25rem]">
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5 mt-3">
                   Choose a file or type a display name before sending.
                 </p>
               )}
-              <div className="flex gap-3 pt-4 border-t border-slate-100 mt-6">
+              <div className="flex gap-2.5 pt-3 border-t border-slate-100 mt-4">
                 <button type="button" onClick={() => setQuickSubmitOpen(false)}
-                  className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
+                  className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
                 <button type="submit" disabled={saving || !canSendUpload || submissionSchemaMissing}
-                  className="flex-1 bg-[#84001B] text-white px-4 py-3 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
+                  className="flex-1 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
                   {saving ? 'Sending…' : 'Send upload'}
                 </button>
               </div>

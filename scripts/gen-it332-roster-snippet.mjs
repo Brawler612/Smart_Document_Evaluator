@@ -1,6 +1,6 @@
 /**
  * Generates TS roster entries from unzipped ODS content.xml.
- * Filters IT332 Sem 2 teams 01–07 (G1–G7). Run:
+ * Filters IT332 Sem 2 teams 01–65 (G1–G65). Run:
  * node scripts/gen-it332-roster-snippet.mjs C:/path/to/content.xml
  */
 import fs from 'fs';
@@ -28,7 +28,7 @@ for (const row of rows) {
   const [teamCode, memberStr, studentId, lastName, firstName, email] = texts;
   if (!TEAM_RE.test(teamCode)) continue;
   const n = Number(teamCode.slice(-2));
-  if (n < 1 || n > 7) continue;
+  if (n < 1 || n > 65) continue;
   if (!/^[\w.-]+@[\w.-]+\.[a-z]+$/i.test(email)) continue;
   const member = Number(memberStr);
   if (!Number.isFinite(member)) continue;

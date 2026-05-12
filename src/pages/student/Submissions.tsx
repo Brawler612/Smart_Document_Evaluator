@@ -849,6 +849,9 @@ function SubmissionDetailsDialog({
                   documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
                   languageCorrections={aiDraftParsed.languageCorrections}
                   correctHighlights={aiDraftParsed.correctHighlights}
+                  pageRewrites={aiDraftParsed.pageRewrites}
+                  documentOverviewScores={aiDraftParsed.documentOverviewScores}
+                  diagramEvaluations={aiDraftParsed.diagramEvaluations}
                   heading="AI score"
                   showTeacherGrade={false}
                   scoreSectionFocus="ai"

@@ -227,13 +227,6 @@ export default function Instructions() {
           </TeacherAmberCue>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-3.5 border-b border-slate-100 bg-white">
             <h2 className="font-semibold text-slate-900 text-sm md:text-base">Latest in queue</h2>
-            <Link
-              to="/grading"
-              className="text-xs font-semibold text-[#84001B] hover:underline inline-flex items-center gap-1 rounded-lg border border-[#84001B]/25 px-2.5 py-1 hover:bg-[#84001B]/5"
-            >
-              Open grading workspace
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
           </div>
 
           <div className="p-4 md:p-5 bg-slate-50/40">
@@ -262,12 +255,11 @@ export default function Instructions() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-100 bg-white shadow-sm">
-                <table className="w-full text-sm text-left min-w-[720px]">
+                <table className="w-full text-sm text-left min-w-[640px]">
                   <thead>
                     <tr className={teacherMaroonTheadClasses}>
                       <th className="px-4 py-3 font-semibold">File</th>
-                      <th className="px-4 py-3 font-semibold">Learner</th>
-                      <th className="px-4 py-3 font-semibold">Assignment</th>
+                      <th className="px-4 py-3 font-semibold">Student name</th>
                       <th className="px-4 py-3 font-semibold whitespace-nowrap">Submitted</th>
                       <th className="px-4 py-3 font-semibold">Status</th>
                       <th className="px-4 py-3 font-semibold text-right">Actions</th>
@@ -286,9 +278,6 @@ export default function Instructions() {
                         </td>
                         <td className="px-4 py-3 text-slate-700 truncate max-w-[160px]">
                           {item.users?.full_name || 'Learner'}
-                        </td>
-                        <td className="px-4 py-3 text-slate-600 truncate max-w-[180px]">
-                          {item.assignments?.title || '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-600 whitespace-nowrap text-xs">{relativeTime(item.submitted_at)}</td>
                         <td className="px-4 py-3">

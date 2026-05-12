@@ -18,9 +18,12 @@ function rosterDisplayName(p: It332PlannedMember): string {
   return `${p.firstName} ${p.lastName}`.trim();
 }
 
-function syntheticId(email: string): string {
-  const slug = normEmail(email).replace(/[^a-z0-9]/g, '');
-  return `roster-pending-${slug || 'unknown'}`;
+function syntheticId(p: It332PlannedMember): string {
+  const emailSlug = normEmail(p.citEmail).replace(/[^a-z0-9]/g, '');
+  if (emailSlug) return `roster-pending-${emailSlug}`;
+  const sid = normStudentNo(p.studentSchoolId);
+  if (sid) return `roster-pending-id-${sid}`;
+  return `roster-pending-${p.teamCode}-m${p.memberNumber}`;
 }
 
 function enrichFromPlanned(row: AppUser, p: It332PlannedMember): AppUser {
@@ -39,7 +42,7 @@ function enrichFromPlanned(row: AppUser, p: It332PlannedMember): AppUser {
 
 function syntheticUser(p: It332PlannedMember): AppUser {
   return {
-    id: syntheticId(p.citEmail),
+    id: syntheticId(p),
     email: p.citEmail.trim(),
     full_name: rosterDisplayName(p),
     role: 'student',
@@ -54,7 +57,7 @@ function syntheticUser(p: It332PlannedMember): AppUser {
 }
 
 /**
- * Merges the official IT332 Sem 2 team sheet (G1–G7) with students from Supabase / cache.
+ * Merges the official IT332 Sem 2 team sheet (G1–G65) with students from Supabase / cache.
  * Roster order is preserved; students who signed in with a different email still appear after the cohort.
  */
 export function mergeIt332Sem2RosterWithDatabase(dbAndCacheStudents: AppUser[]): AppUser[] {
@@ -73,7 +76,7 @@ export function mergeIt332Sem2RosterWithDatabase(dbAndCacheStudents: AppUser[]):
 
   for (const p of IT332_SEM2_PLANNED_ROSTER) {
     const k = normEmail(p.citEmail);
-    let hit = byEmail.get(k);
+    let hit = k ? byEmail.get(k) : undefined;
     if (!hit) {
       const sid = normStudentNo(p.studentSchoolId);
       if (sid.length >= 4) hit = byDigits.get(sid);

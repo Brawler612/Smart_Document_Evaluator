@@ -179,15 +179,6 @@ export default function TeacherDashboard() {
             <span>Queue snapshot and quickest paths into grading.</span>
           </p>
         }
-        actions={
-          <Link
-            to="/grading"
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#84001B] text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-[#84001B]/25 hover:bg-[#6b0016] shrink-0"
-          >
-            Open grading
-            <ChevronRight className="w-4 h-4" />
-          </Link>
-        }
       />
 
         <section className="mb-8 rounded-2xl overflow-hidden border border-[#84001B]/20 shadow-lg shadow-[#84001B]/10">
