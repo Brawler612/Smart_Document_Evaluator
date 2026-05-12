@@ -86,6 +86,10 @@ export default function StudentSubmissions() {
   /** Brief highlight after deep-link from Inbox (Review). */
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const [viewScoreOpen, setViewScoreOpen] = useState<{ row: TeacherSubmission; focus: 'ai' | 'teacher' } | null>(null);
+  /** Ids of rows the teacher has ticked for bulk delete. Empty by default. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Disables the bulk-delete button while the network request is in flight. */
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   /** Last successful fetch; gates the visibilitychange refetch to stop Alt-Tab flicker. */
   const lastFetchedAtRef = useRef(0);
   const rowsSignatureRef = useRef('');
@@ -223,6 +227,12 @@ export default function StudentSubmissions() {
     setDeleteBusyId(s.id);
     /** Optimistic remove so the page stays steady at the user's scroll position. */
     setRows((prev) => prev.filter((row) => row.id !== s.id));
+    setSelectedIds((prev) => {
+      if (!prev.has(s.id)) return prev;
+      const next = new Set(prev);
+      next.delete(s.id);
+      return next;
+    });
     try {
       const result = await deleteTeacherSubmissionsByIds([s.id], {
         purgeLocalDuplicatesOf: [{ student_id: s.student_id, file_name: s.file_name, file_url: s.file_url }],
@@ -235,6 +245,64 @@ export default function StudentSubmissions() {
       void load({ silent: true });
     } finally {
       setDeleteBusyId(null);
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible(rowsToToggle: TeacherSubmission[], selectAll: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) {
+        for (const r of rowsToToggle) next.add(r.id);
+      } else {
+        for (const r of rowsToToggle) next.delete(r.id);
+      }
+      return next;
+    });
+  }
+
+  async function deleteSelectedSubmissions(scopeRows: TeacherSubmission[]) {
+    const targets = scopeRows.filter((row) => selectedIds.has(row.id));
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete ${targets.length} selected submission${targets.length === 1 ? '' : 's'} permanently? This cannot be undone.`
+      )
+    )
+      return;
+    setBulkDeleting(true);
+    const targetIds = new Set(targets.map((t) => t.id));
+    /** Optimistic remove + clear selection so the page reflects the action without waiting. */
+    setRows((prev) => prev.filter((row) => !targetIds.has(row.id)));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of targetIds) next.delete(id);
+      return next;
+    });
+    try {
+      const result = await deleteTeacherSubmissionsByIds([...targetIds], {
+        purgeLocalDuplicatesOf: targets.map((s) => ({
+          student_id: s.student_id,
+          file_name: s.file_name,
+          file_url: s.file_url,
+        })),
+      });
+      if (!result.ok) {
+        alert(
+          `Could not delete some rows from database: ${result.message}\n\nIf permission was denied, add the teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).`
+        );
+      }
+      void load({ silent: true });
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -466,6 +534,13 @@ export default function StudentSubmissions() {
                   hideViewScore
                   highlightSubmissionId={jumpHighlightId}
                   embedded
+                  selection={{
+                    selectedIds,
+                    onToggle: toggleSelected,
+                    onToggleAll: (selectAll) => toggleSelectAllVisible(tableRows, selectAll),
+                    onDeleteSelected: () => void deleteSelectedSubmissions(tableRows),
+                    busy: bulkDeleting,
+                  }}
                 />
               </section>
             )}

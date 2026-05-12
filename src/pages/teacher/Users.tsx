@@ -13,6 +13,7 @@ import {
   UserMinus,
   Download,
   Printer,
+  Trash,
 } from 'lucide-react';
 import {
   isStudentHiddenFromTeacherDirectory,
@@ -123,6 +124,12 @@ export default function UserManagement() {
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
   /** Tracks the manual Sync button without flashing the table skeleton. */
   const [syncing, setSyncing] = useState(false);
+  /** Bulk-delete selection for the directory (Remove these students from your class). */
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [bulkRemovingStudents, setBulkRemovingStudents] = useState(false);
+  /** Bulk-delete selection for the Uploaded files roster (Delete these submission rows). */
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
+  const [bulkSubmissionDeleting, setBulkSubmissionDeleting] = useState(false);
   /** Last successful background fetch; throttles visibility-change refetches to stop flicker. */
   const lastFetchedAtRef = useRef(0);
   const studentsSignatureRef = useRef('');
@@ -330,6 +337,130 @@ export default function UserManagement() {
       void refreshSubmissions({ silent: true });
     } finally {
       setDeleteBusyId(null);
+    }
+  }
+
+  function toggleStudentSelected(id: string) {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleStudentSelectAll(scope: AppUser[], selectAll: boolean) {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) for (const u of scope) next.add(u.id);
+      else for (const u of scope) next.delete(u.id);
+      return next;
+    });
+  }
+
+  function toggleSubmissionSelected(id: string) {
+    setSelectedSubmissionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSubmissionSelectAll(scope: TeacherSubmission[], selectAll: boolean) {
+    setSelectedSubmissionIds((prev) => {
+      const next = new Set(prev);
+      if (selectAll) for (const s of scope) next.add(s.id);
+      else for (const s of scope) next.delete(s.id);
+      return next;
+    });
+  }
+
+  async function deleteSelectedSubmissions(scope: TeacherSubmission[]) {
+    const targets = scope.filter((row) => selectedSubmissionIds.has(row.id));
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete ${targets.length} selected submission${targets.length === 1 ? '' : 's'} permanently? This cannot be undone.`
+      )
+    )
+      return;
+    setBulkSubmissionDeleting(true);
+    const targetIds = new Set(targets.map((t) => t.id));
+    setSubRows((prev) => prev.filter((row) => !targetIds.has(row.id)));
+    setSelectedSubmissionIds((prev) => {
+      const next = new Set(prev);
+      for (const id of targetIds) next.delete(id);
+      return next;
+    });
+    try {
+      const result = await deleteTeacherSubmissionsByIds([...targetIds], {
+        purgeLocalDuplicatesOf: targets.map((s) => ({
+          student_id: s.student_id,
+          file_name: s.file_name,
+          file_url: s.file_url,
+        })),
+      });
+      if (!result.ok) {
+        alert(
+          `Could not delete some rows from database: ${result.message}\n\nIf permission was denied, add the teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).`
+        );
+      }
+      void refreshSubmissions({ silent: true });
+    } finally {
+      setBulkSubmissionDeleting(false);
+    }
+  }
+
+  async function deleteSelectedStudents(scope: AppUser[]) {
+    const targets = scope.filter((u) => selectedStudentIds.has(u.id));
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `Remove ${targets.length} selected learner${targets.length === 1 ? '' : 's'} from your class directory on this browser?\n\nTheir submission rows are deleted when Supabase allows. Hidden roster slots return if you choose Show everyone again.`
+      )
+    )
+      return;
+    setBulkRemovingStudents(true);
+    const targetIds = new Set(targets.map((t) => t.id));
+    /** Optimistic: hide students via ledger + drop their submissions in one paint. */
+    let nextLedger = removedLedger;
+    for (const u of targets) {
+      nextLedger = persistRemoveStudentFromDirectory(nextLedger, u);
+    }
+    setRemovedLedger(nextLedger);
+    setStudents((prev) => prev.filter((row) => !targetIds.has(row.id)));
+    const studentSubs = subRows.filter((s) => targetIds.has(String(s.student_id).trim()));
+    if (studentSubs.length > 0) {
+      const subIds = new Set(studentSubs.map((s) => s.id));
+      setSubRows((prev) => prev.filter((row) => !subIds.has(row.id)));
+    }
+    setSelectedStudentIds(new Set());
+    try {
+      if (studentSubs.length > 0) {
+        const result = await deleteTeacherSubmissionsByIds(studentSubs.map((s) => s.id), {
+          purgeLocalDuplicatesOf: studentSubs.map((s) => ({
+            student_id: s.student_id,
+            file_name: s.file_name,
+            file_url: s.file_url,
+          })),
+        });
+        if (!result.ok) {
+          alert(
+            `Some submission rows could not be deleted:\n${result.message}\n\nThe learners are still hidden from your directory on this browser.`
+          );
+        }
+      }
+      /** Best-effort: also clear their profile rows if RLS allows it. */
+      for (const u of targets) {
+        if (looksLikeUuid(u.id) && !u.roster_pending) {
+          const { error } = await supabase.from('users').delete().eq('id', u.id).eq('role', 'student');
+          if (error && import.meta.env.DEV) console.warn('[class-list] bulk remove profile:', error.message);
+        }
+      }
+      void refreshAll({ silent: true });
+    } finally {
+      setBulkRemovingStudents(false);
     }
   }
 
@@ -743,7 +874,59 @@ export default function UserManagement() {
                       Date submitted
                     </th>
                     <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">Status</th>
-                    <th className="px-4 py-3 align-bottom text-right whitespace-nowrap font-semibold">Actions</th>
+                    <th className="px-4 py-3 align-bottom whitespace-nowrap font-semibold">
+                      <div className="flex items-center justify-end gap-2">
+                        <input
+                          type="checkbox"
+                          aria-label={
+                            filtered.length > 0 &&
+                            filtered.every((u) => selectedStudentIds.has(u.id))
+                              ? 'Deselect all learners'
+                              : 'Select all learners'
+                          }
+                          checked={
+                            filtered.length > 0 &&
+                            filtered.every((u) => selectedStudentIds.has(u.id))
+                          }
+                          ref={(el) => {
+                            if (!el) return;
+                            const total = filtered.length;
+                            const sel = filtered.reduce(
+                              (acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc),
+                              0
+                            );
+                            el.indeterminate = sel > 0 && sel < total;
+                          }}
+                          onChange={(e) =>
+                            toggleStudentSelectAll(filtered, e.target.checked)
+                          }
+                          className="h-3.5 w-3.5 accent-[#ffd21a] cursor-pointer"
+                        />
+                        <span>Actions</span>
+                        {(() => {
+                          const sel = filtered.reduce(
+                            (acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc),
+                            0
+                          );
+                          return (
+                            <button
+                              type="button"
+                              disabled={sel === 0 || bulkRemovingStudents}
+                              onClick={() => void deleteSelectedStudents(filtered)}
+                              className="inline-flex items-center gap-1 rounded-md border border-white/40 bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              title={
+                                sel === 0
+                                  ? 'Select learners to enable bulk delete'
+                                  : `Remove the ${sel} selected learner${sel === 1 ? '' : 's'} from the directory`
+                              }
+                            >
+                              <Trash className="w-3 h-3" aria-hidden />
+                              Delete selected{sel > 0 ? ` (${sel})` : ''}
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -836,7 +1019,15 @@ export default function UserManagement() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <div className="inline-flex flex-col items-end gap-1.5 max-w-[13rem]">
+                          <div className="inline-flex flex-row items-start gap-2 max-w-[15rem]">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select learner ${u.full_name ?? u.email ?? u.id}`}
+                              checked={selectedStudentIds.has(u.id)}
+                              onChange={() => toggleStudentSelected(u.id)}
+                              className="mt-2 h-3.5 w-3.5 accent-[#84001B] cursor-pointer shrink-0"
+                            />
+                            <div className="inline-flex flex-col items-end gap-1.5">
                             <button
                               type="button"
                               disabled={
@@ -866,6 +1057,7 @@ export default function UserManagement() {
                             ) : (
                               <span className="text-[11px] text-slate-400 italic">Awaiting upload</span>
                             )}
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -976,6 +1168,14 @@ export default function UserManagement() {
               deleteBusyId={deleteBusyId}
               labeledActions
               omitGradeAndRedo
+              selection={{
+                selectedIds: selectedSubmissionIds,
+                onToggle: toggleSubmissionSelected,
+                onToggleAll: (selectAll) =>
+                  toggleSubmissionSelectAll(submissionTableRows, selectAll),
+                onDeleteSelected: () => void deleteSelectedSubmissions(submissionTableRows),
+                busy: bulkSubmissionDeleting,
+              }}
             />
           )}
         </section>

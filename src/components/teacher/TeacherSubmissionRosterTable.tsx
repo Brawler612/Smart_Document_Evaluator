@@ -9,6 +9,7 @@ import {
   Trash2,
   GraduationCap,
   Sparkles,
+  Trash,
 } from 'lucide-react';
 import type { TeacherSubmission } from '../../lib/teacherSubmissionLoad';
 import { submissionQueueTitle } from '../../lib/teacherSubmissionLoad';
@@ -44,6 +45,18 @@ type Props = {
   onViewTeacherScore?: (s: TeacherSubmission) => void;
   /** Hide AI / Teacher view controls in the table (e.g. roster spreadsheet defers to card list below). */
   hideViewScore?: boolean;
+  /**
+   * Enables row-selection + a small "Delete selected" button beside the Actions header.
+   * Provide all four fields together — the parent owns the selection state so it can apply the
+   * same optimistic-update pattern as per-row deletes.
+   */
+  selection?: {
+    selectedIds: Set<string>;
+    onToggle: (id: string) => void;
+    onToggleAll: (selectAll: boolean) => void;
+    onDeleteSelected: () => void;
+    busy?: boolean;
+  };
 };
 
 const labeledScoreBtn =
@@ -190,8 +203,14 @@ export default function TeacherSubmissionRosterTable({
   onViewAiScore,
   onViewTeacherScore,
   hideViewScore = false,
+  selection,
 }: Props) {
   const actionsMin = labeledActions ? (omitGradeAndRedo ? 'min-w-[260px]' : 'min-w-[240px]') : 'min-w-[160px]';
+  const selectedCount = selection
+    ? rows.reduce((acc, r) => (selection.selectedIds.has(r.id) ? acc + 1 : acc), 0)
+    : 0;
+  const allSelected = selection ? rows.length > 0 && selectedCount === rows.length : false;
+  const someSelected = selection ? selectedCount > 0 && !allSelected : false;
   return (
     <div
       className={
@@ -210,7 +229,39 @@ export default function TeacherSubmissionRosterTable({
               <th className="px-3 py-3 text-left min-w-[140px]">Student name</th>
               <th className="px-3 py-3 text-left min-w-[112px]">Date submitted</th>
               <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
-              <th className={`px-3 py-3 text-right ${actionsMin}`}>Actions</th>
+              <th className={`px-3 py-3 ${actionsMin}`}>
+                <div className="flex items-center justify-end gap-2">
+                  {selection ? (
+                    <input
+                      type="checkbox"
+                      aria-label={allSelected ? 'Deselect all rows' : 'Select all rows'}
+                      checked={allSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected;
+                      }}
+                      onChange={(e) => selection.onToggleAll(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-[#ffd21a] cursor-pointer"
+                    />
+                  ) : null}
+                  <span>Actions</span>
+                  {selection ? (
+                    <button
+                      type="button"
+                      disabled={selectedCount === 0 || !!selection.busy}
+                      onClick={() => selection.onDeleteSelected()}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/40 bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title={
+                        selectedCount === 0
+                          ? 'Select rows to enable bulk delete'
+                          : `Delete the ${selectedCount} selected row${selectedCount === 1 ? '' : 's'}`
+                      }
+                    >
+                      <Trash className="w-3 h-3" aria-hidden />
+                      Delete selected{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                    </button>
+                  ) : null}
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -290,7 +341,16 @@ export default function TeacherSubmissionRosterTable({
                   </td>
                   <td className="px-3 py-3 align-middle text-right">
                     {labeledActions ? (
-                      <div className="inline-flex flex-wrap justify-end gap-1.5">
+                      <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                        {selection ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select submission ${s.file_name}`}
+                            checked={selection.selectedIds.has(s.id)}
+                            onChange={() => selection.onToggle(s.id)}
+                            className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+                          />
+                        ) : null}
                         <RosterScoreActionButtons
                           s={s}
                           labeled
@@ -339,6 +399,15 @@ export default function TeacherSubmissionRosterTable({
                       </div>
                     ) : (
                       <div className="flex justify-end items-center gap-1 flex-wrap">
+                        {selection ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select submission ${s.file_name}`}
+                            checked={selection.selectedIds.has(s.id)}
+                            onChange={() => selection.onToggle(s.id)}
+                            className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer mr-1"
+                          />
+                        ) : null}
                         <RosterScoreActionButtons
                           s={s}
                           labeled={false}
