@@ -219,6 +219,37 @@ export default function TeacherSubmissionRosterTable({
           : 'bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm'
       }
     >
+      {selection ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 px-3 py-2 border-b border-slate-200/90 bg-slate-50/95">
+          <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              aria-label={allSelected ? 'Deselect all rows in this view' : 'Select all rows in this view'}
+              checked={allSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = someSelected;
+              }}
+              onChange={(e) => selection.onToggleAll(e.target.checked)}
+              className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+            />
+            Select all in view
+          </label>
+          <button
+            type="button"
+            disabled={selectedCount === 0 || !!selection.busy}
+            onClick={() => selection.onDeleteSelected()}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title={
+              selectedCount === 0
+                ? 'Tick rows below (or use Select all) to enable bulk delete'
+                : `Delete the ${selectedCount} selected row${selectedCount === 1 ? '' : 's'}`
+            }
+          >
+            <Trash className="w-3 h-3 shrink-0" aria-hidden />
+            Delete selected{selectedCount > 0 ? ` (${selectedCount})` : ''}
+          </button>
+        </div>
+      ) : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1200px] text-sm border-collapse">
           <thead>
@@ -229,39 +260,7 @@ export default function TeacherSubmissionRosterTable({
               <th className="px-3 py-3 text-left min-w-[140px]">Student name</th>
               <th className="px-3 py-3 text-left min-w-[112px]">Date submitted</th>
               <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
-              <th className={`px-3 py-3 ${actionsMin}`}>
-                <div className="flex items-center justify-end gap-2">
-                  {selection ? (
-                    <input
-                      type="checkbox"
-                      aria-label={allSelected ? 'Deselect all rows' : 'Select all rows'}
-                      checked={allSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someSelected;
-                      }}
-                      onChange={(e) => selection.onToggleAll(e.target.checked)}
-                      className="h-3.5 w-3.5 accent-[#ffd21a] cursor-pointer"
-                    />
-                  ) : null}
-                  <span>Actions</span>
-                  {selection ? (
-                    <button
-                      type="button"
-                      disabled={selectedCount === 0 || !!selection.busy}
-                      onClick={() => selection.onDeleteSelected()}
-                      className="inline-flex items-center gap-1 rounded-md border border-white/40 bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      title={
-                        selectedCount === 0
-                          ? 'Select rows to enable bulk delete'
-                          : `Delete the ${selectedCount} selected row${selectedCount === 1 ? '' : 's'}`
-                      }
-                    >
-                      <Trash className="w-3 h-3" aria-hidden />
-                      Delete selected{selectedCount > 0 ? ` (${selectedCount})` : ''}
-                    </button>
-                  ) : null}
-                </div>
-              </th>
+              <th className={`px-3 py-3 text-right ${actionsMin}`}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

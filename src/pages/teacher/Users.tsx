@@ -859,6 +859,47 @@ export default function UserManagement() {
               <span className="font-semibold">Delete</span> on the latest upload when present — use Grading workspace or
               Submission roster to score or request redo. Scroll sideways on small screens.
             </p>
+            <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-2 md:px-5 border-b border-slate-200/90 bg-slate-50/95">
+              <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  aria-label={
+                    filtered.length > 0 && filtered.every((u) => selectedStudentIds.has(u.id))
+                      ? 'Deselect all learners in this view'
+                      : 'Select all learners in this view'
+                  }
+                  checked={filtered.length > 0 && filtered.every((u) => selectedStudentIds.has(u.id))}
+                  ref={(el) => {
+                    if (!el) return;
+                    const total = filtered.length;
+                    const sel = filtered.reduce((acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc), 0);
+                    el.indeterminate = sel > 0 && sel < total;
+                  }}
+                  onChange={(e) => toggleStudentSelectAll(filtered, e.target.checked)}
+                  className="h-3.5 w-3.5 accent-[#84001B] cursor-pointer"
+                />
+                Select all in view
+              </label>
+              {(() => {
+                const sel = filtered.reduce((acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc), 0);
+                return (
+                  <button
+                    type="button"
+                    disabled={sel === 0 || bulkRemovingStudents}
+                    onClick={() => void deleteSelectedStudents(filtered)}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[10px] font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    title={
+                      sel === 0
+                        ? 'Tick rows below (or use Select all) to enable bulk remove'
+                        : `Remove the ${sel} selected learner${sel === 1 ? '' : 's'} from the directory`
+                    }
+                  >
+                    <Trash className="w-3 h-3 shrink-0" aria-hidden />
+                    Delete selected{sel > 0 ? ` (${sel})` : ''}
+                  </button>
+                );
+              })()}
+            </div>
             <div className="max-h-[min(720px,78vh)] overflow-auto">
               <table className="w-full min-w-[1180px] border-collapse text-left antialiased text-[13px] leading-snug">
                 <thead>
@@ -874,59 +915,7 @@ export default function UserManagement() {
                       Date submitted
                     </th>
                     <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">Status</th>
-                    <th className="px-4 py-3 align-bottom whitespace-nowrap font-semibold">
-                      <div className="flex items-center justify-end gap-2">
-                        <input
-                          type="checkbox"
-                          aria-label={
-                            filtered.length > 0 &&
-                            filtered.every((u) => selectedStudentIds.has(u.id))
-                              ? 'Deselect all learners'
-                              : 'Select all learners'
-                          }
-                          checked={
-                            filtered.length > 0 &&
-                            filtered.every((u) => selectedStudentIds.has(u.id))
-                          }
-                          ref={(el) => {
-                            if (!el) return;
-                            const total = filtered.length;
-                            const sel = filtered.reduce(
-                              (acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc),
-                              0
-                            );
-                            el.indeterminate = sel > 0 && sel < total;
-                          }}
-                          onChange={(e) =>
-                            toggleStudentSelectAll(filtered, e.target.checked)
-                          }
-                          className="h-3.5 w-3.5 accent-[#ffd21a] cursor-pointer"
-                        />
-                        <span>Actions</span>
-                        {(() => {
-                          const sel = filtered.reduce(
-                            (acc, u) => (selectedStudentIds.has(u.id) ? acc + 1 : acc),
-                            0
-                          );
-                          return (
-                            <button
-                              type="button"
-                              disabled={sel === 0 || bulkRemovingStudents}
-                              onClick={() => void deleteSelectedStudents(filtered)}
-                              className="inline-flex items-center gap-1 rounded-md border border-white/40 bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                              title={
-                                sel === 0
-                                  ? 'Select learners to enable bulk delete'
-                                  : `Remove the ${sel} selected learner${sel === 1 ? '' : 's'} from the directory`
-                              }
-                            >
-                              <Trash className="w-3 h-3" aria-hidden />
-                              Delete selected{sel > 0 ? ` (${sel})` : ''}
-                            </button>
-                          );
-                        })()}
-                      </div>
-                    </th>
+                    <th className="px-4 py-3 align-bottom text-right whitespace-nowrap font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
