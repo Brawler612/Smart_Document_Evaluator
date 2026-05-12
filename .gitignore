@@ -14,6 +14,7 @@ dist-ssr
 # Local / IDE-only (never ship in the repo)
 .bolt
 .claude
+.commit-msg.tmp
 
 .vscode/*
 !.vscode/extensions.json
