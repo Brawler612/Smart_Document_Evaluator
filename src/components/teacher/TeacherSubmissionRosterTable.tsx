@@ -1,5 +1,15 @@
 import { Link } from 'react-router-dom';
-import { FileText, ChevronRight, Calendar, CheckCircle, Star, Undo2, Trash2 } from 'lucide-react';
+import {
+  FileText,
+  ChevronRight,
+  Calendar,
+  CheckCircle,
+  Star,
+  Undo2,
+  Trash2,
+  GraduationCap,
+  Sparkles,
+} from 'lucide-react';
 import type { TeacherSubmission } from '../../lib/teacherSubmissionLoad';
 import { submissionQueueTitle } from '../../lib/teacherSubmissionLoad';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../SubmissionOpenLink';
@@ -7,6 +17,8 @@ import {
   formatStackedDateTime,
   rosterStatusChip,
   studentIdBadge,
+  submissionHasViewableAiScore,
+  submissionHasViewableTeacherScore,
 } from '../../lib/submissionRosterPresentation';
 import { teacherMaroonTheadClasses } from './TeacherWorkspaceChrome';
 
@@ -26,7 +38,143 @@ type Props = {
   highlightSubmissionId?: string | null;
   /** Omit outer chrome when parent already wraps with class-list shell + amber cue. */
   embedded?: boolean;
+  /** Open read-only AI score summary (modal on pages that wire it). */
+  onViewAiScore?: (s: TeacherSubmission) => void;
+  /** Open read-only teacher score summary. */
+  onViewTeacherScore?: (s: TeacherSubmission) => void;
+  /** Hide AI / Teacher view controls in the table (e.g. roster spreadsheet defers to card list below). */
+  hideViewScore?: boolean;
 };
+
+const labeledScoreBtn =
+  'inline-flex items-center gap-1 rounded-lg bg-amber-400 px-2 py-1.5 text-[10px] font-bold text-amber-950 shadow-sm shadow-amber-500/25 hover:bg-amber-500 disabled:opacity-50 leading-tight';
+
+function RosterScoreActionButtons({
+  s,
+  labeled,
+  hideViewScore,
+  gradeHref,
+  onViewAiScore,
+  onViewTeacherScore,
+  deleteBusyId,
+  resubmitSavingId,
+}: {
+  s: TeacherSubmission;
+  labeled: boolean;
+  hideViewScore: boolean;
+  gradeHref: (submissionId: string) => string;
+  onViewAiScore?: (s: TeacherSubmission) => void;
+  onViewTeacherScore?: (s: TeacherSubmission) => void;
+  deleteBusyId?: string | null;
+  resubmitSavingId: string | null;
+}) {
+  if (hideViewScore) return null;
+  const hasAi = submissionHasViewableAiScore(s);
+  const hasT = submissionHasViewableTeacherScore(s);
+  if (!hasAi && !hasT) return null;
+
+  const busy = Boolean(deleteBusyId === s.id || resubmitSavingId === s.id);
+
+  if (labeled) {
+    return (
+      <>
+        {hasAi &&
+          (onViewAiScore ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onViewAiScore(s)}
+              className={labeledScoreBtn}
+              title="View automated AI score and AI-generated feedback"
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+              View AI score
+            </button>
+          ) : (
+            <Link
+              to={gradeHref(s.id)}
+              className={labeledScoreBtn}
+              title="Open grading workspace to see the AI draft score"
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+              View AI score
+            </Link>
+          ))}
+        {hasT &&
+          (onViewTeacherScore ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onViewTeacherScore(s)}
+              className={labeledScoreBtn}
+              title="View instructor-published score and context"
+            >
+              <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+              View Teacher score
+            </button>
+          ) : (
+            <Link
+              to={gradeHref(s.id)}
+              className={labeledScoreBtn}
+              title="Open grading workspace to see the published teacher score"
+            >
+              <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+              View Teacher score
+            </Link>
+          ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      {hasAi &&
+        (onViewAiScore ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onViewAiScore(s)}
+            className="inline-flex items-center justify-center p-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm disabled:opacity-50"
+            aria-label="View AI score"
+            title="View AI score"
+          >
+            <Sparkles className="w-4 h-4" aria-hidden />
+          </button>
+        ) : (
+          <Link
+            to={gradeHref(s.id)}
+            className="inline-flex items-center justify-center p-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+            aria-label="View AI score in grading workspace"
+            title="View AI score in grading workspace"
+          >
+            <Sparkles className="w-4 h-4" aria-hidden />
+          </Link>
+        ))}
+      {hasT &&
+        (onViewTeacherScore ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onViewTeacherScore(s)}
+            className="inline-flex items-center justify-center p-2 rounded-lg bg-amber-400 text-amber-950 hover:bg-amber-500 shadow-sm shadow-amber-500/25 disabled:opacity-50"
+            aria-label="View Teacher score"
+            title="View Teacher score"
+          >
+            <GraduationCap className="w-4 h-4" aria-hidden />
+          </button>
+        ) : (
+          <Link
+            to={gradeHref(s.id)}
+            className="inline-flex items-center justify-center p-2 rounded-lg bg-amber-400 text-amber-950 hover:bg-amber-500 shadow-sm shadow-amber-500/25"
+            aria-label="View Teacher score in grading workspace"
+            title="View Teacher score in grading workspace"
+          >
+            <GraduationCap className="w-4 h-4" aria-hidden />
+          </Link>
+        ))}
+    </>
+  );
+}
 
 export default function TeacherSubmissionRosterTable({
   rows,
@@ -39,8 +187,11 @@ export default function TeacherSubmissionRosterTable({
   omitGradeAndRedo = false,
   highlightSubmissionId = null,
   embedded = false,
+  onViewAiScore,
+  onViewTeacherScore,
+  hideViewScore = false,
 }: Props) {
-  const actionsMin = labeledActions ? (omitGradeAndRedo ? 'min-w-[120px]' : 'min-w-[220px]') : 'min-w-[140px]';
+  const actionsMin = labeledActions ? (omitGradeAndRedo ? 'min-w-[260px]' : 'min-w-[240px]') : 'min-w-[160px]';
   return (
     <div
       className={
@@ -64,9 +215,7 @@ export default function TeacherSubmissionRosterTable({
               <th className="px-3 py-3 text-left min-w-[72px]">SY</th>
               <th className="px-3 py-3 text-left min-w-[72px]">Semester</th>
               <th className="px-3 py-3 text-left min-w-[100px]">Status</th>
-              <th className={`px-3 py-3 text-right ${actionsMin}`}>
-                Actions
-              </th>
+              <th className={`px-3 py-3 text-right ${actionsMin}`}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -166,6 +315,16 @@ export default function TeacherSubmissionRosterTable({
                   <td className="px-3 py-3 align-middle text-right">
                     {labeledActions ? (
                       <div className="inline-flex flex-wrap justify-end gap-1.5">
+                        <RosterScoreActionButtons
+                          s={s}
+                          labeled
+                          hideViewScore={hideViewScore}
+                          gradeHref={gradeHref}
+                          onViewAiScore={onViewAiScore}
+                          onViewTeacherScore={onViewTeacherScore}
+                          deleteBusyId={deleteBusyId}
+                          resubmitSavingId={resubmitSavingId}
+                        />
                         {!omitGradeAndRedo ? (
                           <>
                             <Link
@@ -203,7 +362,17 @@ export default function TeacherSubmissionRosterTable({
                         ) : null}
                       </div>
                     ) : (
-                      <div className="flex justify-end items-center gap-1">
+                      <div className="flex justify-end items-center gap-1 flex-wrap">
+                        <RosterScoreActionButtons
+                          s={s}
+                          labeled={false}
+                          hideViewScore={hideViewScore}
+                          gradeHref={gradeHref}
+                          onViewAiScore={onViewAiScore}
+                          onViewTeacherScore={onViewTeacherScore}
+                          deleteBusyId={deleteBusyId}
+                          resubmitSavingId={resubmitSavingId}
+                        />
                         {!omitGradeAndRedo ? (
                           <>
                             <Link

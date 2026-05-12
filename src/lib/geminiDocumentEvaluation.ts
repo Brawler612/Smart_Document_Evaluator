@@ -37,6 +37,9 @@ type ParsedPayload = {
 const AI_DRAFT_LANG_START = '\n\n__AI_DRAFT_LANG_JSON__\n';
 const AI_DRAFT_LANG_END = '\n__END_AI_DRAFT_LANG_JSON__';
 
+/** Max chars kept for `documentQualityNotes` in API parse + persisted JSON (aligned in both code paths). */
+const DOC_QUALITY_NOTES_MAX_CHARS = 8500;
+
 /** Caps document text in the prompt (balance: context vs tokens / latency). */
 const MAX_BODY_CHARS = 56_000;
 
@@ -182,9 +185,32 @@ function normalizeExecutiveSummary(parsed: ParsedPayload | null): string {
   return typeof e === 'string' ? e.trim() : '';
 }
 
+export function executiveSummaryHasUiTail(exec: string): boolean {
+  const low = exec.toLowerCase();
+  return low.includes('strengths:') && low.includes('needs improvement:');
+}
+
+/** When the model returns a very short executive summary but valid criteria, prepend rubric detail (keeps Strengths:/Needs improvement: at the end for UI parsing). */
+function enrichThinExecutiveSummary(exec: string, criteria: RubricCriterionRow[]): string {
+  const t = exec.trim();
+  if (t.length >= 380 || criteria.length === 0) return t;
+  const expansion = criteria
+    .map((c) => `On "${c.name}" (${c.score}/${c.max}): ${c.comment}`)
+    .join('\n\n');
+  const low = t.toLowerCase();
+  const si = low.indexOf('strengths:');
+  if (si >= 0) {
+    const head = t.slice(0, si).trim();
+    const tail = t.slice(si).trim();
+    const bridge = head ? `${head}\n\nFurther rubric-backed detail:\n\n${expansion}` : `Further rubric-backed detail:\n\n${expansion}`;
+    return `${bridge}\n\n${tail}`;
+  }
+  return t ? `${t}\n\nFurther rubric-backed detail:\n\n${expansion}` : expansion;
+}
+
 function normalizeDocumentQualityNotes(parsed: ParsedPayload | null): string {
   const n = parsed?.documentQualityNotes;
-  return typeof n === 'string' ? n.trim().slice(0, 2000) : '';
+  return typeof n === 'string' ? n.trim().slice(0, DOC_QUALITY_NOTES_MAX_CHARS) : '';
 }
 
 export function normalizeCorrectHighlights(raw: unknown): CorrectHighlight[] {
@@ -198,11 +224,11 @@ export function normalizeCorrectHighlights(raw: unknown): CorrectHighlight[] {
     if (!excerpt || !verification) continue;
     const rubricTie = typeof o.rubricTie === 'string' ? o.rubricTie.trim().slice(0, 120) : '';
     out.push({
-      excerpt: excerpt.slice(0, 500),
-      verification: verification.slice(0, 720),
+      excerpt: excerpt.slice(0, 620),
+      verification: verification.slice(0, 2600),
       ...(rubricTie ? { rubricTie } : {}),
     });
-    if (out.length >= 12) break;
+    if (out.length >= 18) break;
   }
   return out;
 }
@@ -217,14 +243,14 @@ export function normalizeLanguageCorrections(raw: unknown): LanguageCorrection[]
     const after = typeof o.after === 'string' ? o.after.trim() : '';
     if (!before || !after) continue;
     const category = typeof o.category === 'string' ? o.category.trim().slice(0, 48) : '';
-    const note = typeof o.note === 'string' ? o.note.trim().slice(0, 320) : '';
+    const note = typeof o.note === 'string' ? o.note.trim().slice(0, 520) : '';
     out.push({
-      before: before.slice(0, 600),
-      after: after.slice(0, 600),
+      before: before.slice(0, 720),
+      after: after.slice(0, 720),
       ...(category ? { category } : {}),
       ...(note ? { note } : {}),
     });
-    if (out.length >= 14) break;
+    if (out.length >= 22) break;
   }
   return out;
 }
@@ -252,7 +278,9 @@ export function parsePersistedAiDraftSummary(stored: string): {
       correctHighlights?: unknown;
     };
     const documentQualityNotes =
-      typeof j.documentQualityNotes === 'string' ? j.documentQualityNotes.trim().slice(0, 2000) : '';
+      typeof j.documentQualityNotes === 'string'
+        ? j.documentQualityNotes.trim().slice(0, DOC_QUALITY_NOTES_MAX_CHARS)
+        : '';
     return {
       visibleSummary: head,
       languageCorrections: normalizeLanguageCorrections(j.languageCorrections),
@@ -287,11 +315,13 @@ export function appendPersistedAiEvalExtras(summary: string, extras: PersistedAi
 function buildPrompt(docType: string, content: string, template: RubricCriterionRow[]): string {
   const rubric = template.map((c) => ({ name: c.name, max: c.max }));
 
-  return `You are Gemini, the sole automated document evaluator for this screen. You must judge ONLY from the submission text below—no outside sources. Be concise but evidence-based.
+  return `You are Gemini, the sole automated document evaluator for this screen. You must judge ONLY from the submission text below—no outside sources. Write thorough, instructor-ready feedback: substantive paragraphs, concrete references to phrases or sections in the document, and nuance when quality is mixed. Prefer depth and usefulness over brevity, while staying truthful to what appears in the text.
+
+Never compress into one-liners: if a section risks sounding like a generic blurb, add specific evidence (short quotes, paraphrases, or “in section X you argue …”) until it reads like a careful human review.
 
 Document type label: ${docType}
 
-Rubric (${rubric.length} criteria) — return one JSON object per rubric name. Each score is an integer from 0 through max inclusive. Every score must be justified by what is actually correct or incorrect IN the document: cite brief evidence. Use the full range: high scores only when the submission clearly earns them on that criterion; low scores when requirements are missing, wrong, or weak. Each rubric comment must be 2–4 sentences mixing (a) what is done well or correctly where applicable and (b) what is wrong or incomplete where applicable—both grounded in the text.
+Rubric (${rubric.length} criteria) — return one JSON object per rubric name. Each score is an integer from 0 through max inclusive. Every score must be justified by what is actually correct or incorrect IN the document: cite evidence (short quotes or paraphrases tied to locations/ideas in the text). Use the full range: high scores only when the submission clearly earns them on that criterion; low scores when requirements are missing, wrong, or weak. Each rubric comment must be 5–10 sentences mixing (a) what is done well or correctly where applicable and (b) what is wrong, thin, or incomplete where applicable—both grounded in the text. Open with the main takeaway for that criterion, then unpack with examples.
 
 ${JSON.stringify(rubric, null, 0)}
 
@@ -303,22 +333,23 @@ ${truncateBody(content)}
 Return ONLY valid JSON (no markdown code fences). Exact top-level keys:
 {"executiveSummary":"string","documentQualityNotes":"string","criteria":[{"name":"exact rubric name","score":number,"comment":"string"}],"languageCorrections":[{"category":"grammar|spelling|punctuation|wording|structure|clarity|completeness|other","before":"string","after":"string","note":"string"}],"correctHighlights":[{"excerpt":"string","verification":"string","rubricTie":"string"}]}
 
-executiveSummary rules:
-- First 2–4 sentences: overall verdict, explicitly stating where the submission is substantively correct/strong versus where it is wrong or incomplete (still only from this text).
-- Then exactly two lines containing these prefixes (for UI parsing):
-  Strengths: <brief comma-separated highlights>
-  Needs improvement: <brief comma-separated gaps>
+executiveSummary rules (this field must be LONG — aim for roughly 500–1200 words before the two Strengths/Needs lines):
+- Write 5–9 substantial paragraphs (plain text, no markdown) BEFORE the Strengths/Needs lines. Cover, in order: (1) overall verdict and how well the document fits its apparent purpose; (2) content quality, claims, evidence, and accuracy grounded in the submission; (3) organization, flow, headings, and completeness vs the rubric expectations; (4) language, clarity, and polish; (5–7) optional extra paragraphs for longer or mixed-quality work—call out both strong and weak stretches with specific references; (8) if relevant, risks, ambiguities, or missing definitions the reader would still have.
+- Quote or closely paraphrase the submission where helpful; never invent facts not supported by the text.
+- Then on their own lines at the END (required for UI parsing — keep these two lines last):
+  Strengths: <comma-separated highlights, can be longer than a few words each>
+  Needs improvement: <comma-separated gaps>
 
 documentQualityNotes rules:
-- One short paragraph (3–6 sentences): systematic issues AND what is already solid (grammar, completeness, structure). Ground every claim in the submission. Use "" only if redundant.
+- Three paragraphs (12–22 sentences total): first on systematic strengths and what already works; second on systematic issues (structure, completeness, argument, evidence, tone); third on cross-cutting patterns (e.g. recurring phrasing, consistency, audience fit). Ground every claim in the submission. Use "" only if truly redundant with executiveSummary.
 
 languageCorrections rules:
-- 5–12 items for important fixable issues; each before = short verbatim from submission, after = improved wording, note optional. Fewer items if the text is clean. Minimum 0.
+- 10–20 items for important fixable issues when the text has them; each before = short verbatim from submission, after = improved wording, note should be 1–2 sentences explaining why the fix matters for clarity or professionalism. Fewer items if the text is very clean. Minimum 0.
 
 correctHighlights rules:
-- 4–10 items for passages that are clearly correct, accurate, well argued, or meet rubric expectations. Each item:
+- 8–16 items for passages that are clearly correct, accurate, well argued, or meet rubric expectations. Each item:
   - excerpt: SHORT verbatim quote from the submission.
-  - verification: 1–3 sentences explaining why this excerpt is correct or high quality and how it supports a fair score (tie to rubric ideas even if rubricTie is empty).
+  - verification: 6–12 sentences explaining why this excerpt is correct or high quality, how it supports a fair score, what would weaken it if changed, and how it ties to rubric ideas (even if rubricTie is empty).
   - rubricTie: optional exact rubric criterion name from the list above when this excerpt mainly supports that criterion; else "".
 - If the submission is mostly weak, return fewer items (minimum 0)—do not invent praise.
 
@@ -382,8 +413,8 @@ async function callGeminiRestOnce(
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
-        temperature: 0.35,
-        maxOutputTokens: 6144,
+        temperature: 0.42,
+        maxOutputTokens: 16384,
       },
     }),
   });
@@ -511,7 +542,8 @@ export async function runGeminiBackedEvaluation(options: {
 
   const merged = normalizeCriteriaPayload(parsed, template);
   if (!merged) return null;
-  const executiveSummary = normalizeExecutiveSummary(parsed);
+  let executiveSummary = normalizeExecutiveSummary(parsed);
+  executiveSummary = enrichThinExecutiveSummary(executiveSummary, merged);
   const documentQualityNotes = normalizeDocumentQualityNotes(parsed);
   const languageCorrections = normalizeLanguageCorrections(parsed?.languageCorrections);
   const correctHighlights = normalizeCorrectHighlights(parsed?.correctHighlights);

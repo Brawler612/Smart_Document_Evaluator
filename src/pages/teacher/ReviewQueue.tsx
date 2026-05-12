@@ -45,7 +45,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubStatus } from '../../types';
-import { formatStackedDateTime, rosterStatusChip, studentIdBadge } from '../../lib/submissionRosterPresentation';
+import { formatStackedDateTime, rosterStatusChip, studentIdBadge, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
 import {
@@ -56,9 +56,11 @@ import {
   teacherMaroonTheadClasses,
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
+import TeacherViewScoreModal from '../../components/teacher/TeacherViewScoreModal';
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
 import {
   appendPersistedAiEvalExtras,
+  executiveSummaryHasUiTail,
   formatGeminiTeacherNotice,
   runGeminiBackedEvaluation,
   type CorrectHighlight,
@@ -170,6 +172,75 @@ function maybeFreezeAiOnlyEvalAfterRun(
     inspectionText: args.inspectionText,
     feedbackDraft: args.feedbackDraft,
   });
+}
+
+/** Update Grade AI session lock (e.g. teacher feedback) without replacing the frozen rubric. */
+function patchAiOnlyEvalLock(submissionId: string, patch: Partial<Omit<AiOnlyEvalLockV1, 'v'>>): void {
+  const cur = readAiOnlyEvalLock(submissionId);
+  if (!cur) return;
+  writeAiOnlyEvalLock(submissionId, {
+    criteria: patch.criteria?.map((c) => ({ ...c })) ?? cur.criteria.map((c) => ({ ...c })),
+    executiveSummary: patch.executiveSummary ?? cur.executiveSummary,
+    languageCorrections:
+      patch.languageCorrections?.map((r) => ({ ...r })) ?? cur.languageCorrections.map((r) => ({ ...r })),
+    documentQualityNotes: patch.documentQualityNotes ?? cur.documentQualityNotes,
+    correctHighlights: patch.correctHighlights?.map((h) => ({ ...h })) ?? cur.correctHighlights.map((h) => ({ ...h })),
+    draftSnapshot: patch.draftSnapshot ? { ...patch.draftSnapshot } : { ...cur.draftSnapshot },
+    inspectionText: patch.inspectionText ?? cur.inspectionText,
+    feedbackDraft: patch.feedbackDraft ?? cur.feedbackDraft,
+  });
+}
+
+/** Session-only: Grade Teacher in-progress rubric + applied score until publish / redo / clear. */
+const TEACHER_ONLY_DRAFT_STORAGE_KEY = 'sde_teacher_only_draft_v1';
+
+type TeacherOnlyDraftV1 = {
+  v: 1;
+  teacherCriteria: AICriterion[];
+  teacherScoreInput: string;
+  appliedTeacherScore: number;
+  feedback: string;
+  inspectionText: string;
+};
+
+function readTeacherOnlyDraft(submissionId: string): TeacherOnlyDraftV1 | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(TEACHER_ONLY_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const all = JSON.parse(raw) as Record<string, TeacherOnlyDraftV1>;
+    const row = all?.[submissionId];
+    return row?.v === 1 ? row : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTeacherOnlyDraft(submissionId: string, draft: Omit<TeacherOnlyDraftV1, 'v'>): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const raw = sessionStorage.getItem(TEACHER_ONLY_DRAFT_STORAGE_KEY);
+    const all = (raw ? JSON.parse(raw) : {}) as Record<string, TeacherOnlyDraftV1>;
+    if (typeof all !== 'object' || all === null) return;
+    all[submissionId] = { v: 1, ...draft };
+    sessionStorage.setItem(TEACHER_ONLY_DRAFT_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
+function removeTeacherOnlyDraft(submissionId: string): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const raw = sessionStorage.getItem(TEACHER_ONLY_DRAFT_STORAGE_KEY);
+    if (!raw) return;
+    const all = JSON.parse(raw) as Record<string, TeacherOnlyDraftV1>;
+    if (typeof all !== 'object' || all === null) return;
+    delete all[submissionId];
+    sessionStorage.setItem(TEACHER_ONLY_DRAFT_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
 }
 
 function countRepeatedWordPairs(text: string): number {
@@ -351,21 +422,29 @@ function runFullAIDraft(docType: string, content: string): AICriterion[] {
 
 function buildAIFeedback(criteria: AICriterion[]): string {
   if (criteria.length === 0) return '';
-  const strengths = criteria
-    .filter(c => c.max > 0 && c.score / c.max >= 0.85)
-    .map(c => c.name)
-    .slice(0, 2);
-  const improvements = criteria
-    .filter(c => c.max > 0 && c.score / c.max < 0.75)
-    .map(c => c.name)
-    .slice(0, 2);
+  const ratio = (c: AICriterion) => (c.max > 0 ? c.score / c.max : 0);
+  const strengths = criteria.filter((c) => c.max > 0 && ratio(c) >= 0.85).map((c) => c.name);
+  const improvements = criteria.filter((c) => c.max > 0 && ratio(c) < 0.75).map((c) => c.name);
 
-  const parts = [
+  const intro =
+    'This extended automated summary is generated from the rubric-aligned draft scores on this screen. It is used when the live Gemini model is unavailable or did not return usable structured JSON — treat every claim as provisional until you have reviewed the actual submission file.';
+
+  const mid = criteria
+    .map((c) => {
+      const r = ratio(c);
+      const band =
+        r >= 0.85 ? 'This criterion is scoring in a strong band.' : r >= 0.65 ? 'This criterion is mixed — room to tighten.' : 'This criterion is weak relative to its weight — expect gaps.';
+      return `${c.name} (${c.score}/${c.max}): ${band} ${c.comment}`;
+    })
+    .join('\n\n');
+
+  const tail = [
     strengths.length ? `Strengths: ${strengths.join(', ')}.` : '',
     improvements.length ? `Needs improvement: ${improvements.join(', ')}.` : '',
-    'Please review comments per criterion and update before final publishing.',
+    'Please read each rubric cell in the modal, adjust scores or comments as needed, then publish when the evaluation matches your professional judgment.',
   ].filter(Boolean);
-  return parts.join(' ');
+
+  return [intro, mid, ...tail].join('\n\n');
 }
 
 /** Snapshot persisted for students as “AI preliminary” versus teacher-adjusted `score` / `feedback`. */
@@ -383,7 +462,13 @@ function criteriaToDraftSnapshot(
   const scorePct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
   const exec = executiveSummary?.trim() ?? '';
   const rubricLine = buildAIFeedback(criteria);
-  let summary = exec ? (rubricLine ? `${exec}\n\n${rubricLine}` : exec) : rubricLine;
+  let summary = exec
+    ? executiveSummaryHasUiTail(exec)
+      ? exec
+      : rubricLine
+        ? `${exec}\n\n${rubricLine}`
+        : exec
+    : rubricLine;
   const cor = extras?.languageCorrections ?? [];
   const qn = extras?.documentQualityNotes?.trim() ?? '';
   const ch = extras?.correctHighlights ?? [];
@@ -701,24 +786,18 @@ export default function ReviewQueue() {
   /** Inline message under the teacher-grade button (validation / confirmation). */
   const [teacherGradeNotice, setTeacherGradeNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
+  const [viewScoreOpen, setViewScoreOpen] = useState<{ row: Submission; focus: 'ai' | 'teacher' } | null>(null);
   const [fileOpenHref, setFileOpenHref] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const submissionDeepLinkConsumed = useRef<string | null>(null);
-  const headerSelectAllRef = useRef<HTMLInputElement>(null);
   /** Latest automated AI run (“before” teacher tweaks criterion sliders). Persisted as `ai_draft_*` when saving. */
   const aiDraftSnapshotRef = useRef<{ score: number | null; summary: string } | null>(null);
   /** Which grade flow the teacher wanted when opening the modal ('ai' | 'teacher'). Drives auto-scroll to the right section. */
   const pendingGradeIntentRef = useRef<'ai' | 'teacher' | null>(null);
   /** Focus target for the teacher-grade input when the "Grade (Teacher)" row button is pressed. */
   const teacherScoreInputRef = useRef<HTMLInputElement>(null);
-
-  const selectedQueueIds = useMemo(
-    () => [...selectedRowIds].filter((id) => submissions.some((s) => s.id === id)),
-    [selectedRowIds, submissions]
-  );
 
   function closeGradingModal() {
     setSelected(null);
@@ -750,9 +829,20 @@ export default function ReviewQueue() {
       const rubricTotal = next.reduce((s, c) => s + c.score, 0);
       setTeacherScoreInput(String(rubricTotal));
       if (teacherGradeNotice) setTeacherGradeNotice(null);
-      /** Live rubric edits invalidate any previously-applied flat grade so the new total wins. */
-      if (appliedTeacherScore != null && appliedTeacherScore !== rubricTotal) {
-        setAppliedTeacherScore(null);
+      if (gradeMode === 'teacher') {
+        setAppliedTeacherScore((prev) => {
+          if (prev != null) {
+            window.queueMicrotask(() =>
+              setTeacherGradeNotice({
+                kind: 'ok',
+                text: `Rubric updated to ${rubricTotal}%. Press Publish to send this version to the student.`,
+              })
+            );
+          }
+          return prev != null ? rubricTotal : prev;
+        });
+      } else {
+        setAppliedTeacherScore((prev) => (prev != null && prev !== rubricTotal ? null : prev));
       }
       return next;
     });
@@ -763,6 +853,7 @@ export default function ReviewQueue() {
   }
 
   function resetTeacherRubric() {
+    if (selected) removeTeacherOnlyDraft(selected.id);
     setTeacherCriteria((rows) => rows.map((c) => ({ ...c, score: 0, comment: '' })));
     setTeacherScoreInput('');
     setAppliedTeacherScore(null);
@@ -790,23 +881,15 @@ export default function ReviewQueue() {
     setTeacherScoreInput(String(parsed));
     setTeacherGradeNotice({
       kind: 'ok',
-      text: `Teacher grade ${parsed}% saved. Publish to make it visible to the student.`,
+      text: `Teacher grade ${parsed}% saved. Adjust the rubric or feedback anytime, then Publish (or publish again) to update what the student sees.`,
     });
   }
 
   function clearTeacherGrade() {
+    if (selected) removeTeacherOnlyDraft(selected.id);
     setTeacherScoreInput('');
     setAppliedTeacherScore(null);
     setTeacherGradeNotice(null);
-  }
-
-  function toggleRowSelected(id: string) {
-    setSelectedRowIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   }
 
   async function deleteByIds(ids: string[]) {
@@ -832,11 +915,10 @@ export default function ReviewQueue() {
         );
       }
       if (selected && ids.includes(selected.id)) closeGradingModal();
-      setSelectedRowIds((prev) => {
-        const next = new Set(prev);
-        for (const id of ids) next.delete(id);
-        return next;
-      });
+      for (const id of ids) {
+        removeAiOnlyEvalLock(id);
+        removeTeacherOnlyDraft(id);
+      }
       await load();
     } finally {
       setDeleting(false);
@@ -870,6 +952,33 @@ export default function ReviewQueue() {
   useEffect(() => {
     void load();
   }, []);
+
+  /** Grade Teacher: keep rubric + applied score + feedback steady in this browser until publish, redo, or clear. */
+  useEffect(() => {
+    if (!selected || gradeMode !== 'teacher' || appliedTeacherScore == null) return;
+    writeTeacherOnlyDraft(selected.id, {
+      teacherCriteria: teacherCriteria.map((c) => ({ ...c })),
+      teacherScoreInput,
+      appliedTeacherScore,
+      feedback,
+      inspectionText,
+    });
+  }, [
+    selected?.id,
+    gradeMode,
+    appliedTeacherScore,
+    teacherCriteria,
+    teacherScoreInput,
+    feedback,
+    inspectionText,
+  ]);
+
+  /** Grade AI: keep teacher feedback in the session lock in sync before publish. */
+  useEffect(() => {
+    if (!selected || gradeMode !== 'ai' || !aiOnlyEvalLocked) return;
+    if (!readAiOnlyEvalLock(selected.id)) return;
+    patchAiOnlyEvalLock(selected.id, { feedbackDraft: feedback });
+  }, [feedback, selected?.id, gradeMode, aiOnlyEvalLocked]);
 
   /**
    * Build the teacher-scorable rubric from the AI rubric template, rescaling each criterion's
@@ -905,7 +1014,10 @@ export default function ReviewQueue() {
     pendingGradeIntentRef.current = intent;
     setGradeMode(intent);
     setSelected(sub);
-    setFeedback(sub.feedback || '');
+    const teacherDraftEarly = intent === 'teacher' ? readTeacherOnlyDraft(sub.id) : null;
+    setFeedback(
+      teacherDraftEarly ? (sub.feedback?.trim() ? sub.feedback : teacherDraftEarly.feedback) : sub.feedback || ''
+    );
     setAiCriteria([]);
     setAiExecutiveSummary('');
     setAiLanguageCorrections([]);
@@ -914,11 +1026,26 @@ export default function ReviewQueue() {
     setInspectionNotice(null);
     setInspectionText('');
     setFileOpenHref(null);
-    /** Restore the teacher's previously-published manual grade so a re-grade starts where they left off. */
-    const priorScore = sub.status === 'reviewed' && sub.score != null ? sub.score : null;
-    setTeacherScoreInput(priorScore != null ? String(priorScore) : '');
-    setAppliedTeacherScore(priorScore);
-    setTeacherGradeNotice(null);
+
+    if (teacherDraftEarly) {
+      setTeacherScoreInput(teacherDraftEarly.teacherScoreInput);
+      setAppliedTeacherScore(teacherDraftEarly.appliedTeacherScore);
+      setTeacherCriteria(teacherDraftEarly.teacherCriteria.map((c) => ({ ...c })));
+      setTeacherGradeNotice({
+        kind: 'ok',
+        text: 'Restored your teacher grade draft from this browser session. Adjust the rubric or feedback, then Publish again when ready.',
+      });
+    } else {
+      /** Restore the teacher's previously-published manual grade so a re-grade starts where they left off. */
+      const priorScore = sub.status === 'reviewed' && sub.score != null ? sub.score : null;
+      setTeacherScoreInput(priorScore != null ? String(priorScore) : '');
+      setAppliedTeacherScore(priorScore);
+      setTeacherGradeNotice(null);
+      if (intent === 'teacher') {
+        setTeacherCriteria([]);
+      }
+    }
+
     setAiLoading(true);
     const table = await resolveSubmissionTableName();
     if (table) {
@@ -951,13 +1078,26 @@ export default function ReviewQueue() {
         aiDraftSnapshotRef.current = null;
         setTeacherCriteria([]);
       }
+    } else if (intent === 'teacher') {
+      if (teacherDraftEarly) {
+        setInspectionText(teacherDraftEarly.inspectionText);
+        const criteria = runFullAIDraft(gradingDocTypeForAI(sub), teacherDraftEarly.inspectionText);
+        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
+        setAiCriteria(criteria);
+      } else {
+        setInspectionText(payload.text);
+        const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
+        aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
+        setAiCriteria(criteria);
+        if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
+        setTeacherCriteria(buildTeacherRubricOutOfHundred(criteria));
+      }
     } else {
       setInspectionText(payload.text);
       const criteria = runFullAIDraft(gradingDocTypeForAI(sub), payload.text);
       aiDraftSnapshotRef.current = criteriaToDraftSnapshot(criteria, null);
       setAiCriteria(criteria);
       if (!sub.feedback) setFeedback(buildAIFeedback(criteria));
-      /** Seed the teacher's rubric with the same criterion names but normalize maxes to sum to 100 points. */
       setTeacherCriteria(buildTeacherRubricOutOfHundred(criteria));
     }
     setAiLoading(false);
@@ -1192,18 +1332,6 @@ export default function ReviewQueue() {
       }
     }
     setSaving(true);
-    const total = aiCriteria.reduce((s, c) => s + c.score, 0);
-    const maxTotal = aiCriteria.reduce((s, c) => s + c.max, 0);
-    const aiAggregateScore = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
-    /** Mode picks the source: AI flow publishes the AI score, Teacher flow publishes the applied teacher score. */
-    const score =
-      gradeMode === 'teacher'
-        ? appliedTeacherScore
-        : gradeMode === 'ai'
-          ? aiAggregateScore
-          : appliedTeacherScore != null
-            ? appliedTeacherScore
-            : aiAggregateScore;
     const nextStatus = status === 'reviewed' ? 'reviewed' : status === 'resubmit' ? 'resubmit' : 'under_review';
     const draft = aiDraftSnapshotRef.current;
     const ai_draft_score = draft?.score ?? null;
@@ -1212,33 +1340,85 @@ export default function ReviewQueue() {
       nextStatus === 'resubmit' && !feedback.trim()
         ? DEFAULT_TEACHER_RESUBMIT_FEEDBACK
         : feedback;
-    /** No published scores or AI drafts until a real graded publish — avoids confusing learners. */
-    const basePayload =
+
+    const total = aiCriteria.reduce((s, c) => s + c.score, 0);
+    const maxTotal = aiCriteria.reduce((s, c) => s + c.max, 0);
+    const aiAggregateScore = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
+    /** Deep-link / legacy modal: teacher override wins when applied, else AI aggregate. */
+    const legacyCombinedScore =
+      gradeMode == null
+        ? appliedTeacherScore != null
+          ? appliedTeacherScore
+          : aiAggregateScore
+        : null;
+
+    /** AI-only: update AI snapshot + feedback only — never overwrites `score`. */
+    /** Teacher-only: update official score + feedback only — never overwrites AI draft columns. */
+    const fullPayload: Record<string, unknown> =
       nextStatus === 'resubmit'
         ? {
-            status: nextStatus as SubStatus,
+            status: nextStatus,
             feedback: feedbackOut,
-            score: null as number | null,
-            ai_draft_score: null as number | null,
-            ai_draft_summary: null as string | null,
+            score: null,
+            ai_draft_score: null,
+            ai_draft_summary: null,
           }
-        : { status: nextStatus, feedback: feedbackOut, score };
-    const fullPayload =
+        : nextStatus === 'reviewed' && gradeMode === 'ai'
+          ? {
+              status: nextStatus,
+              feedback: feedbackOut,
+              ai_draft_score,
+              ai_draft_summary,
+            }
+          : nextStatus === 'reviewed' && gradeMode === 'teacher'
+            ? {
+                status: nextStatus,
+                feedback: feedbackOut,
+                score: appliedTeacherScore,
+              }
+            : nextStatus === 'reviewed' && gradeMode == null
+              ? {
+                  status: nextStatus,
+                  feedback: feedbackOut,
+                  score: legacyCombinedScore,
+                  ai_draft_score,
+                  ai_draft_summary,
+                }
+              : {
+                  status: nextStatus,
+                  feedback: feedbackOut,
+                };
+
+    const basePayload: Record<string, unknown> =
       nextStatus === 'resubmit'
-        ? basePayload
+        ? {
+            status: nextStatus,
+            feedback: feedbackOut,
+            score: null,
+            ai_draft_score: null,
+            ai_draft_summary: null,
+          }
         : {
-            ...(basePayload as { status: SubStatus; feedback: string; score: number | null }),
-            ai_draft_score,
-            ai_draft_summary,
+            status: nextStatus,
+            feedback: feedbackOut,
+            ...(Object.prototype.hasOwnProperty.call(fullPayload, 'score') ? { score: fullPayload.score } : {}),
           };
+
     const table = await resolveSubmissionTableName();
     if (table) {
-      const { error } = await supabase.from(table).update(fullPayload).eq('id', selected.id);
+      const { error } = await supabase.from(table).update(fullPayload as never).eq('id', selected.id);
       const missingAiCols =
         error?.message &&
         /ai_draft|could not find|column|PGRST204|schema cache/i.test(error.message);
       if (error && missingAiCols) {
-        const { error: e2 } = await supabase.from(table).update(basePayload).eq('id', selected.id);
+        if (gradeMode === 'ai') {
+          alert(
+            'This project’s submissions table is missing AI draft columns (ai_draft_score / ai_draft_summary). Add them with the Supabase SQL in docs, then publish again.'
+          );
+          setSaving(false);
+          return;
+        }
+        const { error: e2 } = await supabase.from(table).update(basePayload as never).eq('id', selected.id);
         if (e2) {
           alert(e2.message);
           setSaving(false);
@@ -1264,12 +1444,26 @@ export default function ReviewQueue() {
             ai_draft_summary: null,
           };
         }
-        return { ...row, status: nextStatus, feedback: feedbackOut, score, ai_draft_score, ai_draft_summary };
+        return {
+          ...row,
+          status: nextStatus as SubStatus,
+          feedback: feedbackOut,
+          ...(Object.prototype.hasOwnProperty.call(fullPayload, 'score')
+            ? { score: fullPayload.score as number | null }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(fullPayload, 'ai_draft_score')
+            ? { ai_draft_score: fullPayload.ai_draft_score as number | null }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(fullPayload, 'ai_draft_summary')
+            ? { ai_draft_summary: fullPayload.ai_draft_summary as string | null }
+            : {}),
+        };
       });
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
     setSaving(false);
     removeAiOnlyEvalLock(selected.id);
+    removeTeacherOnlyDraft(selected.id);
     closeGradingModal();
     load();
   }
@@ -1287,6 +1481,7 @@ export default function ReviewQueue() {
       }
       if (selected?.id === sub.id) closeGradingModal();
       removeAiOnlyEvalLock(sub.id);
+      removeTeacherOnlyDraft(sub.id);
       await load();
     } finally {
       setResubmitSavingId(null);
@@ -1317,28 +1512,6 @@ export default function ReviewQueue() {
       return hay.includes(q);
     });
   }, [submissions, filter, search]);
-
-  function toggleSelectAllFiltered() {
-    setSelectedRowIds((prev) => {
-      const next = new Set(prev);
-      const allOn = filtered.length > 0 && filtered.every((s) => next.has(s.id));
-      if (allOn) {
-        for (const s of filtered) next.delete(s.id);
-      } else {
-        for (const s of filtered) next.add(s.id);
-      }
-      return next;
-    });
-  }
-
-  useEffect(() => {
-    const el = headerSelectAllRef.current;
-    if (!el) return;
-    const allOn = filtered.length > 0 && filtered.every((s) => selectedRowIds.has(s.id));
-    const someOn = filtered.some((s) => selectedRowIds.has(s.id));
-    el.checked = allOn;
-    el.indeterminate = someOn && !allOn;
-  }, [filtered, selectedRowIds]);
 
   function exportReviewedCsv() {
     const reviewed = submissions.filter(s => s.status === 'reviewed');
@@ -1492,24 +1665,15 @@ export default function ReviewQueue() {
       />
 
       {!loading && filtered.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button
-            type="button"
-            disabled={selectedQueueIds.length === 0 || deleting}
-            onClick={() => void deleteByIds(selectedQueueIds)}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-red-200 bg-red-50 text-red-800 hover:bg-red-100 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete selected ({selectedQueueIds.length})
-          </button>
-          <span className="text-[11px] text-slate-500">
-            Select rows for bulk delete, or use Grade AI / Grade Teacher / Redo / Delete per row — same submission actions as{' '}
-            <Link to="/class-list" className="font-semibold text-[#84001B] hover:underline">
-              Class list
-            </Link>{' '}
-            and Submission roster.
-          </span>
-        </div>
+        <p className="text-[11px] text-slate-500 mb-3">
+          Use <span className="font-semibold text-slate-700">Grade AI</span>,{' '}
+          <span className="font-semibold text-slate-700">Grade Teacher</span>, <span className="font-semibold text-slate-700">Redo</span>, or{' '}
+          <span className="font-semibold text-slate-700">Delete</span> on each row — same actions as{' '}
+          <Link to="/class-list" className="font-semibold text-[#84001B] hover:underline">
+            Class list
+          </Link>{' '}
+          and Submission roster.
+        </p>
       )}
 
       {loading ? (
@@ -1565,21 +1729,12 @@ export default function ReviewQueue() {
           {/* spreadsheet-style desktop (roster columns) */}
           <div className={`hidden md:block ${teacherRoundedTableShell}`}>
             <TeacherAmberCue title="Submission queue">
-              Maroon header matches Class list. Scroll sideways on small screens; checkboxes support bulk delete.
+              Maroon header matches Class list. Scroll sideways on narrow screens if columns are clipped.
             </TeacherAmberCue>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1200px] text-sm border-collapse">
                 <thead>
                   <tr className={teacherMaroonTheadClasses}>
-                    <th className="w-10 px-2 py-3 text-center align-middle text-white/95">
-                      <input
-                        ref={headerSelectAllRef}
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-white/40 bg-white/10 text-[#ffd21a] focus:ring-[#ffd21a]/40"
-                        aria-label="Select all in view"
-                        onChange={() => toggleSelectAllFiltered()}
-                      />
-                    </th>
                     <th className="px-3 py-3 text-left min-w-[96px] text-white">Title</th>
                     <th className="px-3 py-3 text-left min-w-[140px] text-white">File name</th>
                     <th className="px-3 py-3 text-left min-w-[120px] text-white">Student ID</th>
@@ -1591,7 +1746,7 @@ export default function ReviewQueue() {
                     <th className="px-3 py-3 text-left min-w-[72px] text-white">SY</th>
                     <th className="px-3 py-3 text-left min-w-[72px] text-white">Semester</th>
                     <th className="px-3 py-3 text-left min-w-[100px] text-white">Status</th>
-                    <th className="px-3 py-3 text-right min-w-[220px] text-white">Actions</th>
+                    <th className="px-3 py-3 text-right min-w-[320px] text-white">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -1601,15 +1756,6 @@ export default function ReviewQueue() {
                     const roster = rosterStatusChip(s);
                     return (
                       <tr key={s.id} className="hover:bg-gray-50/80 transition-colors">
-                        <td className="px-2 py-3 align-middle text-center">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-gray-300 text-[#84001B] focus:ring-[#84001B]/30"
-                            checked={selectedRowIds.has(s.id)}
-                            aria-label={`Select ${s.file_name}`}
-                            onChange={() => toggleRowSelected(s.id)}
-                          />
-                        </td>
                         <td className="px-3 py-3 align-middle text-gray-900 font-medium min-w-0">
                           <span className="truncate block max-w-[14rem]" title={submissionQueueTitle(s)}>
                             {submissionQueueTitle(s)}
@@ -1683,38 +1829,66 @@ export default function ReviewQueue() {
                             {roster.label}
                           </span>
                         </td>
-                        <td className="px-3 py-3 align-middle text-right">
-                          <div className="inline-flex flex-wrap justify-end gap-1.5">
-                            <button
-                              type="button"
-                              disabled={deleting || resubmitSavingId === s.id}
-                              onClick={() => void openReview(s, 'ai')}
-                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-400 transition-colors disabled:opacity-50"
-                              title="Open grading in AI mode — run the evaluator when you are ready"
-                            >
-                              <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                              Grade AI
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deleting || resubmitSavingId === s.id}
-                              onClick={() => void openReview(s, 'teacher')}
-                              className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/30 bg-[#ffd21a]/15 px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors disabled:opacity-50"
-                              title="Open grading and jump to the manual teacher grade input"
-                            >
-                              <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                              Grade Teacher
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deleting || resubmitSavingId === s.id}
-                              onClick={() => void quickRequestResubmission(s)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
-                              title="Request resubmission"
-                            >
-                              <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                              Redo
-                            </button>
+                        <td className="px-3 py-3 align-middle">
+                          <div className="flex flex-col gap-1.5 items-end">
+                            <div className="inline-flex flex-row-reverse items-center gap-1 flex-wrap justify-end max-w-[20rem] ml-auto">
+                              <button
+                                type="button"
+                                disabled={deleting || resubmitSavingId === s.id}
+                                onClick={() => void quickRequestResubmission(s)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
+                                title="Request resubmission"
+                              >
+                                <Undo2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                Redo
+                              </button>
+                              {submissionHasViewableTeacherScore(s) ? (
+                                <button
+                                  type="button"
+                                  disabled={deleting || resubmitSavingId === s.id}
+                                  onClick={() => setViewScoreOpen({ row: s, focus: 'teacher' })}
+                                  className="inline-flex items-center gap-0.5 rounded-lg bg-amber-400 px-2 py-1.5 text-[10px] font-bold text-amber-950 shadow-sm shadow-amber-500/25 hover:bg-amber-500 disabled:opacity-50 whitespace-nowrap"
+                                  title="View instructor-published score"
+                                >
+                                  <GraduationCap className="w-3 h-3 shrink-0" aria-hidden />
+                                  View Teacher score
+                                </button>
+                              ) : null}
+                              {submissionHasViewableAiScore(s) ? (
+                                <button
+                                  type="button"
+                                  disabled={deleting || resubmitSavingId === s.id}
+                                  onClick={() => setViewScoreOpen({ row: s, focus: 'ai' })}
+                                  className="inline-flex items-center gap-0.5 rounded-lg bg-amber-400 px-2 py-1.5 text-[10px] font-bold text-amber-950 shadow-sm shadow-amber-500/25 hover:bg-amber-500 disabled:opacity-50 whitespace-nowrap"
+                                  title="View automated AI score and feedback"
+                                >
+                                  <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
+                                  View AI score
+                                </button>
+                              ) : null}
+                            </div>
+                            <div className="inline-flex flex-wrap justify-end gap-1.5">
+                              <button
+                                type="button"
+                                disabled={deleting || resubmitSavingId === s.id}
+                                onClick={() => void openReview(s, 'ai')}
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-400 transition-colors disabled:opacity-50"
+                                title="Open grading in AI mode — run the evaluator when you are ready"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                Grade AI
+                              </button>
+                              <button
+                                type="button"
+                                disabled={deleting || resubmitSavingId === s.id}
+                                onClick={() => void openReview(s, 'teacher')}
+                                className="inline-flex items-center gap-1 rounded-lg border border-[#84001B]/30 bg-[#ffd21a]/15 px-2.5 py-1.5 text-[11px] font-semibold text-[#84001B] shadow-sm hover:bg-[#84001B] hover:text-white hover:border-[#84001B] transition-colors disabled:opacity-50"
+                                title="Open grading and jump to the manual teacher grade input"
+                              >
+                                <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                Grade Teacher
+                              </button>
+                            </div>
                             <button
                               type="button"
                               disabled={deleting || resubmitSavingId === s.id}
@@ -1739,13 +1913,6 @@ export default function ReviewQueue() {
             {filtered.map(s => (
               <div key={s.id} className="bg-white border border-gray-100 rounded-2xl p-5 hover:shadow-sm hover:border-gray-200 transition-all">
                 <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    className="mt-1.5 h-4 w-4 rounded border-gray-300 text-[#84001B] focus:ring-[#84001B]/30 shrink-0"
-                    checked={selectedRowIds.has(s.id)}
-                    aria-label={`Select ${s.file_name}`}
-                    onChange={() => toggleRowSelected(s.id)}
-                  />
                   <div className="w-10 h-10 bg-[#84001B]/10 rounded-xl flex items-center justify-center flex-shrink-0">
                     <FileText className="w-5 h-5 text-[#84001B]" />
                   </div>
@@ -1778,7 +1945,43 @@ export default function ReviewQueue() {
                           )}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0 flex-col">
+                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                        <div className="inline-flex flex-row-reverse items-center gap-1 flex-wrap justify-end">
+                          <button
+                            type="button"
+                            disabled={deleting || resubmitSavingId === s.id}
+                            onClick={() => void quickRequestResubmission(s)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50 shadow-sm"
+                            title="Request resubmission"
+                          >
+                            <Undo2 className="w-3 h-3 shrink-0" aria-hidden />
+                            Redo
+                          </button>
+                          {submissionHasViewableTeacherScore(s) ? (
+                            <button
+                              type="button"
+                              disabled={deleting || resubmitSavingId === s.id}
+                              onClick={() => setViewScoreOpen({ row: s, focus: 'teacher' })}
+                              className="inline-flex items-center gap-0.5 rounded-lg bg-amber-400 px-2 py-1.5 text-[10px] font-bold text-amber-950 shadow-sm shadow-amber-500/25 hover:bg-amber-500 disabled:opacity-50 whitespace-nowrap"
+                              title="View instructor-published score"
+                            >
+                              <GraduationCap className="w-3 h-3 shrink-0" aria-hidden />
+                              View Teacher score
+                            </button>
+                          ) : null}
+                          {submissionHasViewableAiScore(s) ? (
+                            <button
+                              type="button"
+                              disabled={deleting || resubmitSavingId === s.id}
+                              onClick={() => setViewScoreOpen({ row: s, focus: 'ai' })}
+                              className="inline-flex items-center gap-0.5 rounded-lg bg-amber-400 px-2 py-1.5 text-[10px] font-bold text-amber-950 shadow-sm shadow-amber-500/25 hover:bg-amber-500 disabled:opacity-50 whitespace-nowrap"
+                              title="View automated AI score and feedback"
+                            >
+                              <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
+                              View AI score
+                            </button>
+                          ) : null}
+                        </div>
                         {s.score != null && (
                           <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full">
                             <Star className="w-3 h-3" />{s.score}%
@@ -1795,49 +1998,41 @@ export default function ReviewQueue() {
                             </span>
                           );
                         })()}
-                        <div className="flex flex-wrap gap-1.5 justify-end max-w-[14rem]">
-                          <button
-                            type="button"
-                            disabled={deleting || resubmitSavingId === s.id}
-                            onClick={() => void quickRequestResubmission(s)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-50"
-                            title="Redo"
-                          >
-                            <Undo2 className="w-3 h-3 shrink-0" aria-hidden />
-                            Redo
-                          </button>
-                          <button
-                            type="button"
-                            disabled={deleting || resubmitSavingId === s.id}
-                            onClick={() => void deleteByIds([s.id])}
-                            className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-3 h-3 shrink-0" aria-hidden />
-                            Del
-                          </button>
-                          <button
-                            type="button"
-                            disabled={deleting || resubmitSavingId === s.id}
-                            onClick={() => void openReview(s, 'ai')}
-                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                            title="Open AI evaluator"
-                          >
-                            <Sparkles className="w-3 h-3 shrink-0" aria-hidden />
-                            AI
-                          </button>
-                          <button
-                            type="button"
-                            disabled={deleting || resubmitSavingId === s.id}
-                            onClick={() => void openReview(s, 'teacher')}
-                            className="inline-flex items-center gap-1 rounded-lg bg-[#84001B] text-white px-2 py-1.5 text-[10px] font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50"
-                            title="Grade as teacher"
-                          >
-                            <GraduationCap className="w-3 h-3 shrink-0" aria-hidden />
-                            Teacher
-                          </button>
-                        </div>
                       </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={deleting || resubmitSavingId === s.id}
+                        onClick={() => void openReview(s, 'ai')}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-400 transition-colors disabled:opacity-50"
+                        title="Open AI evaluator"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                        Grade AI
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deleting || resubmitSavingId === s.id}
+                        onClick={() => void openReview(s, 'teacher')}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#84001B] text-white px-3 py-2 text-[11px] font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50"
+                        title="Grade as teacher"
+                      >
+                        <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                        Grade Teacher
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={deleting || resubmitSavingId === s.id}
+                        onClick={() => void deleteByIds([s.id])}
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3 h-3 shrink-0" aria-hidden />
+                        Del
+                      </button>
                     </div>
                     <p className="text-xs text-gray-300 mt-1">{new Date(s.submitted_at).toLocaleString()}</p>
                   </div>
@@ -2096,9 +2291,9 @@ export default function ReviewQueue() {
                         </div>
                         {gradeMode === 'ai' && aiOnlyEvalLocked && (
                           <p className="mt-3 text-[11px] font-medium text-slate-600 leading-snug">
-                            This submission’s AI rubric and score are set from your first successful run and cannot be
-                            changed here. Publish to send it to the student, or use Request redo so they can upload a new
-                            file (which clears this lock).
+                            The AI rubric and score from your first successful run stay fixed here. You can still edit
+                            teacher feedback in step 3, then Publish (or publish again) to update the student. Use Request
+                            redo if they must upload a new file (clears this lock).
                           </p>
                         )}
 
@@ -2117,7 +2312,7 @@ export default function ReviewQueue() {
                             </span>
                             <span className="text-xs text-slate-700">
                               {gradeMode === 'ai'
-                                ? 'This is the score you can publish to the student.'
+                                ? 'Publish to send this score; edit feedback below and publish again to update the student.'
                                 : 'Draft only unless you publish without a teacher override.'}
                             </span>
                           </div>
@@ -2181,11 +2376,9 @@ export default function ReviewQueue() {
                             </p>
                           )}
                           <AIDocumentEvaluationReport
-                            criteria={aiCriteria}
+                            criteria={[]}
                             aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
-                            teacherScorePercent={
-                              selected.status === 'reviewed' && selected.score != null ? selected.score : null
-                            }
+                            teacherScorePercent={gradeMode === 'ai' ? null : selected.status === 'reviewed' && selected.score != null ? selected.score : null}
                             summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}
                             documentQualityNotes={aiDocumentQualityNotes.trim() || null}
                             languageCorrections={aiLanguageCorrections}
@@ -2265,7 +2458,7 @@ export default function ReviewQueue() {
                       <button
                         type="submit"
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#84001B] text-white text-sm font-bold shadow-md shadow-[#84001B]/20 hover:bg-[#6b0016] disabled:opacity-60 disabled:cursor-not-allowed"
-                        title="Save the teacher grade. Press Publish in the footer to send it to the student."
+                        title="Apply the teacher grade. Adjust the rubric or this number later, then Publish (or publish again) to update the student."
                       >
                         <GraduationCap className="w-4 h-4" aria-hidden />
                         Grade as teacher
@@ -2312,7 +2505,19 @@ export default function ReviewQueue() {
                           {appliedTeacherScore}%
                         </span>
                         <span className="text-[11px] text-slate-600">
-                          will be the published score · press <span className="font-semibold">Publish</span> in the footer.
+                          {gradeMode === 'teacher' ? (
+                            <>
+                              Steady for this session — adjust the rubric to update this total, or edit the number and
+                              press Grade as teacher again. Then use{' '}
+                              <span className="font-semibold">Publish</span> in the footer (again if the row was already
+                              graded).
+                            </>
+                          ) : (
+                            <>
+                              will be the published score · press <span className="font-semibold">Publish</span> in the
+                              footer.
+                            </>
+                          )}
                         </span>
                       </div>
                     ) : (
@@ -2413,7 +2618,7 @@ export default function ReviewQueue() {
                               setAppliedTeacherScore(rubricSum);
                               setTeacherGradeNotice({
                                 kind: 'ok',
-                                text: `Teacher grade ${rubricSum}/${rubricMax} saved from rubric. Publish to make it visible to the student.`,
+                                text: `Teacher grade ${rubricSum}/${rubricMax} saved from rubric. Publish (or publish again) to update what the student sees.`,
                               });
                             }}
                             disabled={rubricMax === 0}
@@ -2460,7 +2665,11 @@ export default function ReviewQueue() {
                     aiCriteria.length > 0 &&
                     !isInsufficientSubmissionText(inspectionText) &&
                     (gradeMode === 'ai' || readiness.ready);
-                  const teacherReady = appliedTeacherScore != null;
+                  const teacherInputMatchesApplied =
+                    appliedTeacherScore != null &&
+                    (parseTeacherScoreInput(teacherScoreInput) === appliedTeacherScore ||
+                      teacherScoreInput.trim() === String(appliedTeacherScore));
+                  const teacherReady = appliedTeacherScore != null && teacherInputMatchesApplied;
                   const canPublish = gradeMode === 'ai' ? aiReady : gradeMode === 'teacher' ? teacherReady : aiReady || teacherReady;
                   const publishSource =
                     gradeMode === 'ai'
@@ -2482,6 +2691,10 @@ export default function ReviewQueue() {
                     gradeMode !== 'ai' &&
                     appliedTeacherScore == null &&
                     parseTeacherScoreInput(teacherScoreInput) != null;
+                  const pendingTeacherReapply =
+                    gradeMode === 'teacher' &&
+                    appliedTeacherScore != null &&
+                    !teacherInputMatchesApplied;
                   return (
                     <>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
@@ -2514,6 +2727,15 @@ export default function ReviewQueue() {
                           >
                             <Info className="w-3 h-3" aria-hidden />
                             Apply teacher grade
+                          </span>
+                        )}
+                        {pendingTeacherReapply && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 text-amber-900 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                            title="The number in the teacher box no longer matches the applied grade. Press Grade as teacher to apply it, or match the box to the rubric total."
+                          >
+                            <Info className="w-3 h-3" aria-hidden />
+                            Sync teacher box
                           </span>
                         )}
                         {publishSource && publishValue != null && (
@@ -2577,8 +2799,8 @@ export default function ReviewQueue() {
                           title={
                             canPublish
                               ? publishSource === 'teacher'
-                                ? `Publishes the teacher grade (${publishValue}%) to the student.`
-                                : `Publishes the AI grade (${publishValue}%) to the student.`
+                                ? `Publishes your teacher score and feedback — the AI draft on file is not changed.`
+                                : `Publishes the AI draft score and report — the instructor-published score (if any) is not changed.`
                               : gradeMode === 'ai'
                                 ? isInsufficientSubmissionText(inspectionText)
                                   ? readiness.message
@@ -2586,7 +2808,11 @@ export default function ReviewQueue() {
                                     ? 'Press Run AI Evaluator to generate a score before publishing.'
                                     : undefined
                                 : gradeMode === 'teacher'
-                                  ? 'Type a teacher grade and press "Grade as teacher" before publishing.'
+                                  ? pendingTeacherReapply
+                                    ? 'The teacher score box does not match the applied grade. Press Grade as teacher to apply the number you typed, or align it with the rubric total.'
+                                    : appliedTeacherScore == null
+                                      ? 'Type a teacher grade and press "Grade as teacher" before publishing.'
+                                      : undefined
                                   : 'Run AI in step 2 or enter a teacher grade in step 3 to publish.'
                           }
                         >
@@ -2606,6 +2832,13 @@ export default function ReviewQueue() {
           </div>,
           document.body
         )}
+      {viewScoreOpen ? (
+        <TeacherViewScoreModal
+          row={viewScoreOpen.row}
+          focus={viewScoreOpen.focus}
+          onClose={() => setViewScoreOpen(null)}
+        />
+      ) : null}
     </TeacherWorkspaceShell>
   );
 }

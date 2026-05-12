@@ -62,7 +62,7 @@ export default function StudentTasks() {
   const [search, setSearch] = useState('');
   const [showCompleted, setShowCompleted] = useState(false);
 
-  /** Excludes `resubmit` rows so teacher-flagged work re-appears as needing action. */
+  /** Assignment ids where the *latest* submission is not a redo request (see `buildEffectiveSubmittedAssignmentIds`). */
   const effectivelyDoneIds = useMemo(
     () => buildEffectiveSubmittedAssignmentIds(submissions),
     [submissions]
@@ -77,6 +77,22 @@ export default function StudentTasks() {
     () => submissions.filter((s) => s.status === 'resubmit').length,
     [submissions]
   );
+
+  const assignmentIdSet = useMemo(() => new Set(assignments.map((a) => a.id)), [assignments]);
+
+  /** Quick / general uploads (no task row) or orphaned task id — still need Resubmit UI. */
+  const standaloneRedoSubmissions = useMemo(() => {
+    const rows = submissions.filter(
+      (s) => s.status === 'resubmit' && (!s.assignment_id || !assignmentIdSet.has(s.assignment_id))
+    );
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((s) =>
+      `${s.file_name} ${s.assignment_title ?? ''} ${s.submission_doc_type ?? ''}`
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [submissions, assignmentIdSet, search]);
 
   const filteredAssignments = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -183,7 +199,7 @@ export default function StudentTasks() {
             <div key={i} className="h-24 bg-slate-100 rounded-2xl animate-pulse" />
           ))}
         </div>
-      ) : filteredAssignments.length === 0 ? (
+      ) : filteredAssignments.length === 0 && standaloneRedoSubmissions.length === 0 ? (
         <div className={`${studentCardClasses} p-10 text-center`}>
           <div className="mx-auto w-14 h-14 rounded-2xl bg-[#84001B]/10 flex items-center justify-center text-[#84001B] mb-3">
             <ListChecks className="w-7 h-7" aria-hidden />
@@ -196,6 +212,90 @@ export default function StudentTasks() {
         </div>
       ) : (
         <div className="space-y-6">
+          {standaloneRedoSubmissions.length > 0 && (
+            <section aria-label="Uploads that need a new file">
+              <div className="flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded-xl border border-red-200 bg-red-50/80 text-red-900">
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="w-4 h-4 shrink-0" aria-hidden />
+                  <span className="text-[11px] font-bold uppercase tracking-wide">
+                    General uploads · redo requested
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold tabular-nums">{standaloneRedoSubmissions.length}</span>
+              </div>
+              <ul className="space-y-2">
+                {standaloneRedoSubmissions.map((sub) => (
+                  <li
+                    key={sub.id}
+                    className="relative overflow-hidden rounded-2xl border border-red-300 ring-2 ring-red-100 bg-white p-4 shadow-sm"
+                  >
+                    <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-red-500 to-red-400" aria-hidden />
+                    <div className="flex items-start gap-4">
+                      <div
+                        className="mt-0.5 w-6 h-6 rounded-md border flex items-center justify-center shrink-0 bg-red-50 border-red-400 text-red-600"
+                        aria-hidden
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-bold truncate text-slate-900">
+                            {sub.assignment_title?.trim() ||
+                              sub.submission_doc_type?.trim() ||
+                              sub.file_name ||
+                              'Your upload'}
+                          </h3>
+                          {sub.submission_doc_type && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-rose-100 text-[#84001B]">
+                              {sub.submission_doc_type}
+                            </span>
+                          )}
+                          <StudentStatusPill status={sub.status} />
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white px-2 py-0.5 rounded-full">
+                            <RotateCcw className="w-3 h-3" aria-hidden />
+                            Needs redo
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1 font-mono truncate">{sub.file_name}</p>
+                        <div className="mt-2 rounded-xl border border-red-200 bg-red-50/80 p-2.5 text-[12px] text-red-950">
+                          <p className="font-semibold mb-1 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 text-red-600" aria-hidden />
+                            Teacher requested a new file
+                          </p>
+                          {sub.feedback && (
+                            <p className="leading-relaxed text-red-900/90 line-clamp-4 mb-1.5">{sub.feedback}</p>
+                          )}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {submissionHasOpenableFileUrl(sub.file_url) && (
+                              <SubmissionOpenLink
+                                raw={sub.file_url!}
+                                fileName={sub.file_name}
+                                className="text-[11px] font-semibold text-red-800 underline underline-offset-2 hover:text-red-950"
+                              >
+                                Open previous
+                              </SubmissionOpenLink>
+                            )}
+                          </div>
+                        </div>
+                        <p className="mt-2 text-[11px] text-slate-500">
+                          Previous attempt sent {formatShortDate(sub.submitted_at)}
+                        </p>
+                      </div>
+                      <div className="shrink-0">
+                        <Link
+                          to={buildResubmitHref(sub)}
+                          className="inline-flex items-center gap-1.5 bg-red-600 text-white text-xs px-3 py-2 rounded-xl hover:bg-red-700 font-bold shadow-sm whitespace-nowrap"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Resubmit
+                        </Link>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {order.map((g) => {
             const items = groups[g];
             if (items.length === 0) return null;

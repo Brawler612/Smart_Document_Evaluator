@@ -5,6 +5,7 @@ import {
   Download,
   ExternalLink,
   GraduationCap,
+  Sparkles,
   FileText,
   ChevronRight,
   ClipboardList,
@@ -27,7 +28,9 @@ import {
   teacherRoundedTableShell,
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import { gradingLinkForSubmission, isPlausibleSubmissionId } from '../../lib/gradingRoutes';
+import { submissionDisplayStatusForRoster, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import type { SubStatus } from '../../types';
+import TeacherViewScoreModal from '../../components/teacher/TeacherViewScoreModal';
 
 const STATUS_CHIP: Record<SubStatus, string> = {
   submitted: 'border-l-[#84001B] bg-rose-50/80',
@@ -73,6 +76,7 @@ export default function StudentSubmissions() {
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   /** Brief highlight after deep-link from Inbox (Review). */
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
+  const [viewScoreOpen, setViewScoreOpen] = useState<{ row: TeacherSubmission; focus: 'ai' | 'teacher' } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -395,7 +399,9 @@ export default function StudentSubmissions() {
             {tableRows.length > 0 && (
               <section className={`hidden md:block ${teacherRoundedTableShell}`} aria-label="Submission spreadsheet">
                 <TeacherAmberCue title="Roster spreadsheet">
-                  Maroon column headers align with Class list and Grading. Actions here are delete-only; open{' '}
+                  Maroon column headers align with Class list and Grading. In each assignment section below, use{' '}
+                  <span className="font-semibold">View AI score</span> or <span className="font-semibold">View Teacher score</span>{' '}
+                  on a card for a quick read-only summary; open{' '}
                   <Link className="font-semibold text-amber-950 underline-offset-2 hover:underline" to="/grading">
                     Grading workspace
                   </Link>{' '}
@@ -410,6 +416,7 @@ export default function StudentSubmissions() {
                   deleteBusyId={deleteBusyId}
                   labeledActions
                   omitGradeAndRedo
+                  hideViewScore
                   highlightSubmissionId={jumpHighlightId}
                   embedded
                 />
@@ -430,7 +437,7 @@ export default function StudentSubmissions() {
                     return (
                       <li key={s.id} id={`submission-roster-mobile-${s.id}`} className="scroll-mt-24">
                         <div
-                          className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden border-l-[5px] ${STATUS_CHIP[s.status]} ${
+                          className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden border-l-[5px] ${STATUS_CHIP[submissionDisplayStatusForRoster(s)]} ${
                             jumpHighlightId === s.id
                               ? 'ring-2 ring-[#84001B]/45 ring-offset-2 ring-offset-slate-50'
                               : ''
@@ -471,7 +478,7 @@ export default function StudentSubmissions() {
                             </div>
                             <div className="flex flex-col sm:items-end gap-2 shrink-0">
                               <span className="inline-flex text-[11px] font-semibold text-slate-700 bg-white/95 border border-slate-200 rounded-full px-3 py-1">
-                                {STATUS_LABEL[s.status]}
+                                {STATUS_LABEL[submissionDisplayStatusForRoster(s)]}
                               </span>
                               <div className="flex flex-wrap gap-2 justify-end">
                                 {submissionHasOpenableFileUrl(s.file_url) && (
@@ -483,6 +490,28 @@ export default function StudentSubmissions() {
                                     <ExternalLink className="w-3.5 h-3.5" />
                                     Open file
                                   </SubmissionOpenLink>
+                                )}
+                                {submissionHasViewableAiScore(s) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewScoreOpen({ row: s, focus: 'ai' })}
+                                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400 text-amber-950 px-3 py-2 text-xs font-bold shadow-sm shadow-amber-500/25 hover:bg-amber-500"
+                                    title="View automated AI score and AI-generated feedback"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                    View AI score
+                                  </button>
+                                )}
+                                {submissionHasViewableTeacherScore(s) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewScoreOpen({ row: s, focus: 'teacher' })}
+                                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400 text-amber-950 px-3 py-2 text-xs font-bold shadow-sm shadow-amber-500/25 hover:bg-amber-500"
+                                    title="View instructor-published score"
+                                  >
+                                    <GraduationCap className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                    View Teacher score
+                                  </button>
                                 )}
                                 <button
                                   type="button"
@@ -506,6 +535,13 @@ export default function StudentSubmissions() {
             ))}
           </div>
         )}
+      {viewScoreOpen ? (
+        <TeacherViewScoreModal
+          row={viewScoreOpen.row}
+          focus={viewScoreOpen.focus}
+          onClose={() => setViewScoreOpen(null)}
+        />
+      ) : null}
     </TeacherWorkspaceShell>
   );
 }

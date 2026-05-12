@@ -145,7 +145,7 @@ function SubmitUploadFields({
             {variant === 'quick' ? (
               <p>
                 <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path · </span>
-                Pick a document type above, upload one file—it queues under that title for staff. Confirm on{' '}
+                Optionally choose a document type above, upload one file—it queues for staff. Confirm on{' '}
                 <span className="font-semibold text-slate-900">Submission status</span>. Course staff finalize scores in the
                 grading workspace.
               </p>
@@ -309,7 +309,7 @@ export default function StudentAssignments() {
   const [fileName, setFileName] = useState('');
   const [submissionText, setSubmissionText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [quickDocType, setQuickDocType] = useState<string>('SRS');
+  const [quickDocType, setQuickDocType] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [assignmentTable, setAssignmentTable] = useState<'assignments' | 'assignment' | null>(null);
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
@@ -615,7 +615,7 @@ export default function StudentAssignments() {
       setFileName('');
       setSubmissionText('');
       setSelectedFile(null);
-      setQuickDocType('SRS');
+      setQuickDocType('');
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Submit failed.');
@@ -648,8 +648,8 @@ export default function StudentAssignments() {
 
   function openQuickSubmitModal() {
     setQuickSubmitOpen(true);
-    setQuickDocType('SRS');
-    setFileName('SRS');
+    setQuickDocType('');
+    setFileName('');
     setSubmissionText('');
     setSelectedFile(null);
   }
@@ -820,7 +820,8 @@ export default function StudentAssignments() {
                   Quick submit — fastest path
                 </h2>
                 <p className="text-sm text-slate-500 mt-1 leading-snug">
-                  Pick SRS / SDD / SPMP / STD, attach one file, hit send. Your teacher sees it in the grading queue.
+                  Defaults to no document type — add SRS / SDD / SPMP / STD if you want that label in the grading queue.
+                  Attach one file and send.
                 </p>
               </div>
             </div>
@@ -1246,7 +1247,12 @@ export default function StudentAssignments() {
                 quickDocType={quickDocType}
                 onPickDocType={(code) => {
                   setQuickDocType(code);
-                  setFileName(code);
+                  const t = code.trim();
+                  if (selectedFile) {
+                    setFileName(t ? `${t}_${selectedFile.name}` : selectedFile.name);
+                  } else {
+                    setFileName(t);
+                  }
                 }}
                 fileName={fileName}
                 setFileName={setFileName}

@@ -163,20 +163,21 @@ export function emitStudentSubmissionRemoved(id: string): void {
 }
 
 /**
- * Returns the set of assignment ids that the student has *effectively* completed.
+ * Returns the set of assignment ids the student does **not** need to turn in again.
  *
- * `resubmit` is intentionally excluded: when a teacher marks a submission "Redo",
- * the assignment must reappear on the student's Tasks/Dashboard/Calendar as work
- * that still needs to be turned in.
+ * Uses the **latest** submission per assignment only (same ordering as
+ * `buildLatestSubmissionByAssignment`). If the newest row is `resubmit`, the
+ * assignment stays **open** so Tasks / Dashboard show redo work. Older
+ * reviewed rows alone must not hide a fresh redo request.
  */
 export function buildEffectiveSubmittedAssignmentIds(
   submissions: StudentSubmissionRow[]
 ): Set<string> {
+  const latestByAssignment = buildLatestSubmissionByAssignment(submissions);
   const ids = new Set<string>();
-  for (const s of submissions) {
-    if (!s.assignment_id) continue;
+  for (const [assignmentId, s] of latestByAssignment) {
     if (s.status === 'resubmit') continue;
-    ids.add(s.assignment_id);
+    ids.add(assignmentId);
   }
   return ids;
 }

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -44,8 +45,12 @@ export type AIDocumentEvaluationReportProps = {
   /** Excerpts the model verified as correct / well aligned with the rubric. */
   correctHighlights?: AICorrectHighlightRow[];
   heading?: string;
+  /** Hide the AI grade tile (teacher-only / instructor views). Defaults to true. */
+  showAiGrade?: boolean;
   /** Hide the side-by-side "Teacher grade" tile (used by AI-only grading flow). Defaults to true. */
   showTeacherGrade?: boolean;
+  /** Label above the narrative summary block (defaults to “Executive summary”). */
+  executiveSummaryHeading?: string;
   /** Larger type and tiles for the teacher grading modal. */
   density?: 'default' | 'comfortable';
   /**
@@ -54,6 +59,8 @@ export type AIDocumentEvaluationReportProps = {
    * rubric rows are still used for strengths/gaps fallbacks when the summary has no Strengths:/Needs improvement: lines.
    */
   detailEvaluation?: 'rubric' | 'narrative';
+  /** Scroll / emphasize the AI or Teacher score tile when opening from a split “View AI / Teacher score” control. */
+  scoreSectionFocus?: 'ai' | 'teacher' | null;
 };
 
 function criterionPercent(c: AIEvaluationCriterion): number {
@@ -101,10 +108,15 @@ export default function AIDocumentEvaluationReport({
   languageCorrections = [],
   correctHighlights = [],
   heading = 'AI Analysis & Evaluation',
+  showAiGrade = true,
   showTeacherGrade = true,
+  executiveSummaryHeading = 'Executive summary',
   density = 'default',
   detailEvaluation = 'rubric',
+  scoreSectionFocus = null,
 }: AIDocumentEvaluationReportProps) {
+  const aiScoreTileRef = useRef<HTMLDivElement>(null);
+  const teacherScoreTileRef = useRef<HTMLDivElement>(null);
   const comfy = density === 'comfortable';
   const executive = (summaryText ?? '').trim();
   const qualityNotes = (documentQualityNotes ?? '').trim();
@@ -114,9 +126,11 @@ export default function AIDocumentEvaluationReport({
   const showRubricRows = criteria.length > 0 && detailEvaluation !== 'narrative';
   const fallbackExecutive =
     !executive && pct != null && (criteria.length === 0 || detailEvaluation === 'narrative')
-      ? `Indicative automated score: ${pct} out of 100. Your instructor may adjust this after review — see staff feedback below.`
+      ? `Indicative automated score: ${pct} out of 100. Your instructor may adjust this after review — see teacher feedback below.`
       : '';
   const executiveDisplay = executive || fallbackExecutive;
+  /** When the rubric list is hidden, the same narrative already appears as "Executive summary" above — do not repeat it as "Automated summary". */
+  const hideDetailedEvaluationSection = Boolean(executiveDisplay) && !showRubricRows;
   const { strengths: parsedS, gaps: parsedG } = parseStrengthsGaps(executiveDisplay);
 
   const fromCriteriaHigh = criteria
@@ -136,6 +150,29 @@ export default function AIDocumentEvaluationReport({
       : null;
   const teacherRingDeg = teacherPct != null ? (teacherPct / 100) * 360 : 0;
 
+  useEffect(() => {
+    if (!scoreSectionFocus) return;
+    const t = window.setTimeout(() => {
+      const el =
+        scoreSectionFocus === 'ai'
+          ? aiScoreTileRef.current
+          : scoreSectionFocus === 'teacher'
+            ? teacherScoreTileRef.current
+            : null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [scoreSectionFocus]);
+
+  const aiFocusRing =
+    scoreSectionFocus === 'ai' ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-white shadow-md' : '';
+  const teacherFocusRing =
+    scoreSectionFocus === 'teacher' ? 'ring-2 ring-[#84001B]/55 ring-offset-2 ring-offset-white shadow-md' : '';
+
+  const showAiTile = showAiGrade !== false;
+  const scoreGridCols =
+    showAiTile && showTeacherGrade ? 'sm:grid-cols-2' : 'sm:grid-cols-1';
+
   return (
     <div className={comfy ? 'space-y-8' : 'space-y-6'}>
       <div>
@@ -144,12 +181,14 @@ export default function AIDocumentEvaluationReport({
         >
           {heading}
         </p>
-        <div className={`grid ${comfy ? 'gap-4' : 'gap-3'} ${showTeacherGrade ? 'sm:grid-cols-2' : 'sm:grid-cols-1'}`}>
+        <div className={`grid ${comfy ? 'gap-4' : 'gap-3'} ${scoreGridCols}`}>
           {/* AI grade — automated rubric aggregate */}
+          {showAiTile ? (
           <div
+            ref={aiScoreTileRef}
             className={`flex flex-col rounded-2xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white shadow-sm sm:flex-row sm:items-center sm:justify-between ${
               comfy ? 'gap-5 p-5 sm:gap-6' : 'gap-4 p-4 sm:gap-4'
-            }`}
+            } ${aiFocusRing}`}
             role="group"
             aria-label="AI grade"
           >
@@ -209,17 +248,19 @@ export default function AIDocumentEvaluationReport({
               </div>
             </div>
           </div>
+          ) : null}
 
           {/* Teacher grade — published staff score only */}
           {showTeacherGrade && (
           <div
+            ref={teacherScoreTileRef}
             className={`flex flex-col rounded-2xl border-2 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
               comfy ? 'gap-5 p-5 sm:gap-6' : 'gap-4 p-4 sm:gap-4'
             } ${
               teacherPct != null
                 ? 'border-[#84001B]/35 bg-gradient-to-br from-[#ffd21a]/15 to-white'
                 : 'border-slate-200 bg-gradient-to-br from-slate-50 to-white'
-            }`}
+            } ${teacherFocusRing}`}
             role="group"
             aria-label="Teacher grade"
           >
@@ -290,10 +331,10 @@ export default function AIDocumentEvaluationReport({
             }`}
           >
             <Sparkles className={comfy ? 'h-5 w-5 text-pink-500' : 'h-4 w-4 text-pink-500'} aria-hidden />
-            Executive summary
+            {executiveSummaryHeading}
           </div>
           <div
-            className={`rounded-2xl border border-sky-100 bg-sky-50/80 font-bold leading-relaxed text-slate-900 ${
+            className={`rounded-2xl border border-sky-100 bg-sky-50/80 font-bold leading-relaxed text-slate-900 whitespace-pre-wrap ${
               comfy ? 'px-5 py-4 text-base' : 'px-4 py-3 text-sm'
             }`}
           >
@@ -403,7 +444,7 @@ export default function AIDocumentEvaluationReport({
             </ul>
           ) : (
             <p className={comfy ? 'text-[15px] text-amber-950/85' : 'text-sm text-amber-950/85'}>
-              No major gaps flagged in the automated pass — still review each section below and staff feedback.
+              No major gaps flagged in the automated pass — still review each section below and teacher feedback.
             </p>
           )}
         </div>
@@ -460,6 +501,7 @@ export default function AIDocumentEvaluationReport({
         </div>
       )}
 
+      {!hideDetailedEvaluationSection && (
       <div>
         <p
           className={`mb-3 font-bold uppercase tracking-[0.12em] text-slate-500 ${comfy ? 'text-xs' : 'text-[11px]'}`}
@@ -523,6 +565,7 @@ export default function AIDocumentEvaluationReport({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

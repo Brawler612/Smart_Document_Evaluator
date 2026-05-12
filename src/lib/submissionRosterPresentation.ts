@@ -1,6 +1,30 @@
 import type { SubStatus } from '../types';
 import type { TeacherSubmission } from './teacherSubmissionLoad';
 
+/** Both instructor-published score and AI draft exist — treat as fully graded for roster/status display even if `status` lags. */
+export function submissionHasPublishedScoreAndAiDraft(s: {
+  status: SubStatus;
+  score: number | null;
+  ai_draft_score: number | null;
+}): boolean {
+  if (s.status === 'resubmit') return false;
+  const sc = s.score;
+  const ai = s.ai_draft_score;
+  return sc != null && ai != null && Number.isFinite(sc) && Number.isFinite(ai);
+}
+
+/** Status chip / label when timeliness (ON TIME / LATE) is not shown — “fully graded” if both scores exist. */
+export function submissionDisplayStatusForRoster(s: {
+  status: SubStatus;
+  score: number | null;
+  ai_draft_score: number | null;
+}): SubStatus {
+  if (submissionHasPublishedScoreAndAiDraft(s) && s.status !== 'reviewed' && s.status !== 'resubmit') {
+    return 'reviewed';
+  }
+  return s.status;
+}
+
 const STATUS_COLORS: Record<SubStatus, string> = {
   submitted: 'bg-blue-100 text-blue-700',
   under_review: 'bg-amber-100 text-amber-700',
@@ -38,9 +62,10 @@ export function rosterStatusChip(s: TeacherSubmission): { label: string; classNa
         : { label: 'LATE', className: 'bg-rose-100 text-rose-800' };
     }
   }
+  const displayStatus = submissionDisplayStatusForRoster(s);
   return {
-    label: s.status.replace('_', ' ').toUpperCase(),
-    className: STATUS_COLORS[s.status],
+    label: displayStatus.replace('_', ' ').toUpperCase(),
+    className: STATUS_COLORS[displayStatus],
   };
 }
 
@@ -51,4 +76,20 @@ export function studentIdBadge(s: TeacherSubmission): string {
   if (!id) return '—';
   if (id.length > 10) return `# ${id.slice(0, 8)}…`;
   return `# ${id}`;
+}
+
+/** Row has an AI draft score or persisted AI summary (for “View AI score”). */
+export function submissionHasViewableAiScore(s: {
+  ai_draft_score: number | null;
+  ai_draft_summary?: string | null;
+}): boolean {
+  const n = s.ai_draft_score;
+  if (n != null && Number.isFinite(Number(n))) return true;
+  return Boolean((s.ai_draft_summary ?? '').trim());
+}
+
+/** Row has a published teacher score (for “View Teacher score”). */
+export function submissionHasViewableTeacherScore(s: { score: number | null }): boolean {
+  const n = s.score;
+  return n != null && Number.isFinite(Number(n));
 }

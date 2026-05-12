@@ -25,6 +25,7 @@ import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../componen
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
 import { parsePersistedAiDraftSummary } from '../../lib/geminiDocumentEvaluation';
 import { useSubmissionFileMeta } from '../../lib/submissionFileMeta';
+import { submissionHasPublishedScoreAndAiDraft, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import {
   deleteStudentSubmission,
   getStudentHiddenSubmissionIds,
@@ -100,6 +101,27 @@ function statusPresentation(raw: unknown): { normalized: SubStatus; chip: string
     dot: style.dot,
     label: STATUS_LABELS[normalized],
   };
+}
+
+/** When both final and AI rubric scores are present, show “Graded” even if `status` is still under review. */
+function studentStatusPresentation(s: Submission): {
+  normalized: SubStatus;
+  chip: string;
+  dot: string;
+  label: string;
+} {
+  const base = statusPresentation(s.status);
+  if (base.normalized === 'resubmit') return base;
+  if (submissionHasPublishedScoreAndAiDraft(s) && base.normalized !== 'reviewed') {
+    const st = STATUS_STYLES.reviewed;
+    return {
+      normalized: 'reviewed',
+      chip: st.chip,
+      dot: st.dot,
+      label: STATUS_LABELS.reviewed,
+    };
+  }
+  return base;
 }
 
 function relativeTime(iso: string): string {
@@ -181,8 +203,8 @@ export default function MySubmissions() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [selected, setSelected] = useState<Submission | null>(null);
-  /** Which view of the modal to show: file/status/feedback details, or just the grading score. */
-  const [selectedView, setSelectedView] = useState<'details' | 'score'>('details');
+  /** Which view of the modal to show: details, or score summary focused on AI or teacher tile. */
+  const [selectedView, setSelectedView] = useState<'details' | 'score_ai' | 'score_teacher'>('details');
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
   /** Two-step inline confirm — id of the row currently asking "are you sure?" */
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
@@ -487,12 +509,12 @@ export default function MySubmissions() {
         ) : (
           <ul className="space-y-3">
             {filtered.map((s) => {
-              const pv = statusPresentation(s.status);
+              const pv = studentStatusPresentation(s);
               return (
               <li key={s.id} data-submission-row={s.id}>
                 <div
                   className={`bg-white border rounded-2xl p-4 md:p-5 shadow-sm hover:shadow-md transition-all ${
-                    confirmRemoveId === s.id && !(selected?.id === s.id && selectedView === 'score')
+                    confirmRemoveId === s.id && !(selected?.id === s.id && selectedView !== 'details')
                       ? 'border-red-300 ring-2 ring-red-100'
                       : 'border-slate-200/90 hover:border-[#84001B]/15'
                   }`}
@@ -573,21 +595,37 @@ export default function MySubmissions() {
                           <ChevronRight className="w-3.5 h-3.5" />
                         </Link>
                       )}
-                      {((pv.normalized === 'reviewed' && s.score != null) || s.ai_draft_score != null) && (
+                      {submissionHasViewableAiScore(s) && (
                         <button
                           type="button"
                           onClick={() => {
                             setConfirmRemoveId(null);
-                            setSelectedView('score');
+                            setSelectedView('score_ai');
                             setSelected(s);
                           }}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 text-white px-3 py-2 text-xs font-bold hover:bg-emerald-700 shadow-sm shadow-emerald-600/20"
-                          title="Grading is done — open this submission to see the AI and Teacher scores."
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-400 text-amber-950 px-3 py-2 text-xs font-bold hover:bg-amber-500 shadow-sm shadow-amber-500/25"
+                          title="Open automated AI score and AI-generated feedback for this submission."
                         >
-                          <GraduationCap className="w-3.5 h-3.5" />
-                          View score
+                          <Sparkles className="w-3.5 h-3.5" />
+                          View AI score
                         </button>
                       )}
+                      {submissionHasViewableTeacherScore(s) &&
+                        (pv.normalized === 'reviewed' || submissionHasPublishedScoreAndAiDraft(s)) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmRemoveId(null);
+                              setSelectedView('score_teacher');
+                              setSelected(s);
+                            }}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-400 text-amber-950 px-3 py-2 text-xs font-bold hover:bg-amber-500 shadow-sm shadow-amber-500/25"
+                            title="Open your instructor’s published score for this submission."
+                          >
+                            <GraduationCap className="w-3.5 h-3.5" />
+                            View Teacher score
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => {
@@ -596,12 +634,12 @@ export default function MySubmissions() {
                           setSelected(s);
                         }}
                         className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#84001B] text-white px-3 py-2 text-xs font-semibold hover:bg-[#6b0016] shadow-sm"
-                        title="Open the submission file info, status, and staff feedback (no score)."
+                        title="Open the submission file info, status, and teacher feedback (no score)."
                       >
                         <MessageSquare className="w-3.5 h-3.5" />
                         Details
                       </button>
-                      {!(selected?.id === s.id && selectedView === 'score') &&
+                      {!(selected?.id === s.id && selectedView !== 'details') &&
                         (confirmRemoveId === s.id ? (
                           <div className="flex gap-1.5">
                             <button
@@ -746,13 +784,14 @@ function SubmissionDetailsDialog({
   onClose,
 }: {
   selected: Submission;
-  /** 'details' hides the grading score block; 'score' surfaces the AI / Teacher score panel. */
-  view: 'details' | 'score';
+  /** 'details' = file/status/feedback; score views open the same report with the matching tile emphasized. */
+  view: 'details' | 'score_ai' | 'score_teacher';
   onClose: () => void;
 }) {
-  const selPv = statusPresentation(selected.status);
+  const selPv = studentStatusPresentation(selected);
   const { meta: selMeta, measuring } = useSubmissionFileMeta(selected.file_url, selected.file_name);
-  const isScoreView = view === 'score';
+  const isScoreView = view !== 'details';
+  const dialogTitle = view === 'details' ? 'Submission details' : view === 'score_ai' ? 'AI score' : 'Teacher score';
   const aiDraftParsed = useMemo(
     () => parsePersistedAiDraftSummary((selected.ai_draft_summary ?? '').trim()),
     [selected.ai_draft_summary]
@@ -763,9 +802,7 @@ function SubmissionDetailsDialog({
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200/90 max-h-[min(92vh,48rem)] flex flex-col">
         <div className="flex shrink-0 items-start justify-between p-6 border-b border-slate-100 gap-4">
           <div className="min-w-0">
-            <h2 className="font-bold text-slate-900 text-lg">
-              {isScoreView ? 'Grading score' : 'Submission details'}
-            </h2>
+            <h2 className="font-bold text-slate-900 text-lg">{dialogTitle}</h2>
             <p className="text-sm text-slate-500 truncate mt-0.5">{selected.file_name}</p>
             <p className="text-[11px] text-slate-400 mt-1 tabular-nums" title={selected.id}>
               Ref {shortId(selected.id)}
@@ -787,38 +824,65 @@ function SubmissionDetailsDialog({
                 Revision needed
               </p>
               <p className="leading-relaxed text-red-900/95">
-                This file was flagged as empty, incomplete, or not acceptable for grading. Please read the staff
+                This file was flagged as empty, incomplete, or not acceptable for grading. Please read the teacher
                 message below and upload a complete replacement from Submit work.
               </p>
             </div>
           )}
-          {isScoreView &&
-            ((selPv.normalized === 'reviewed' && selected.score != null) ||
-              selected.ai_draft_score != null ||
-              (selected.ai_draft_summary ?? '').trim().length > 0) && (
+          {isScoreView && view === 'score_ai' && submissionHasViewableAiScore(selected) && (
               <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                      Grades for this submission
+                      Automated (AI) grading
                     </p>
                     <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
-                      Two side-by-side scores so you can compare the AI rubric draft with what your instructor finally
-                      published.
+                      Preliminary AI rubric and model-written notes. Your instructor’s official grade (if any) is separate.
                     </p>
                   </div>
                 </div>
                 <AIDocumentEvaluationReport
                   criteria={[]}
                   aiScorePercent={selected.ai_draft_score}
-                  teacherScorePercent={
-                    selected.status === 'reviewed' && selected.score != null ? selected.score : null
-                  }
+                  teacherScorePercent={null}
                   summaryText={aiDraftParsed.visibleSummary || undefined}
                   documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
                   languageCorrections={aiDraftParsed.languageCorrections}
                   correctHighlights={aiDraftParsed.correctHighlights}
-                  heading="AI and Teacher score"
+                  heading="AI score"
+                  showTeacherGrade={false}
+                  scoreSectionFocus="ai"
+                />
+              </div>
+            )}
+          {isScoreView &&
+            view === 'score_teacher' &&
+            selected.score != null &&
+            (selected.status === 'reviewed' || submissionHasPublishedScoreAndAiDraft(selected)) && (
+              <div className="rounded-2xl border border-slate-200/90 bg-slate-50/50 p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                      Instructor-published grade
+                    </p>
+                    <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
+                      This is what your teacher set as the official score. It does not replace or erase the AI draft on file.
+                    </p>
+                  </div>
+                </div>
+                <AIDocumentEvaluationReport
+                  criteria={[]}
+                  aiScorePercent={null}
+                  teacherScorePercent={selected.score}
+                  summaryText={(selected.feedback ?? '').trim() || 'No instructor written feedback yet.'}
+                  documentQualityNotes={null}
+                  languageCorrections={[]}
+                  correctHighlights={[]}
+                  heading="Teacher score"
+                  executiveSummaryHeading="Instructor feedback"
+                  showAiGrade={false}
+                  showTeacherGrade
+                  scoreSectionFocus="teacher"
                 />
               </div>
             )}
@@ -832,10 +896,10 @@ function SubmissionDetailsDialog({
               </span>
             </div>
           )}
-          {isScoreView && (
+          {isScoreView && view !== 'score_teacher' && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-                Staff feedback
+                Teacher feedback
               </p>
               {selected.feedback ? (
                 <div className="bg-slate-50 rounded-xl p-4 text-sm font-bold text-slate-800 leading-relaxed border border-slate-100">
