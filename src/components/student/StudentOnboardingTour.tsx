@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, HelpCircle, Minus, X } from 'lucide-react';
 
-const STORAGE_KEY = 'sde_student_onboarding_v1';
+const STORAGE_KEY_PREFIX = 'sde_student_onboarding_v1';
 const MASCOT_SRC = '/mascot/eva-welcome-nobg.png';
+
+/**
+ * Per-user storage key so every new Google account that lands on the portal sees Eva at least once,
+ * even when several students share the same browser. Falls back to a single legacy key only when no
+ * user id is available (e.g. mid-boot before Supabase resolves the session).
+ */
+function storageKeyFor(userId: string | null | undefined): string {
+  const id = (userId ?? '').trim();
+  if (!id) return STORAGE_KEY_PREFIX;
+  return `${STORAGE_KEY_PREFIX}:${id}`;
+}
 
 type Step = {
   title: string;
@@ -57,44 +68,60 @@ const STEPS: Step[] = [
 ];
 
 /** Replay hook for external callers (e.g. a Settings button). */
-export function resetStudentOnboarding(): void {
+export function resetStudentOnboarding(userId?: string | null): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKeyFor(userId));
   } catch {
     /* ignore */
   }
 }
 
-function readSeen(): boolean {
+function readSeen(userId: string | null | undefined): boolean {
   if (typeof localStorage === 'undefined') return false;
   try {
-    return localStorage.getItem(STORAGE_KEY) === 'done';
+    return localStorage.getItem(storageKeyFor(userId)) === 'done';
   } catch {
     return false;
   }
 }
 
-function markSeen(): void {
+function markSeen(userId: string | null | undefined): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEY, 'done');
+    localStorage.setItem(storageKeyFor(userId), 'done');
   } catch {
     /* quota / private mode */
   }
 }
 
-export default function StudentOnboardingTour() {
+type Props = {
+  /** Active student id. Each id keeps its own "seen" flag so new accounts start the tour fresh. */
+  userId?: string | null;
+};
+
+export default function StudentOnboardingTour({ userId = null }: Props) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [typed, setTyped] = useState(0);
   const [minimized, setMinimized] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  /** Show automatically the first time this browser sees the portal. */
+  /**
+   * Show automatically the first time *this user* lands on the portal. Re-evaluates whenever the
+   * signed-in account changes — so a brand new login on the same browser triggers Eva again.
+   */
   useEffect(() => {
-    if (!readSeen()) setOpen(true);
-  }, []);
+    if (!userId) return;
+    if (!readSeen(userId)) {
+      setStep(0);
+      setTyped(0);
+      setMinimized(false);
+      setOpen(true);
+    } else {
+      setOpen(false);
+    }
+  }, [userId]);
 
   const current = STEPS[step] ?? STEPS[0];
   const isLast = step >= STEPS.length - 1;
@@ -146,22 +173,22 @@ export default function StudentOnboardingTour() {
       return;
     }
     if (isLast) {
-      markSeen();
+      markSeen(userId);
       setOpen(false);
       return;
     }
     setStep((s) => s + 1);
-  }, [fullyTyped, isLast, current.body.length]);
+  }, [fullyTyped, isLast, current.body.length, userId]);
 
   const handleSkip = useCallback(() => {
-    markSeen();
+    markSeen(userId);
     setOpen(false);
-  }, []);
+  }, [userId]);
 
   const handleClose = useCallback(() => {
-    markSeen();
+    markSeen(userId);
     setOpen(false);
-  }, []);
+  }, [userId]);
 
   const handleReopenFromMini = useCallback(() => {
     setMinimized(false);

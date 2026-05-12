@@ -88,7 +88,7 @@ export default function Layout() {
       </div>
     </div>
     {isStudent && <StudentRateUsButton />}
-    {isStudent && <StudentOnboardingTour />}
+    {isStudent && user?.id ? <StudentOnboardingTour key={user.id} userId={user.id} /> : null}
     </>
   );
 }
