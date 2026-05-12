@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
+import UserAvatar from '../../components/UserAvatar';
 
 export default function Settings() {
   const { user } = useAuth();
@@ -25,7 +26,6 @@ export default function Settings() {
     setProfileMsg(null);
   }, [user?.id, user?.full_name]);
 
-  const initials = (fullName || user?.email || 'U').trim().charAt(0).toUpperCase();
   const trimmed = fullName.trim();
   const noChanges = !!(user?.full_name ?? '').trim() && trimmed === (user?.full_name ?? '').trim();
 
@@ -62,12 +62,16 @@ export default function Settings() {
         <div className="space-y-6">
           <section className="bg-white border border-slate-200/90 rounded-2xl p-6 md:p-7 shadow-sm">
             <div className="flex items-start gap-4 mb-6">
-              <div
-                className="h-14 w-14 rounded-2xl flex items-center justify-center text-[#84001B] font-bold text-lg shrink-0 shadow-inner border border-[#ffd21a]/40 bg-gradient-to-br from-[#ffd21a]/35 to-[#ffd21a]/10"
-                aria-hidden
-              >
-                {initials}
-              </div>
+              <UserAvatar
+                src={user?.avatar_url}
+                name={trimmed || user?.full_name}
+                email={user?.email}
+                size={56}
+                rounded="2xl"
+                className="shadow-inner border border-[#ffd21a]/40"
+                fallbackBg="bg-gradient-to-br from-[#ffd21a]/35 to-[#ffd21a]/10"
+                fallbackFg="text-[#84001B]"
+              />
               <div className="min-w-0 pt-0.5">
                 <h2 className="font-bold text-slate-900 leading-tight text-lg">
                   {trimmed || 'Add your name'}

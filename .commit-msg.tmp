@@ -1,0 +1,21 @@
+feat: sync Google profile picture across student/teacher UI
+
+- Extract picture/avatar_url/photo* from user_metadata, app_metadata, and
+  identities[].identity_data so every Supabase Google OAuth shape works
+- Persist avatar_url to public.users with graceful fallback when the column
+  is missing (retry without the field; UI still shows the in-memory URL)
+- New reusable UserAvatar component renders <img> with initials fallback;
+  rewrites Google lh3.googleusercontent.com size hint per slot
+- Show real photos in: top-right pill (Layout), student Settings card,
+  teacher Class list rows, teacher Student Submissions rows
+- New SQL migration docs/supabase-add-users-avatar-url.sql adds the column
+  and backfills from auth.users.raw_user_meta_data
+
+fix: keep teacher pages steady on delete/remove (no skeleton flash)
+
+- load()/refreshSubmissions() accept { silent: true } so background refreshes
+  and visibility-change refetches don't blank the list
+- Optimistic UI: delete/remove prune subRows + students locally first, then
+  silently re-sync with Supabase
+- Sync buttons get their own syncing state so the spinner is on the button
+  only and the table stays visible

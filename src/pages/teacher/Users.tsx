@@ -35,17 +35,10 @@ import { performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest'
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
 import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import TeacherSubmissionRosterTable from '../../components/teacher/TeacherSubmissionRosterTable';
+import UserAvatar from '../../components/UserAvatar';
 import { mergeIt332Sem2RosterWithDatabase } from '../../lib/mergeIt332Sem2Roster';
 import { IT332_COHORT_DESCRIPTOR } from '../../data/it332Sem2ClassRoster';
 import type { AppUser, SubStatus } from '../../types';
-
-function initials(name: string, fallback: string): string {
-  const src = name.trim() || fallback.trim();
-  const p = src.split(/\s+/).filter(Boolean);
-  if (p.length >= 2) return (p[0][0] + p[p.length - 1][0]).toUpperCase().slice(0, 2);
-  if (p.length === 1 && p[0].length >= 2) return p[0].slice(0, 2).toUpperCase();
-  return src.slice(0, 1).toUpperCase() || '?';
-}
 
 function looksLikeUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
@@ -106,6 +99,8 @@ export default function UserManagement() {
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   const [removedLedger, setRemovedLedger] = useState<DirectoryRemovalLedger>(() => loadDirectoryRemovalLedger());
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
+  /** Tracks the manual Sync button without flashing the table skeleton. */
+  const [syncing, setSyncing] = useState(false);
 
   const studentsVisibleInDirectory = useMemo(
     () => students.filter((u) => !isStudentHiddenFromTeacherDirectory(u, removedLedger)),
@@ -117,8 +112,12 @@ export default function UserManagement() {
     [subRows, removedLedger]
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `silent` keeps the current rows on screen while re-fetching in the background, so the page
+   * doesn't collapse into a skeleton (which would scroll the user back to the top).
+   */
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setLoading(true);
     setLoadError(null);
     setUsersTableMissing(false);
 
@@ -144,25 +143,28 @@ export default function UserManagement() {
         )
       );
     }
-    setLoading(false);
+    if (!options.silent) setLoading(false);
   }, []);
 
-  const refreshSubmissions = useCallback(async () => {
-    setSubLoading(true);
+  const refreshSubmissions = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setSubLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
       setSubRows(await fetchTeacherSubmissionRows());
     } catch (e) {
       console.error('[class-list] submissions:', e);
-      setSubRows([]);
+      if (!options.silent) setSubRows([]);
     } finally {
-      setSubLoading(false);
+      if (!options.silent) setSubLoading(false);
     }
   }, []);
 
-  const refreshAll = useCallback(async () => {
-    await Promise.all([load(), refreshSubmissions()]);
-  }, [load, refreshSubmissions]);
+  const refreshAll = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      await Promise.all([load(options), refreshSubmissions(options)]);
+    },
+    [load, refreshSubmissions]
+  );
 
   useEffect(() => {
     void load();
@@ -174,7 +176,7 @@ export default function UserManagement() {
 
   useEffect(() => {
     const refresh = () => {
-      if (document.visibilityState === 'visible') void refreshAll();
+      if (document.visibilityState === 'visible') void refreshAll({ silent: true });
     };
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
@@ -255,7 +257,9 @@ export default function UserManagement() {
         alert(result.message);
         return;
       }
-      await refreshSubmissions();
+      /** Optimistic: flip just this row to `resubmit` so the chip and roster reflect it instantly. */
+      setSubRows((prev) => prev.map((row) => (row.id === s.id ? { ...row, status: 'resubmit' } : row)));
+      void refreshSubmissions({ silent: true });
     } finally {
       setResubmitSavingId(null);
     }
@@ -264,6 +268,8 @@ export default function UserManagement() {
   async function deleteSubmissionRow(s: TeacherSubmission) {
     if (!window.confirm(`Delete "${s.file_name}" permanently? This cannot be undone.`)) return;
     setDeleteBusyId(s.id);
+    /** Optimistic: drop the row right away so the user keeps their scroll position. */
+    setSubRows((prev) => prev.filter((row) => row.id !== s.id));
     try {
       const result = await deleteTeacherSubmissionsByIds([s.id], {
         purgeLocalDuplicatesOf: [
@@ -275,7 +281,7 @@ export default function UserManagement() {
           `Could not delete from database: ${result.message}\n\nIf permission was denied, add the teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).\nLocal copies are still removed in this browser.`
         );
       }
-      await refreshSubmissions();
+      void refreshSubmissions({ silent: true });
     } finally {
       setDeleteBusyId(null);
     }
@@ -290,8 +296,19 @@ export default function UserManagement() {
     )
       return;
     setRemoveBusyId(u.id);
+    /**
+     * Optimistic: hide the learner via the ledger *and* drop their submission rows immediately. The
+     * `studentsVisibleInDirectory`/`subRowsNotLedgerHidden` memos already filter by `removedLedger`, so
+     * the visible UI updates on the next paint with no skeleton flash.
+     */
+    setRemovedLedger((prev) => persistRemoveStudentFromDirectory(prev, u));
+    const studentSubs = subRows.filter((s) => String(s.student_id).trim() === String(u.id).trim());
+    if (studentSubs.length > 0) {
+      const remainingIds = new Set(studentSubs.map((s) => s.id));
+      setSubRows((prev) => prev.filter((row) => !remainingIds.has(row.id)));
+    }
+    setStudents((prev) => prev.filter((row) => row.id !== u.id));
     try {
-      const studentSubs = subRows.filter((s) => String(s.student_id).trim() === String(u.id).trim());
       if (studentSubs.length > 0) {
         const purgeLocalDuplicatesOf = studentSubs.map((s) => ({
           student_id: s.student_id,
@@ -313,9 +330,7 @@ export default function UserManagement() {
         if (error && import.meta.env.DEV) console.warn('[class-list] remove profile:', error.message);
       }
 
-      setRemovedLedger((prev) => persistRemoveStudentFromDirectory(prev, u));
-      await refreshSubmissions();
-      await load();
+      void refreshAll({ silent: true });
     } finally {
       setRemoveBusyId(null);
     }
@@ -410,12 +425,20 @@ export default function UserManagement() {
             <div className="flex flex-wrap gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => void refreshAll()}
-                disabled={loading || subLoading}
+                onClick={async () => {
+                  if (syncing) return;
+                  setSyncing(true);
+                  try {
+                    await refreshAll({ silent: true });
+                  } finally {
+                    setSyncing(false);
+                  }
+                }}
+                disabled={syncing}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
               >
                 <RefreshCw
-                  className={`w-3.5 h-3.5 ${loading || subLoading ? 'animate-spin' : ''}`}
+                  className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`}
                   aria-hidden
                 />
                 Sync
@@ -692,9 +715,15 @@ export default function UserManagement() {
                         </td>
                         <td className="px-4 py-3 min-w-[12rem]">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-[11px] font-bold bg-gradient-to-br from-[#ffd21a] to-[#f5c400] text-[#84001B]">
-                              {initials(u.full_name, u.email)}
-                            </div>
+                            <UserAvatar
+                              src={u.avatar_url}
+                              name={u.full_name}
+                              email={u.email}
+                              size={36}
+                              rounded="lg"
+                              fallbackBg="bg-gradient-to-br from-[#ffd21a] to-[#f5c400]"
+                              fallbackFg="text-[#84001B]"
+                            />
                             <div className="min-w-0">
                               <p className="font-semibold text-[13.5px] text-slate-900 truncate tracking-tight">
                                 {u.full_name?.trim() || 'Unnamed'}

@@ -16,6 +16,8 @@ export interface AppUser {
   roster_member_number?: number | null;
   /** No Supabase profile yet — row is from the sheet until the student signs in with this campus email. */
   roster_pending?: boolean;
+  /** Profile picture URL synced from the OAuth provider (Google `picture` claim) on each sign-in. */
+  avatar_url?: string | null;
 }
 export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'STD' | 'Other';
 export type AStatus = 'active' | 'closed' | 'draft';

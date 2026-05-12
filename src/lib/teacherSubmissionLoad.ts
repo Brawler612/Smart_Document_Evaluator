@@ -32,6 +32,7 @@ export interface TeacherSubmission {
     email: string;
     student_number: string | null;
     course_year: string | null;
+    avatar_url: string | null;
   } | null;
 }
 
@@ -62,6 +63,7 @@ type BasicUserRow = {
   email: string;
   student_number?: string | null;
   course_year?: string | null;
+  avatar_url?: string | null;
 };
 
 function normalizeDocType(v: unknown): DocType {
@@ -167,18 +169,16 @@ function optTrimmedText(v: unknown): string | null {
 
 async function fetchUsersByIdsForMerge(userIds: string[]): Promise<BasicUserRow[]> {
   if (userIds.length === 0) return [];
-  const ext = await supabase
-    .from('users')
-    .select('id, full_name, email, student_number, course_year')
-    .in('id', userIds);
-  if (!ext.error && ext.data) {
-    return ext.data as BasicUserRow[];
-  }
-  if (ext.error && isRecoverableSchemaError(ext.error.message)) {
-    const basic = await supabase.from('users').select('id, full_name, email').in('id', userIds);
-    if (!basic.error && basic.data) {
-      return basic.data as BasicUserRow[];
-    }
+  const selectAttempts = [
+    'id, full_name, email, student_number, course_year, avatar_url',
+    'id, full_name, email, student_number, course_year',
+    'id, full_name, email, avatar_url',
+    'id, full_name, email',
+  ];
+  for (const sel of selectAttempts) {
+    const res = await supabase.from('users').select(sel).in('id', userIds);
+    if (!res.error && res.data) return res.data as unknown as BasicUserRow[];
+    if (res.error && !isRecoverableSchemaError(res.error.message)) break;
   }
   return [];
 }
@@ -232,6 +232,7 @@ export function normalizeSubmissionRow(row: Record<string, unknown>): TeacherSub
           email: String(uRec.email ?? ''),
           student_number: optTrimmedText(uRec.student_number),
           course_year: optTrimmedText(uRec.course_year),
+          avatar_url: optTrimmedText(uRec.avatar_url),
         }
       : null,
   };
@@ -353,6 +354,7 @@ async function enrichStudentRows(rows: TeacherSubmission[]): Promise<TeacherSubm
         email: resolvedEmail,
         student_number: optTrimmedText(u?.student_number) ?? s.users?.student_number ?? null,
         course_year: optTrimmedText(u?.course_year) ?? s.users?.course_year ?? null,
+        avatar_url: optTrimmedText(u?.avatar_url) ?? s.users?.avatar_url ?? null,
       },
     };
   });
@@ -424,6 +426,7 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
             email: u?.email ?? '',
             student_number: optTrimmedText(row.student_number) ?? optTrimmedText(u?.student_number),
             course_year: optTrimmedText(row.course_year) ?? optTrimmedText(u?.course_year),
+            avatar_url: optTrimmedText(u?.avatar_url),
           };
         })(),
       }))
@@ -432,9 +435,13 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
   }
 
   const joinSelectAttempts = [
+    '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year, avatar_url)',
     '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year)',
+    '*, assignments(title, document_type, due_date), users(full_name, email, avatar_url)',
     '*, assignments(title, document_type, due_date), users(full_name, email)',
+    '*, assignments(title, document_type), users(full_name, email, student_number, course_year, avatar_url)',
     '*, assignments(title, document_type), users(full_name, email, student_number, course_year)',
+    '*, assignments(title, document_type), users(full_name, email, avatar_url)',
     '*, assignments(title, document_type), users(full_name, email)',
   ];
 

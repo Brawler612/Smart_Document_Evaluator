@@ -56,6 +56,52 @@ function resolveRole(email: string, metaRole: unknown, existingRole?: UserRole):
   return normalizeRole(metaRole);
 }
 
+/** Pull the most likely profile-picture URL out of any OAuth metadata blob (deep keys + identities). */
+function extractAvatarUrl(...sources: Array<Record<string, unknown> | null | undefined>): string | null {
+  const keys = ['picture', 'avatar_url', 'photoURL', 'photo', 'profile_picture', 'profilePicture'];
+  const seen = new Set<Record<string, unknown>>();
+  const queue: Array<Record<string, unknown>> = [];
+  for (const src of sources) {
+    if (src && typeof src === 'object') queue.push(src);
+  }
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    for (const k of keys) {
+      const v = node[k];
+      if (typeof v === 'string' && /^https?:\/\//i.test(v.trim())) return v.trim();
+    }
+    /** Walk one level deep into nested OAuth blobs (e.g. `identities[].identity_data`, `app_metadata.providers`). */
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) {
+        for (const entry of v) {
+          if (entry && typeof entry === 'object') queue.push(entry as Record<string, unknown>);
+        }
+      } else if (v && typeof v === 'object') {
+        queue.push(v as Record<string, unknown>);
+      }
+    }
+  }
+  return null;
+}
+
+/** Build the full search space (`user_metadata` + `app_metadata` + each identity row) for picture lookup. */
+function gatherAvatarSources(authUser: User): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>;
+  const app = ((authUser as unknown as { app_metadata?: Record<string, unknown> }).app_metadata ?? {}) as Record<string, unknown>;
+  out.push(meta);
+  out.push(app);
+  const ids = (authUser as unknown as { identities?: Array<Record<string, unknown>> }).identities;
+  if (Array.isArray(ids)) {
+    for (const id of ids) {
+      if (id && typeof id === 'object') out.push(id);
+    }
+  }
+  return out;
+}
+
 function fallbackProfile(authUser: User): AppUser {
   const email = authUser.email ?? '';
   const meta = authUser.user_metadata ?? {};
@@ -65,12 +111,17 @@ function fallbackProfile(authUser: User): AppUser {
     email.split('@')[0] ||
     'User';
   const role = resolveRole(email, meta.role);
+  const avatar_url = extractAvatarUrl(...gatherAvatarSources(authUser));
+  if (import.meta.env.DEV && !avatar_url) {
+    console.warn('[auth] No profile picture found in OAuth metadata for', email, '— user_metadata keys:', Object.keys(meta));
+  }
   return {
     id: authUser.id,
     email,
     full_name,
     role,
     created_at: new Date().toISOString(),
+    avatar_url,
   };
 }
 
@@ -95,6 +146,7 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     (email ? email.split('@')[0] : '');
 
   const roster = rosterFieldsFromOAuthMetadata(meta as Record<string, unknown>);
+  const avatar_url = extractAvatarUrl(...gatherAvatarSources(authUser));
 
   if (existing) {
     const patch: {
@@ -103,6 +155,7 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
       full_name?: string;
       student_number?: string | null;
       course_year?: string | null;
+      avatar_url?: string | null;
     } = {};
     if (existing.role !== roleFromConfig) patch.role = roleFromConfig;
     if (email && existing.email !== email) patch.email = email;
@@ -113,14 +166,25 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     if (roster.course_year && roster.course_year !== existing.course_year) {
       patch.course_year = roster.course_year;
     }
+    if (avatar_url && existing.avatar_url !== avatar_url) patch.avatar_url = avatar_url;
 
     if (Object.keys(patch).length > 0) {
       const { data, error } = await supabase.from('users').update(patch).eq('id', existing.id).select().maybeSingle();
-      if (!error && data) return data;
+      if (!error && data) return { ...data, avatar_url: data.avatar_url ?? avatar_url ?? existing.avatar_url ?? null };
+      /** Likely cause if this fails on `avatar_url`: column is missing — retry without it so older DBs still sync the rest. */
+      if (error && /avatar_url/i.test(error.message ?? '')) {
+        const { avatar_url: _ignored, ...rest } = patch;
+        void _ignored;
+        if (Object.keys(rest).length > 0) {
+          const retry = await supabase.from('users').update(rest).eq('id', existing.id).select().maybeSingle();
+          if (!retry.error && retry.data) return { ...retry.data, avatar_url };
+        }
+        return { ...existing, ...patch, avatar_url };
+      }
       if (error && import.meta.env.DEV) console.warn('[auth] Profile sync failed:', error.message);
       if (error) return { ...existing, ...patch };
     }
-    return existing;
+    return { ...existing, avatar_url: existing.avatar_url ?? avatar_url ?? null };
   }
 
   const full_name = resolvedFullName || email.split('@')[0] || 'User';
@@ -133,6 +197,7 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
   };
   if (roster.student_number) insertRow.student_number = roster.student_number;
   if (roster.course_year) insertRow.course_year = roster.course_year;
+  if (avatar_url) insertRow.avatar_url = avatar_url;
 
   const { data, error } = await supabase
     .from('users')
@@ -141,10 +206,17 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     .maybeSingle();
 
   if (error) {
+    /** Retry once without avatar_url so legacy schemas without the column still create the profile. */
+    if (/avatar_url/i.test(error.message ?? '')) {
+      const { avatar_url: _drop, ...rest } = insertRow as Record<string, unknown>;
+      void _drop;
+      const retry = await supabase.from('users').upsert(rest, { onConflict: 'id' }).select().maybeSingle();
+      if (!retry.error && retry.data) return { ...retry.data, avatar_url };
+    }
     if (import.meta.env.DEV) console.warn('[auth] Could not upsert user profile — using auth metadata only:', error.message);
     return fallbackProfile(authUser);
   }
-  return data ?? fallbackProfile(authUser);
+  return data ? { ...data, avatar_url: data.avatar_url ?? avatar_url ?? null } : fallbackProfile(authUser);
 }
 
 const PROFILE_LOAD_MS = 18_000;

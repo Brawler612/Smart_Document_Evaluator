@@ -20,6 +20,7 @@ import { performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest'
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
 import TeacherSubmissionRosterTable from '../../components/teacher/TeacherSubmissionRosterTable';
+import UserAvatar from '../../components/UserAvatar';
 import {
   TeacherAmberCue,
   TeacherPageHeader,
@@ -46,13 +47,6 @@ const STATUS_LABEL: Record<SubStatus, string> = {
   resubmit: 'Resubmit requested',
 };
 
-function initials(name: string): string {
-  const p = name.trim().split(/\s+/).filter(Boolean);
-  if (p.length >= 2) return (p[0][0] + p[p.length - 1][0]).toUpperCase().slice(0, 2);
-  if (p.length === 1 && p[0].length >= 2) return p[0].slice(0, 2).toUpperCase();
-  return p[0]?.[0]?.toUpperCase() ?? '?';
-}
-
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
@@ -74,25 +68,38 @@ export default function StudentSubmissions() {
   const [filter, setFilter] = useState<SubStatus | 'all'>('all');
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  /** Manual Sync spinner. Independent from `loading` so we never flash the table skeleton on a refresh. */
+  const [syncing, setSyncing] = useState(false);
   /** Brief highlight after deep-link from Inbox (Review). */
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const [viewScoreOpen, setViewScoreOpen] = useState<{ row: TeacherSubmission; focus: 'ai' | 'teacher' } | null>(null);
 
-  async function load() {
-    setLoading(true);
+  /**
+   * `silent` keeps the existing rows visible while we re-fetch, so deletes and visibility refreshes
+   * don't trigger the full-table skeleton (which scrolls the user back to the top).
+   */
+  async function load(options: { silent?: boolean } = {}) {
+    if (!options.silent) setLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
       setRows(await fetchTeacherSubmissionRows());
     } catch (e) {
       console.error('[student-submissions]', e);
-      setRows([]);
+      if (!options.silent) setRows([]);
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    /** Re-pull silently when the tab regains focus so other-tab edits surface without a flash. */
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void load({ silent: true });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+     
   }, []);
 
   const filtered = useMemo(() => {
@@ -175,7 +182,9 @@ export default function StudentSubmissions() {
         alert(result.message);
         return;
       }
-      await load();
+      /** Optimistic chip flip so the user keeps their place without waiting on a refetch. */
+      setRows((prev) => prev.map((row) => (row.id === s.id ? { ...row, status: 'resubmit' } : row)));
+      void load({ silent: true });
     } finally {
       setResubmitSavingId(null);
     }
@@ -184,6 +193,8 @@ export default function StudentSubmissions() {
   async function deleteSubmissionRow(s: TeacherSubmission) {
     if (!window.confirm(`Delete "${s.file_name}" permanently? This cannot be undone.`)) return;
     setDeleteBusyId(s.id);
+    /** Optimistic remove so the page stays steady at the user's scroll position. */
+    setRows((prev) => prev.filter((row) => row.id !== s.id));
     try {
       const result = await deleteTeacherSubmissionsByIds([s.id], {
         purgeLocalDuplicatesOf: [{ student_id: s.student_id, file_name: s.file_name, file_url: s.file_url }],
@@ -193,7 +204,7 @@ export default function StudentSubmissions() {
           `Could not delete from database: ${result.message}\n\nIf permission was denied, add the teacher DELETE policy (see docs/supabase-rls-submissions-teacher-delete.sql).`
         );
       }
-      await load();
+      void load({ silent: true });
     } finally {
       setDeleteBusyId(null);
     }
@@ -280,11 +291,19 @@ export default function StudentSubmissions() {
           <>
             <button
               type="button"
-              onClick={() => void load()}
-              disabled={loading}
+              onClick={async () => {
+                if (syncing) return;
+                setSyncing(true);
+                try {
+                  await load({ silent: true });
+                } finally {
+                  setSyncing(false);
+                }
+              }}
+              disabled={syncing}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} aria-hidden />
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} aria-hidden />
               Sync roster
             </button>
             <button
@@ -445,12 +464,16 @@ export default function StudentSubmissions() {
                         >
                           <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
                             <div className="flex items-start gap-3 min-w-0 flex-1">
-                              <div
-                                className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#84001B] to-[#5c0014] text-white flex items-center justify-center text-xs font-bold shrink-0 shadow-inner"
-                                aria-hidden
-                              >
-                                {initials(name)}
-                              </div>
+                              <UserAvatar
+                                src={s.users?.avatar_url}
+                                name={name}
+                                email={mail}
+                                size={44}
+                                rounded="2xl"
+                                className="shadow-inner"
+                                fallbackBg="bg-gradient-to-br from-[#84001B] to-[#5c0014]"
+                                fallbackFg="text-white"
+                              />
                               <div className="min-w-0">
                                 <Link
                                   to={gradingLinkForSubmission(s.id)}

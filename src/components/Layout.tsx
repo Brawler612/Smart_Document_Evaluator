@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
 import StudentRateUsButton from './student/StudentRateUsButton';
 import StudentOnboardingTour from './student/StudentOnboardingTour';
+import UserAvatar from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 
 class OutletErrorBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -39,16 +40,20 @@ class OutletErrorBoundary extends Component<{ children: ReactNode }, { err: Erro
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user } = useAuth();
-  const initials = user?.full_name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'U';
   /** Student portal only — teachers and admins never see the floating Rate Us pill. */
   const isStudent = !!user && user.role !== 'teacher' && user.role !== 'admin';
 
   return (
     <>
     <div className="fixed top-4 right-5 z-40 hidden md:flex items-center gap-2.5 bg-white border border-gray-200 rounded-[9px] px-3 py-1.5 shadow-sm">
-      <div className="w-7 h-7 bg-gray-300 rounded-full flex items-center justify-center flex-shrink-0 text-gray-600 text-[11px] font-bold select-none">
-        {initials}
-      </div>
+      <UserAvatar
+        src={user?.avatar_url}
+        name={user?.full_name}
+        email={user?.email}
+        size={28}
+        fallbackBg="bg-gray-300"
+        fallbackFg="text-gray-600"
+      />
       <div className="leading-tight">
         <p className="text-xs font-semibold text-gray-600 truncate max-w-[140px]">{user?.full_name}</p>
         <p className="text-[10px] text-gray-400 truncate max-w-[140px]">{user?.email}</p>
