@@ -26,6 +26,116 @@
 
 ---
 
+## Frontend
+
+The frontend is a **client-rendered SPA** that lives entirely in `src/`. There is no Node.js web server in this repo — the static build in `dist/` is what gets deployed.
+
+| Concern | How it works |
+|---------|---------------|
+| **App shell** | `src/App.tsx` registers routes inside `BrowserRouter`; `src/components/Layout.tsx` renders the sidebar, mobile header, student-only **Rate us** pill, and the **Eva** onboarding tour. |
+| **Routing** | [React Router 7](https://reactrouter.com/) with a single pathless `<Route element={<Layout />}>`. Role is computed in `AuthContext`; `student` and `teacher`/`admin` see different route trees. Legacy paths (`/schedule`, `/deliverables`, …) redirect to current ones. |
+| **State / data fetching** | React hooks + the [Supabase JS client](https://supabase.com/docs/reference/javascript) called directly from page/component code. No Redux/Zustand/React-Query. Per-flow caches (e.g. `classRosterCache`, `geminiAttachments`) live in `src/lib/`. |
+| **Auth context** | `src/context/AuthContext.tsx` wraps the app, runs the OAuth (PKCE) code exchange (`exchangeOAuthCodeOnce`), enforces student email-domain policy, and derives the `student` / `teacher` / `admin` role from Supabase plus optional env email lists. |
+| **Forms / inputs** | Native HTML + Tailwind. Validation lives next to the page. Toasts and modals are local components. |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) (`tailwind.config.js`, `postcss.config.js`), brand colors `#84001B` (maroon) and `#ffd21a` (yellow), [Lucide React](https://lucide.dev/) icons. |
+| **Document inspection** | `.docx` is read in the browser with [Mammoth](https://github.com/mwilliamson/mammoth.js) (`src/lib/docxText.ts`). PDFs / images / audio / video are not parsed client-side — they are uploaded to Supabase Storage and (when grading) shipped as `inlineData` to Gemini through `src/lib/geminiAttachments.ts`. |
+| **AI report UI** | `src/components/AIDocumentEvaluationReport.tsx` renders rubric scores, executive summary, key strengths/gaps, verified excerpts, **per-page Before → After**, **document overview & scoring**, **visual & diagram evaluation**, and language fixes. |
+| **Student UX extras** | `StudentRateUsButton.tsx` (floating Google Form / in-app modal) and `StudentOnboardingTour.tsx` (the **Eva** anime guide with typewriter steps). |
+| **Performance** | Vite code-splits per route; `lucide-react` is excluded from prebundling (`vite.config.ts`) to avoid huge dev preloads. |
+| **Build output** | `npm run build` emits a static SPA into `dist/`. The host (Vercel + `vercel.json`, Netlify + `public/_redirects`) must rewrite unknown routes to `index.html`. |
+
+**Frontend folders at a glance**
+
+```
+src/
+├─ App.tsx                      ← routes
+├─ components/
+│   ├─ Layout.tsx               ← shell + mounts Rate us + Eva (student-only)
+│   ├─ Sidebar.tsx              ← role-aware nav
+│   ├─ AIDocumentEvaluationReport.tsx
+│   ├─ SubmissionOpenLink.tsx
+│   ├─ student/
+│   │   ├─ StudentRateUsButton.tsx
+│   │   ├─ StudentOnboardingTour.tsx
+│   │   └─ StudentWorkspaceChrome.tsx
+│   └─ teacher/
+│       ├─ TeacherWorkspaceChrome.tsx
+│       ├─ TeacherSubmissionRosterTable.tsx
+│       └─ TeacherViewScoreModal.tsx
+├─ context/AuthContext.tsx      ← session, role, OAuth
+├─ lib/                         ← Supabase client + domain helpers (see Backend)
+├─ pages/
+│   ├─ Login.tsx
+│   ├─ student/                 ← Dashboard, Assignments, Submissions, …
+│   └─ teacher/                 ← Dashboard, ReviewQueue, Analytics, …
+└─ types/index.ts
+```
+
+---
+
+## Backend
+
+There is **no custom backend service** in this repo. The “backend” is composed of **Supabase** for data, auth, and files plus optional **Google services** for AI grading and survey feedback. Everything the client needs is reached over HTTPS using the public anon key, with **Row Level Security** enforcing access.
+
+### 1) Supabase (primary backend)
+
+| Component | Role |
+|----------|------|
+| **Auth** | Google OAuth (PKCE). The browser receives a session, `AuthContext` rehydrates it, and protected routes only render once a session exists. |
+| **Postgres** | App tables: `public.users` (profile + role), submissions, roster data, etc. Schemas and policies live in [`docs/`](docs/) — start with [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql). |
+| **Row Level Security (RLS)** | Required. Without RLS, the anon key would expose all rows. See [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql) if profile loads fail at sign-in. |
+| **Storage** | Bucket for student uploads (default name `student-submissions`, configurable via `VITE_SUBMISSION_STORAGE_BUCKET`). Policy SQL: [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql). |
+| **Realtime / Edge Functions** | Not used today; the client polls/queries directly. |
+
+**How the client talks to Supabase**
+
+```
+Browser ──HTTPS──▶ Supabase REST/Storage  (anon key, RLS-checked per request)
+       ◀──────── Postgres rows / signed file URLs / OAuth session
+```
+
+### 2) Google Gemini (optional AI backend)
+
+The teacher Run AI Evaluator flow can call Gemini in **two modes**:
+
+| Mode | Variable | Use it for | Notes |
+|------|----------|------------|-------|
+| **Server proxy (recommended in production)** | `VITE_GEMINI_EVAL_URL` | Production | POST JSON: `{ docType, content, template, attachments? }`. Response: the same JSON shape Gemini returns (`executiveSummary`, `criteria`, `languageCorrections`, `correctHighlights`, `pageRewrites`, `documentOverviewScores`, `diagramEvaluations`). Keep the real Gemini key on the server. |
+| **Direct REST (dev only)** | `VITE_GEMINI_API_KEY` + `VITE_GEMINI_MODEL` | Local development | The browser calls `https://generativelanguage.googleapis.com/...:generateContent`. The key ends up in the JS bundle, so **never use this in production**. |
+
+`src/lib/geminiDocumentEvaluation.ts` handles model fallbacks (Pro / Flash / Lite), high `maxOutputTokens`, concatenating all `parts[].text`, balanced-brace JSON extraction, prompt construction, normalization, and embedding a parseable JSON tail inside `ai_draft_summary` so reports survive after publish. `src/lib/geminiAttachments.ts` packages PDFs, images, audio, and video as `inlineData` content parts.
+
+**Without a proxy or key**, AI grading still works — it falls back to a heuristic rubric draft generated in the browser. The student/teacher UI labels this clearly.
+
+### 3) Google Forms (optional survey backend)
+
+The **Rate us** pill in the student portal opens the **Software Usability Feedback Survey** — a Google Form. Survey copy and structure are in [`docs/SoftwareUsabilitySurvey-StudentRateUs.md`](docs/SoftwareUsabilitySurvey-StudentRateUs.md), and [`scripts/google-forms/create-rate-us-form.gs`](scripts/google-forms/create-rate-us-form.gs) is an Apps Script that builds the entire form on your account in one run. Override the URL anytime with `VITE_STUDENT_RATE_US_URL`.
+
+### 4) Local-only tooling under `scripts/`
+
+These are **not** part of the runtime backend — they are Node scripts you run on a trusted machine.
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/check-env.mjs` | Validate `.env` shape |
+| `scripts/test-gemini.mjs` | Smoke-test Gemini credentials |
+| `scripts/apply-supabase-schema.mjs` | Apply SQL via `DATABASE_URL` |
+| `scripts/prompt-supabase-setup.mjs`, `scripts/prompt-supabase-fix-rls.mjs` | Interactive helpers |
+| `scripts/remove-mascot-white-matte.mjs` | Regenerate the transparent mascot PNG |
+| `scripts/google-forms/create-rate-us-form.gs` | Apps Script to auto-build the Google Form |
+
+### 5) Bring-your-own backend (recommended for AI)
+
+If you want to keep Gemini keys off the browser, add a tiny HTTPS endpoint anywhere (Vercel Edge / Cloud Run / Cloudflare Workers / your own Express) that:
+
+1. Accepts `POST` of `{ docType, content, template, attachments? }`.
+2. Calls Gemini server-side with your secret key.
+3. Returns the same JSON shape the client expects.
+
+Point the app at it with **`VITE_GEMINI_EVAL_URL`**. No other changes needed in this repo.
+
+---
+
 ## Architecture (high level)
 
 ```mermaid
@@ -224,6 +334,29 @@ npm run db:fix-rls
 - The **anon key** is safe in the browser only with correct **RLS** on all tables and storage policies. Never expose the **service role** key or `DATABASE_URL` in the client.
 - **Gemini:** for any public deployment, use **`VITE_GEMINI_EVAL_URL`** and keep API keys on a server you control. Browser `VITE_GEMINI_API_KEY` is for local development only.
 - Student uploads should use a **dedicated bucket** with policies scoped to the authenticated user (see storage SQL in `docs/`).
+
+---
+
+## Others
+
+Anything that isn't strictly “frontend” or “backend” but still ships with the project:
+
+| Topic | Where it lives | Notes |
+|-------|----------------|-------|
+| **Branding** | `index.html`, `public/`, `src/components/Layout.tsx` | App is branded **Smart Docs Validator** with a maroon + yellow palette. Update `<title>`, `favicon`, and any hard-coded headers if you fork. |
+| **Mascot (Eva)** | `public/mascot/eva-welcome.png`, `eva-welcome-nobg.png` | Used by `StudentOnboardingTour`. Regenerate the transparent version with `npm run mascot:strip-bg`. |
+| **Onboarding tour** | `src/components/student/StudentOnboardingTour.tsx` | Stores “seen” state in `localStorage`. Steps live in a `STEPS` array — edit text/icons there. |
+| **Rate us survey** | `docs/SoftwareUsabilitySurvey-StudentRateUs.md`, `scripts/google-forms/create-rate-us-form.gs` | Full question bank + Apps Script generator. Override the live URL with `VITE_STUDENT_RATE_US_URL`. |
+| **Custom domain** | [`CNAME`](CNAME) | Documents `www.smartformevaluator.com` as the production domain. Change this for your own DNS. |
+| **Hosting config** | [`vercel.json`](vercel.json), [`DEPLOY.md`](DEPLOY.md), `public/_redirects` | SPA rewrites for Vercel and Netlify-style hosts. |
+| **Docs** | [`docs/`](docs/) | SQL bootstrap, RLS fixes, storage policies, survey copy, and the SRS. Read these before deploying to a new Supabase project. |
+| **Scripts** | [`scripts/`](scripts/) | All Node/Apps-Script utilities; see the Backend → *Local-only tooling* table. |
+| **Build artifacts** | `dist/` | Generated by `npm run build`; never commit. Already in `.gitignore`. |
+| **Type-checking** | `tsconfig*.json`, `npm run typecheck` | Strict TS via `tsc --noEmit`; CI/host build will fail on TS errors. |
+| **Linting** | `eslint.config.js`, `npm run lint` | Flat ESLint 9 config with `typescript-eslint` + React hooks/refresh plugins. |
+| **Accessibility** | Tailwind + native semantics | Buttons have `aria-label`s where icon-only; the Eva tour can be skipped and minimized; toasts are non-blocking. |
+| **Internationalization** | English-only today | All copy is inline. Wrap with i18n if you need locales. |
+| **Telemetry** | None bundled | Add your own (Plausible, PostHog, etc.) if you need analytics. |
 
 ---
 
