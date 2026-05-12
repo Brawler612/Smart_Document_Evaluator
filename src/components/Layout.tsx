@@ -2,6 +2,8 @@ import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
+import StudentRateUsButton from './student/StudentRateUsButton';
+import StudentOnboardingTour from './student/StudentOnboardingTour';
 import { useAuth } from '../context/AuthContext';
 
 class OutletErrorBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -38,6 +40,8 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user } = useAuth();
   const initials = user?.full_name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'U';
+  /** Student portal only — teachers and admins never see the floating Rate Us pill. */
+  const isStudent = !!user && user.role !== 'teacher' && user.role !== 'admin';
 
   return (
     <>
@@ -78,6 +82,8 @@ export default function Layout() {
         </main>
       </div>
     </div>
+    {isStudent && <StudentRateUsButton />}
+    {isStudent && <StudentOnboardingTour />}
     </>
   );
 }
