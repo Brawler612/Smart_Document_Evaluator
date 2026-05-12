@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { syncLocalSubmissionsToSupabase } from './localSubmissionSync';
 import { getStudentHiddenSubmissionIds } from './studentDeleteSubmission';
@@ -93,40 +93,78 @@ async function safeFetchSubmissions(studentId: string): Promise<StudentSubmissio
   return [];
 }
 
+function assignmentsSignature(rows: StudentAssignmentRow[]): string {
+  if (rows.length === 0) return '0';
+  let out = String(rows.length);
+  for (const r of rows) out += `|${r.id}:${r.title}:${r.due_date ?? ''}:${r.status}:${r.max_score ?? ''}`;
+  return out;
+}
+
+function submissionsSignature(rows: StudentSubmissionRow[]): string {
+  if (rows.length === 0) return '0';
+  let out = String(rows.length);
+  for (const r of rows) {
+    out += `|${r.id}:${r.status}:${r.score ?? ''}:${r.submitted_at}`;
+  }
+  return out;
+}
+
 /** Single source of truth for the student workspace pages. Fetches the student's submissions + active assignments. */
 export function useStudentWorkspace(): StudentWorkspaceData {
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<StudentAssignmentRow[]>([]);
   const [submissions, setSubmissions] = useState<StudentSubmissionRow[]>([]);
+  /** Tracks whether we've completed the first successful fetch — used to keep refreshes silent. */
+  const hasLoadedRef = useRef(false);
+  /** Signatures cache so identical refetches don't trigger re-renders across consumer pages. */
+  const assignmentsSigRef = useRef('');
+  const submissionsSigRef = useRef('');
 
   const refresh = useCallback(async () => {
-    if (!user?.id) {
+    if (!userId) {
+      assignmentsSigRef.current = '';
+      submissionsSigRef.current = '';
       setAssignments([]);
       setSubmissions([]);
       setLoading(false);
+      hasLoadedRef.current = true;
       return;
     }
-    setLoading(true);
+    /** Only flip the skeleton on the very first load. Background refreshes stay silent so pages don't flash. */
+    const firstLoad = !hasLoadedRef.current;
+    if (firstLoad) setLoading(true);
     setError(null);
     try {
       try {
-        await syncLocalSubmissionsToSupabase(user.id);
+        await syncLocalSubmissionsToSupabase(userId);
       } catch {
         /* best-effort sync; ignore failures */
       }
-      const [a, s] = await Promise.all([safeFetchAssignments(), safeFetchSubmissions(user.id)]);
+      const [a, s] = await Promise.all([safeFetchAssignments(), safeFetchSubmissions(userId)]);
       /** Honor the per-browser soft-delete set so removed rows disappear everywhere. */
       const hidden = getStudentHiddenSubmissionIds();
-      setAssignments(a);
-      setSubmissions(hidden.size === 0 ? s : s.filter((row) => !hidden.has(row.id)));
+      const nextSubmissions = hidden.size === 0 ? s : s.filter((row) => !hidden.has(row.id));
+
+      const aSig = assignmentsSignature(a);
+      if (aSig !== assignmentsSigRef.current) {
+        assignmentsSigRef.current = aSig;
+        setAssignments(a);
+      }
+      const sSig = submissionsSignature(nextSubmissions);
+      if (sSig !== submissionsSigRef.current) {
+        submissionsSigRef.current = sSig;
+        setSubmissions(nextSubmissions);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load workspace');
     } finally {
-      setLoading(false);
+      if (firstLoad) setLoading(false);
+      hasLoadedRef.current = true;
     }
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
     void refresh();
@@ -141,9 +179,13 @@ export function useStudentWorkspace(): StudentWorkspaceData {
     function handleRemoved(e: Event) {
       const detail = (e as CustomEvent<{ id?: string }>).detail;
       if (detail?.id) {
-        setSubmissions((rows) => rows.filter((r) => r.id !== detail.id));
+        setSubmissions((rows) => {
+          const next = rows.filter((r) => r.id !== detail.id);
+          submissionsSigRef.current = submissionsSignature(next);
+          return next;
+        });
       }
-      /** Also re-pull from Supabase to catch any hard-delete that happened. */
+      /** Re-pull silently to catch any hard-delete that happened. */
       void refresh();
     }
     window.addEventListener(STUDENT_SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);

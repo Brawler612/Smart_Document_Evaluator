@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Search,
@@ -84,6 +84,28 @@ function downloadTextFile(filename: string, body: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Min ms between background refreshes — stops a fresh refetch every time the tab regains focus. */
+const BACKGROUND_REFRESH_MIN_GAP_MS = 30_000;
+
+function signatureForStudents(rows: AppUser[]): string {
+  /** Cheap composite key: count + tab-separated id|name|team|status hints. */
+  if (rows.length === 0) return '0';
+  let out = String(rows.length);
+  for (const r of rows) {
+    out += `|${r.id}:${r.full_name ?? ''}:${r.team_code ?? ''}:${r.roster_pending ? 'P' : 'A'}`;
+  }
+  return out;
+}
+
+function signatureForSubmissions(rows: TeacherSubmission[]): string {
+  if (rows.length === 0) return '0';
+  let out = String(rows.length);
+  for (const r of rows) {
+    out += `|${r.id}:${r.status}:${r.updated_at ?? r.submitted_at}:${r.score ?? ''}`;
+  }
+  return out;
+}
+
 export default function UserManagement() {
   const [students, setStudents] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +123,10 @@ export default function UserManagement() {
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
   /** Tracks the manual Sync button without flashing the table skeleton. */
   const [syncing, setSyncing] = useState(false);
+  /** Last successful background fetch; throttles visibility-change refetches to stop flicker. */
+  const lastFetchedAtRef = useRef(0);
+  const studentsSignatureRef = useRef('');
+  const subRowsSignatureRef = useRef('');
 
   const studentsVisibleInDirectory = useMemo(
     () => students.filter((u) => !isStudentHiddenFromTeacherDirectory(u, removedLedger)),
@@ -132,30 +158,47 @@ export default function UserManagement() {
       const missingTbl = isUsersTableMissingError(error.message);
       setUsersTableMissing(missingTbl);
       setLoadError(error.message);
-      setStudents(
-        mergeIt332Sem2RosterWithDatabase(mergeStudentRosterPreferDb([], cachedStudents))
-      );
+      const next = mergeIt332Sem2RosterWithDatabase(mergeStudentRosterPreferDb([], cachedStudents));
+      const sig = signatureForStudents(next);
+      if (sig !== studentsSignatureRef.current) {
+        studentsSignatureRef.current = sig;
+        setStudents(next);
+      }
     } else {
       setLoadError(null);
-      setStudents(
-        mergeIt332Sem2RosterWithDatabase(
-          mergeStudentRosterPreferDb((data ?? []) as AppUser[], cachedStudents)
-        )
+      const next = mergeIt332Sem2RosterWithDatabase(
+        mergeStudentRosterPreferDb((data ?? []) as AppUser[], cachedStudents)
       );
+      const sig = signatureForStudents(next);
+      /** Skip the state write entirely when the fetched data matches what's already on screen. */
+      if (sig !== studentsSignatureRef.current) {
+        studentsSignatureRef.current = sig;
+        setStudents(next);
+      }
     }
     if (!options.silent) setLoading(false);
+    lastFetchedAtRef.current = Date.now();
   }, []);
 
   const refreshSubmissions = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!options.silent) setSubLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
-      setSubRows(await fetchTeacherSubmissionRows());
+      const next = await fetchTeacherSubmissionRows();
+      const sig = signatureForSubmissions(next);
+      if (sig !== subRowsSignatureRef.current) {
+        subRowsSignatureRef.current = sig;
+        setSubRows(next);
+      }
     } catch (e) {
       console.error('[class-list] submissions:', e);
-      if (!options.silent) setSubRows([]);
+      if (!options.silent) {
+        subRowsSignatureRef.current = '';
+        setSubRows([]);
+      }
     } finally {
       if (!options.silent) setSubLoading(false);
+      lastFetchedAtRef.current = Date.now();
     }
   }, []);
 
@@ -176,7 +219,10 @@ export default function UserManagement() {
 
   useEffect(() => {
     const refresh = () => {
-      if (document.visibilityState === 'visible') void refreshAll({ silent: true });
+      if (document.visibilityState !== 'visible') return;
+      /** Skip when we just refreshed; stops Alt-Tab from flickering numbers + tables. */
+      if (Date.now() - lastFetchedAtRef.current < BACKGROUND_REFRESH_MIN_GAP_MS) return;
+      void refreshAll({ silent: true });
     };
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);

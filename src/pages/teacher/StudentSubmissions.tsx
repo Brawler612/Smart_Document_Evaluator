@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   RefreshCw,
@@ -47,6 +47,19 @@ const STATUS_LABEL: Record<SubStatus, string> = {
   resubmit: 'Resubmit requested',
 };
 
+/** Min ms between background refreshes — prevents Alt-Tab from refetching and flickering the table. */
+const BACKGROUND_REFRESH_MIN_GAP_MS = 30_000;
+
+function submissionsSignature(rows: TeacherSubmission[]): string {
+  /** Cheap composite key: count + per-row id|status|updated_at|score so identical refetches are no-ops. */
+  if (rows.length === 0) return '0';
+  let out = String(rows.length);
+  for (const r of rows) {
+    out += `|${r.id}:${r.status}:${r.updated_at ?? r.submitted_at}:${r.score ?? ''}`;
+  }
+  return out;
+}
+
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
@@ -73,6 +86,9 @@ export default function StudentSubmissions() {
   /** Brief highlight after deep-link from Inbox (Review). */
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const [viewScoreOpen, setViewScoreOpen] = useState<{ row: TeacherSubmission; focus: 'ai' | 'teacher' } | null>(null);
+  /** Last successful fetch; gates the visibilitychange refetch to stop Alt-Tab flicker. */
+  const lastFetchedAtRef = useRef(0);
+  const rowsSignatureRef = useRef('');
 
   /**
    * `silent` keeps the existing rows visible while we re-fetch, so deletes and visibility refreshes
@@ -82,20 +98,32 @@ export default function StudentSubmissions() {
     if (!options.silent) setLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
-      setRows(await fetchTeacherSubmissionRows());
+      const next = await fetchTeacherSubmissionRows();
+      const sig = submissionsSignature(next);
+      /** Skip the state write entirely when the data is structurally identical to what's on screen. */
+      if (sig !== rowsSignatureRef.current) {
+        rowsSignatureRef.current = sig;
+        setRows(next);
+      }
     } catch (e) {
       console.error('[student-submissions]', e);
-      if (!options.silent) setRows([]);
+      if (!options.silent) {
+        rowsSignatureRef.current = '';
+        setRows([]);
+      }
     } finally {
       if (!options.silent) setLoading(false);
+      lastFetchedAtRef.current = Date.now();
     }
   }
 
   useEffect(() => {
     void load();
-    /** Re-pull silently when the tab regains focus so other-tab edits surface without a flash. */
+    /** Re-pull silently when the tab regains focus, but only if it's been a while. */
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') void load({ silent: true });
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastFetchedAtRef.current < BACKGROUND_REFRESH_MIN_GAP_MS) return;
+      void load({ silent: true });
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ClipboardList,
@@ -60,6 +60,8 @@ export default function TeacherDashboard() {
   const [recentSubs, setRecentSubs] = useState<SubmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
+  /** Marks that we've completed at least one fetch — subsequent refreshes stay silent (no stat blink). */
+  const hasLoadedRef = useRef(false);
 
   async function resolveSubmissionTable(): Promise<'submissions' | 'submission' | null> {
     if (submissionTable) return submissionTable;
@@ -78,7 +80,9 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
+      /** Only show the skeleton on the very first load. Refreshes (auth re-emits, etc.) stay silent. */
+      const firstLoad = !hasLoadedRef.current;
+      if (firstLoad) setLoading(true);
       const table = await resolveSubmissionTable();
       const [s, u] = await Promise.all([
         table
@@ -93,22 +97,50 @@ export default function TeacherDashboard() {
       const submissionRows = (s.data || []) as SubmissionRow[];
       const graded = submissionRows.filter((row) => row.status === 'reviewed').length;
 
-      setStats({
+      const nextStats = {
         needsGrading: submissionRows.filter((row) => row.status === 'submitted').length,
         inReview: submissionRows.filter((row) => row.status === 'under_review').length,
         students: u.count || 0,
         graded,
-      });
-      setStatusSummary({
+      };
+      const nextStatusSummary = {
         submitted: submissionRows.filter((row) => row.status === 'submitted').length,
         under_review: submissionRows.filter((row) => row.status === 'under_review').length,
         reviewed: submissionRows.filter((row) => row.status === 'reviewed').length,
         resubmit: submissionRows.filter((row) => row.status === 'resubmit').length,
+      };
+      /** Functional updates skip the state write when the numbers haven't changed, avoiding render churn. */
+      setStats((prev) =>
+        prev.needsGrading === nextStats.needsGrading &&
+        prev.inReview === nextStats.inReview &&
+        prev.students === nextStats.students &&
+        prev.graded === nextStats.graded
+          ? prev
+          : nextStats
+      );
+      setStatusSummary((prev) =>
+        prev.submitted === nextStatusSummary.submitted &&
+        prev.under_review === nextStatusSummary.under_review &&
+        prev.reviewed === nextStatusSummary.reviewed &&
+        prev.resubmit === nextStatusSummary.resubmit
+          ? prev
+          : nextStatusSummary
+      );
+      setRecentSubs((prev) => {
+        const next = submissionRows.slice(0, 6);
+        if (
+          prev.length === next.length &&
+          prev.every((row, i) => row.id === next[i].id && row.status === next[i].status)
+        ) {
+          return prev;
+        }
+        return next;
       });
-      setRecentSubs(submissionRows.slice(0, 6));
-      setLoading(false);
+      if (firstLoad) setLoading(false);
+      hasLoadedRef.current = true;
     })();
-  }, [user]);
+    /** Depend on user identity, not the object reference: AuthContext re-emits won't trigger refetches. */
+  }, [user?.id]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
