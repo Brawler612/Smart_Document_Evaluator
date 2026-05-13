@@ -15,6 +15,9 @@ dist-ssr
 .bolt
 .claude
 .commit-msg.tmp
+.commit-msg.clean
+.rewrite-head.mjs
+.verify-msg.txt
 
 .vscode/*
 !.vscode/extensions.json

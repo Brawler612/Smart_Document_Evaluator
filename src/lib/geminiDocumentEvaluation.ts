@@ -92,8 +92,11 @@ const AI_DRAFT_LANG_END = '\n__END_AI_DRAFT_LANG_JSON__';
 /** Max chars kept for `documentQualityNotes` in API parse + persisted JSON (aligned in both code paths). */
 const DOC_QUALITY_NOTES_MAX_CHARS = 14_000;
 
-/** Caps document text in the prompt (balance: context vs tokens / latency). */
-const MAX_BODY_CHARS = 56_000;
+/** Caps document text in the prompt (balance: context vs tokens / latency).
+ * Was 56_000; lowered to 24_000 so requests finish in 10–25s instead of timing
+ * out, and so the model has room to actually produce JSON instead of running
+ * out of output tokens partway through. PDFs still travel as inlineData parts. */
+const MAX_BODY_CHARS = 24_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -610,13 +613,11 @@ function buildPrompt(
       : 'No text was extracted from the file — judge the attached media below as the full submission:'
     : 'Submission text (this is all you may evaluate):';
 
-  return `You are Gemini, the sole automated document evaluator for this screen. You must judge ONLY from the submission below (text body AND any attached binary parts)—no outside sources. Write thorough, instructor-ready feedback: substantive paragraphs, concrete references to phrases, sections, pages, slides, frames, or images in the submission, and nuance when quality is mixed. Prefer depth and usefulness over brevity, while staying truthful to what appears in the text and the attached media.
-
-Never compress into one-liners: if a section risks sounding like a generic blurb, add specific evidence (short quotes, paraphrases, page/slide references, image descriptions, or “in section X you argue …”) until it reads like a careful human review.
+  return `You are Gemini, the AI document evaluator for this screen. Judge ONLY from the submission below (text body AND any attached binary parts) — no outside sources. Give a MEDIUM-length, instructor-ready review: concrete and grounded, but compact. Don't pad with generic praise; cite short evidence (quotes, paraphrases, page/section references, brief image descriptions) so each comment reads like a real reviewer's note. Stay strictly truthful — never invent details that are not in the submission.
 
 Document type label: ${docType}${attachmentManifest}${multimodalGuidance}
 
-Rubric (${rubric.length} criteria) — return one JSON object per rubric name. Each score is an integer from 0 through max inclusive. Every score must be justified by what is actually correct or incorrect IN the submission (text body or attached media): cite evidence (short quotes, paraphrases, or specific things visible/audible in the attachments tied to locations/ideas). Use the full range: high scores only when the submission clearly earns them on that criterion; low scores when requirements are missing, wrong, or weak. Each rubric comment must be 5–10 sentences mixing (a) what is done well or correctly where applicable and (b) what is wrong, thin, or incomplete where applicable—both grounded in the submission. Open with the main takeaway for that criterion, then unpack with examples.
+Rubric (${rubric.length} criteria) — return one JSON object per rubric name. Each score is an integer from 0 through max inclusive. Justify the score with what is actually correct or incorrect in the submission. Use the FULL 0..max range: high scores only when the submission clearly earns them on that criterion; low scores when requirements are missing, wrong, or weak. Each rubric comment is 2–4 sentences and must reference something specific in the submission. IMPORTANT: this is the only field that drives the student's grade — always include every rubric name with a real score, even if you have to skip optional sections to save space.
 
 ${JSON.stringify(rubric, null, 0)}
 
@@ -625,56 +626,60 @@ ${submissionLabel}
 ${hasTextBody ? truncateBody(content) : '(no text body extracted — rely on the attached media)'}
 ---
 
-Return ONLY valid JSON (no markdown code fences). Exact top-level keys (all keys required — use empty arrays [] or empty string "" where nothing applies):
+Return ONLY valid JSON (no markdown code fences, no prose outside the JSON object). Exact top-level keys (all keys required — use empty arrays [] or empty string "" where nothing applies):
 {"executiveSummary":"string","documentQualityNotes":"string","criteria":[{"name":"exact rubric name","score":number,"comment":"string"}],"languageCorrections":[{"category":"grammar|spelling|punctuation|wording|structure|clarity|completeness|other","before":"string","after":"string","note":"string"}],"correctHighlights":[{"excerpt":"string","verification":"string","rubricTie":"string"}],"pageRewrites":[{"page":1,"pageLabel":"Page 1 — Title","before":"string","after":"string","issues":["string"],"imagesObserved":["string"],"rubricTie":"string"}],"documentOverviewScores":[{"pageRange":"Pages 1–2 or Page 3","scoreOutOf10":9,"evaluation":"string"}],"diagramEvaluations":[{"diagram":"string","evaluation":"string","scoreOutOf10":10}]}
 
-executiveSummary rules (this field must be LONG — aim for roughly 500–1200 words before the two Strengths/Needs lines):
-- Write 5–9 substantial paragraphs (plain text, no markdown) BEFORE the Strengths/Needs lines. Cover, in order: (1) overall verdict and how well the document fits its apparent purpose; (2) content quality, claims, evidence, and accuracy grounded in the submission; (3) organization, flow, headings, and completeness vs the rubric expectations; (4) language, clarity, and polish; (5–7) optional extra paragraphs for longer or mixed-quality work—call out both strong and weak stretches with specific references; (8) if relevant, risks, ambiguities, or missing definitions the reader would still have.
-- Quote or closely paraphrase the submission where helpful; never invent facts not supported by the text.
-- Then on their own lines at the END (required for UI parsing — keep these two lines last):
-  Strengths: <comma-separated highlights, can be longer than a few words each>
-  Needs improvement: <comma-separated gaps>
-
-documentQualityNotes rules:
-- Three paragraphs (12–22 sentences total): first on systematic strengths and what already works; second on systematic issues (structure, completeness, argument, evidence, tone); third on cross-cutting patterns (e.g. recurring phrasing, consistency, audience fit). Ground every claim in the submission. Use "" only if truly redundant with executiveSummary.
-
-languageCorrections rules:
-- 8–16 items for important fixable issues when the text has them; each before = short verbatim from submission (or transcribed from an image / PDF / audio when no plain text body exists), after = improved wording, note should be 1–2 sentences explaining why the fix matters for clarity or professionalism. Fewer items if the text is very clean. If the submission contains no language at all (e.g. an image-only diagram), return an empty array.
-
-correctHighlights rules:
-- 6–12 items for things that are clearly correct, accurate, well argued, or meet rubric expectations. Each item:
-  - excerpt: a SHORT verbatim quote from the submission. For media-only evidence, write a short bracketed description instead, e.g. "[Image #2: ERD with 3 entities and correctly drawn 1-N link from User → Order]" or "[PDF page 4: bar chart compares CPU usage across four servers]".
-  - verification: 6–10 sentences explaining why this excerpt or media moment is correct or high quality, how it supports a fair score, what would weaken it if changed, and how it ties to rubric ideas (even if rubricTie is empty).
-  - rubricTie: optional exact rubric criterion name from the list above when this excerpt mainly supports that criterion; else "".
-- If the submission is mostly weak, return fewer items (minimum 0)—do not invent praise.
-
-documentOverviewScores rules (Gemini-style “Document overview & scoring” — long, structured, page-by-page like a professional review chat):
-- 6–${PAGE_OVERVIEW_MAX} rows when the submission has multiple pages or sections; one row can cover a single page ("Page 3") OR a natural spread ("Pages 5–7") when those pages share one theme (e.g. TOC + intro).
-- Each row: pageRange (human-readable), scoreOutOf10 (0–10 integer reflecting quality of THAT span), evaluation = 4–10 sentences with concrete evidence (names, acronyms, FR ids, stack mentions, legal refs, diagram types, table issues, bookmark errors like "Error! Bookmark not defined", etc.). Write like the detailed Gemini web assistant — dense, specific, instructive — not generic praise.
-- For PDFs / scans / images, tie each row to what is literally visible on those pages. For audio/video, pageRange can read "0:42–1:10" and evaluation describes what happens in that span.
-- Never invent page content; if a page is blank, say so and score low with explanation.
-
-diagramEvaluations rules (Gemini-style “Visual & diagram evaluation” table — separate from pageRewrites):
-- 0–${DIAGRAM_EVAL_MAX} rows listing EVERY distinct diagram, chart, screenshot, photo, wireframe, mock-up, DFD, ERD, sequence diagram, state diagram, architecture diagram, deployment diagram, or labeled figure the submission contains (across all pages). If none, return [].
-- Each row: diagram = short label (e.g. "DFD Level 0 (Context)"), evaluation = 4–8 sentences on correctness, clarity, notation, missing labels, consistency with text, and how it supports requirements; scoreOutOf10 = 0–10.
-- When a diagram is weak, be blunt in evaluation while staying grounded in what is visible.
-
-pageRewrites rules (this is the headline section students see in the AI evaluator — do it well):
-- Cover EVERY page of the submission in order. Use the explicit page numbers from PDFs / images / scanned pages; for .docx / text-only bodies, treat each major section or heading boundary as a page (start at 1 and increment for every section); for slide decks, the slide number IS the page; for audio / video, use a 1-indexed "moment" number and put the timestamp in pageLabel (e.g. "0:42 — demo of submit flow"). Aim for at least 6 entries when the submission has that much content; never skip pages just because they look similar. Hard cap of ${PAGE_REWRITE_MAX_ENTRIES} entries — if there are more, summarize remaining pages by grouping nearby pages together in ONE entry whose page is the first page and pageLabel says "Pages 18–24 — Appendix" etc.
-- For each page:
-  - page: 1-indexed integer (or first page in a group).
-  - pageLabel: short title that helps the student navigate, e.g. "Page 3 — 2.1 Functional Requirements" or "Slide 5 — Architecture Diagram" or "Moment 4 — 0:42 demo crash".
-  - before: 3–8 sentence FAITHFUL transcription / close summary of what the student wrote, drew, or showed on this page. Keep the student's terminology, headings, table contents, formulas, and any captions of figures. If the page is mostly a diagram or screenshot, describe what is depicted in detail.
-  - after: 3–8 sentence IMPROVED rewrite of the same page applying the fixes you'd recommend — better wording, missing requirements added, ambiguous terms defined, sentences combined or split for clarity, tables relabeled, figure captions corrected. Stay grounded: only add content that is consistent with the submission's intent. Do NOT invent new requirements, new diagrams, or new facts.
-  - issues: 1–5 short bullets calling out the concrete problems on this page (e.g. "FR-2 uses 'fast' instead of a measurable response-time budget"; "ERD lacks a primary key on the Orders entity"; "page numbering restarts").
-  - imagesObserved: 0–5 bullets describing every diagram / screenshot / photo / chart on this page and whether it actually supports the claim made nearby (e.g. "Class diagram has no multiplicity labels; relationships look ambiguous"). Empty array when the page has no visuals.
-  - rubricTie: optional exact rubric name from the list above when this page mostly drives one criterion (e.g. "Requirements completeness"); else "".
-- Cover ALL document kinds — SRS (Software Requirements Specification), SDD (Software Design Document), SPMP (Software Project Management Plan), STD (Software Test Documentation), test reports, lab reports, design documents, theses, screenshots, photographed handwritten work, slide decks, posters, datasheets — treat each the same: read every page, then produce a before → after rewrite for that page.
-- When the document has structural placeholders (table of contents, blank page, "Error! Bookmark not defined.", "Lorem ipsum", "TBD"), include a page entry that calls those out explicitly in issues and shows a healthy replacement in after.
+Length budget (KEEP RESPONSES MEDIUM — long answers get truncated and lose the grade):
+- executiveSummary: 2–3 short paragraphs (roughly 120–220 words) summarizing verdict, main strengths, and main weaknesses, with at least one specific reference to the submission. End with EXACTLY two final lines on their own lines (required for UI parsing):
+    Strengths: <comma-separated highlights>
+    Needs improvement: <comma-separated gaps>
+- documentQualityNotes: 2 short paragraphs (60–140 words total) on systemic strengths + systemic issues. Use "" only when redundant.
+- criteria: every rubric name, exactly once, with the 2–4 sentence comment. NEVER skip a criterion.
+- languageCorrections: 3–6 items for clearly fixable wording / grammar / clarity issues. before = short verbatim quote (or short bracketed description for media-only), after = improved wording, note = 1 short sentence. Empty array if the submission has no text.
+- correctHighlights: 3–5 items for things that are clearly correct or strong. excerpt = short verbatim quote (or brief bracketed description for media), verification = 2–3 sentences on why this is correct and what rubric idea it supports, rubricTie = exact rubric name or "".
+- pageRewrites: 3–6 entries covering the main pages / sections / slides / moments. For each: page = 1-indexed integer; pageLabel = short title; before = 1–3 sentence faithful summary of that page; after = 1–3 sentence improved rewrite that stays grounded in the submission; issues = 1–3 short bullets; imagesObserved = 0–3 short bullets when visuals exist (else []); rubricTie = exact rubric name or "". Group long documents into spans rather than producing 20+ entries — hard cap ${PAGE_REWRITE_MAX_ENTRIES}.
+- documentOverviewScores: 3–6 rows. pageRange = "Page N" or "Pages N–M" or a timestamp range; scoreOutOf10 = 0–10 integer; evaluation = 2–4 sentences with concrete evidence. Empty array if there is only one page.
+- diagramEvaluations: 0–4 rows for distinct diagrams / charts / screenshots / wireframes when present. diagram = short label; evaluation = 2–3 sentences; scoreOutOf10 = 0–10. Empty array if no visuals.
 
 Other rules:
 - Include every rubric name exactly once in criteria; names must match character-for-character (case-sensitive).
-- If the body is empty or too short to evaluate AND no usable media was attached, keep scores low, explain in comments, and return empty arrays where appropriate (pageRewrites may be empty in that case).`;
+- If the body is empty or too short AND no usable media was attached, still return real per-criterion scores (low if appropriate) plus a short executive summary; pageRewrites / diagramEvaluations may then be empty arrays.
+- If you start to run long, shorten the optional sections (pageRewrites, documentOverviewScores, diagramEvaluations, languageCorrections, correctHighlights, documentQualityNotes) FIRST — never sacrifice criteria scores or executiveSummary.`;
+}
+
+/**
+ * Minimal fallback prompt used after the rich prompt fails to return parseable
+ * JSON. Asks only for the rubric scores + a short executive summary so the
+ * student never sees the 2% heuristic fallback when Gemini is reachable.
+ */
+function buildMinimalPrompt(
+  docType: string,
+  content: string,
+  template: RubricCriterionRow[],
+  attachments: GeminiInlineAttachment[] = []
+): string {
+  const rubric = template.map((c) => ({ name: c.name, max: c.max }));
+  const hasTextBody = content.trim().length > 0;
+  const submissionLabel = attachments.length > 0
+    ? hasTextBody
+      ? 'Submission text (combined with attached media):'
+      : 'No text body — judge attached media:'
+    : 'Submission text:';
+  return `You are Gemini grading a student submission. Return ONLY a small JSON object with rubric scores and a brief executive summary. No markdown, no prose outside JSON.
+
+Document type: ${docType}
+${buildAttachmentManifest(attachments)}
+
+Rubric (use full 0..max range; score every name exactly once):
+${JSON.stringify(rubric, null, 0)}
+
+${submissionLabel}
+---
+${hasTextBody ? truncateBody(content) : '(no text — use attached media)'}
+---
+
+Return EXACTLY this shape (keep each comment 1–2 sentences, executive summary 2–4 sentences):
+{"executiveSummary":"<2-4 sentences ending with 'Strengths: ...' and 'Needs improvement: ...' on their own lines>","documentQualityNotes":"","criteria":[{"name":"exact rubric name","score":<int 0..max>,"comment":"<1-2 sentences grounded in the submission>"}],"languageCorrections":[],"correctHighlights":[],"pageRewrites":[],"documentOverviewScores":[],"diagramEvaluations":[]}`;
 }
 
 function isRetryableGeminiFailure(status: number, message: string): boolean {
@@ -742,7 +747,8 @@ async function callGeminiRestOnce(
   apiKey: string,
   model: string,
   prompt: string,
-  attachments: GeminiInlineAttachment[]
+  attachments: GeminiInlineAttachment[],
+  maxOutputTokens = 12_288
 ): Promise<ParsedPayload | null> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
@@ -756,8 +762,10 @@ async function callGeminiRestOnce(
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.42,
-        /** Large cap so per-page rewrites + overview + diagram table fit without truncation. */
-        maxOutputTokens: 65536,
+        /** Medium cap — large enough for the medium-length JSON in buildPrompt
+         * without inviting the model to stream a 60k-token essay that gets
+         * truncated mid-JSON and then can't be parsed. */
+        maxOutputTokens,
       },
     }),
   });
@@ -793,7 +801,8 @@ async function callGeminiRest(
   apiKey: string,
   model: string,
   prompt: string,
-  attachments: GeminiInlineAttachment[]
+  attachments: GeminiInlineAttachment[],
+  maxOutputTokens = 12_288
 ): Promise<ParsedPayload | null> {
   const candidates = geminiModelCandidates(model || 'gemini-2.5-flash', attachments.length > 0);
   let lastError: Error | null = null;
@@ -802,7 +811,7 @@ async function callGeminiRest(
     const maxAttempts = 4;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        return await callGeminiRestOnce(apiKey, tryModel, prompt, attachments);
+        return await callGeminiRestOnce(apiKey, tryModel, prompt, attachments, maxOutputTokens);
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
         const msg = lastError.message;
@@ -914,7 +923,31 @@ export async function runGeminiBackedEvaluation(options: {
     return null;
   }
 
-  const merged = normalizeCriteriaPayload(parsed, template);
+  let merged = normalizeCriteriaPayload(parsed, template);
+
+  /**
+   * If the rich/medium response failed to produce parseable rubric scores
+   * (truncated JSON, model returned prose, model returned an empty payload),
+   * fall back to a tiny "criteria + summary only" prompt with a smaller token
+   * budget. This is what stops every submission from defaulting to the 2%
+   * heuristic fallback when Gemini is reachable but the long prompt failed.
+   */
+  if (!merged && apiKey) {
+    try {
+      const minimal = buildMinimalPrompt(docType, content, template, attachments);
+      const fallbackParsed = await callGeminiRest(apiKey, model, minimal, attachments, 4_096);
+      const fallbackMerged = normalizeCriteriaPayload(fallbackParsed, template);
+      if (fallbackMerged) {
+        parsed = fallbackParsed;
+        merged = fallbackMerged;
+      }
+    } catch (fallbackErr) {
+      if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+        console.warn('[gemini] minimal-fallback prompt also failed:', fallbackErr);
+      }
+    }
+  }
+
   if (!merged) return null;
   let executiveSummary = normalizeExecutiveSummary(parsed);
   executiveSummary = enrichThinExecutiveSummary(executiveSummary, merged);

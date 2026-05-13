@@ -202,7 +202,7 @@ To grant **teacher** access instead, add the Gmail to **Vercel → Settings → 
 
 The latest schema lives in [`docs/`](docs/) (per-feature SQL files). To export a **complete dump** of the live Supabase database (schema **and** data), use the bundled helper:
 
-```bash
+   ```bash
 # 1. Set DATABASE_URL (Supabase → Project Settings → Database → Connection string)
 $env:DATABASE_URL = "postgresql://postgres.<ref>:<PASSWORD>@db.<ref>.supabase.co:5432/postgres"
 
