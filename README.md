@@ -1,138 +1,96 @@
 # Smart Document Evaluator
 
-**Smart Document Evaluator** (branded in the UI as **Smart Docs Validator**) is a web application for **course document workflows**: students sign in with Google, open assignments, upload submissions to **Supabase Storage**, and track grades and AI feedback; teachers use a **grading / review queue**, class roster tools, analytics, and optional **Google Gemini**–assisted rubric inspection with long-form output (executive summary, per-page before/after, document overview, diagram evaluation).
+**Smart Document Evaluator** (branded in the UI as **Smart Docs Validator**) is a private academic web application built for the **IT332 / CS342** course. Students sign in with Google, upload submissions to **Supabase Storage**, and view a structured **AI evaluation report** (rubric scores, executive summary, per-page Before → After fixes, visual & diagram review). Teachers use the **grading / review queue**, class roster tools, analytics, and the optional **Google Gemini** evaluator. Invited students also receive a branded invitation email via **Resend** when they're added to the class list.
+
+> **Production:** [`https://www.smartformevaluator.com`](https://www.smartformevaluator.com) (custom domain on Vercel)
+> **Vercel default URL:** [`https://smart-document-evalutator.vercel.app`](https://smart-document-evalutator.vercel.app)
 
 ---
 
-## Tech stack
+## Table of contents
 
-| Layer | Technology |
-|--------|------------|
-| **Runtime** | [Node.js](https://nodejs.org/) 18+ (LTS recommended) |
-| **Framework** | [React 18](https://react.dev/) |
-| **Language** | [TypeScript](https://www.typescriptlang.org/) 5.x |
-| **Bundler / dev server** | [Vite](https://vitejs.dev/) 5 |
-| **Routing** | [React Router](https://reactrouter.com/) 7 |
-| **Styling** | [Tailwind CSS](https://tailwindcss.com/) 3 + [PostCSS](https://postcss.org/) + [Autoprefixer](https://github.com/postcss/autoprefixer) |
-| **Icons** | [Lucide React](https://lucide.dev/) |
-| **Auth & backend** | [Supabase](https://supabase.com/) — Auth (Google OAuth, PKCE), Postgres, Row Level Security, Storage |
-| **Client SDK** | [`@supabase/supabase-js`](https://github.com/supabase/supabase-js) |
-| **Document text** | [`mammoth`](https://github.com/mwilliamson/mammoth.js) (`.docx` → HTML/text for inspection) |
-| **AI (optional)** | [Google Gemini](https://ai.google.dev/) via REST (`generativelanguage.googleapis.com`) or your own **`VITE_GEMINI_EVAL_URL`** proxy |
-| **Lint / types** | ESLint 9, `typescript-eslint`, `tsc --noEmit` |
-| **Deploy** | [Vercel](https://vercel.com/)–oriented (`vercel.json`, SPA rewrites); see [`DEPLOY.md`](DEPLOY.md) |
-
-**Dev-only tooling:** [`sharp`](https://sharp.pixelplumbing.com/) is used only for the `npm run mascot:strip-bg` script (PNG matte removal). It is not loaded in the browser bundle.
+1. [Complete tech stack (with version numbers)](#complete-tech-stack-with-version-numbers)
+2. [Architecture (high level)](#architecture-high-level)
+3. [Features](#features)
+4. [Test accounts / sample credentials](#test-accounts--sample-credentials)
+5. [Database export / dump](#database-export--dump)
+6. [Deployment instructions](#deployment-instructions)
+   - [Frontend (Vercel)](#frontend-vercel)
+   - [Backend (Supabase + Resend + Gemini)](#backend-supabase--resend--gemini)
+7. [Local development quick-start](#local-development-quick-start)
+8. [Environment variables](#environment-variables)
+9. [NPM scripts](#npm-scripts)
+10. [Project layout](#project-layout)
+11. [Class list & invitation emails](#class-list--invitation-emails)
+12. [Security notes](#security-notes)
+13. [License](#license)
 
 ---
 
-## Frontend
+## Complete tech stack (with version numbers)
 
-The frontend is a **client-rendered SPA** that lives entirely in `src/`. There is no Node.js web server in this repo — the static build in `dist/` is what gets deployed.
+> Versions below are the **exact resolved versions** from `package-lock.json` (the lockfile checked into the repo). Run `npm install` to reproduce.
 
-| Concern | How it works |
-|---------|---------------|
-| **App shell** | `src/App.tsx` registers routes inside `BrowserRouter`; `src/components/Layout.tsx` renders the sidebar, mobile header, student-only **Rate us** pill, and the **Eva** onboarding tour. |
-| **Routing** | [React Router 7](https://reactrouter.com/) with a single pathless `<Route element={<Layout />}>`. Role is computed in `AuthContext`; `student` and `teacher`/`admin` see different route trees. Legacy paths (`/schedule`, `/deliverables`, …) redirect to current ones. |
-| **State / data fetching** | React hooks + the [Supabase JS client](https://supabase.com/docs/reference/javascript) called directly from page/component code. No Redux/Zustand/React-Query. Per-flow caches (e.g. `classRosterCache`, `geminiAttachments`) live in `src/lib/`. |
-| **Auth context** | `src/context/AuthContext.tsx` wraps the app, runs the OAuth (PKCE) code exchange (`exchangeOAuthCodeOnce`), enforces student email-domain policy, and derives the `student` / `teacher` / `admin` role from Supabase plus optional env email lists. |
-| **Forms / inputs** | Native HTML + Tailwind. Validation lives next to the page. Toasts and modals are local components. |
-| **Styling** | [Tailwind CSS](https://tailwindcss.com/) (`tailwind.config.js`, `postcss.config.js`), brand colors `#84001B` (maroon) and `#ffd21a` (yellow), [Lucide React](https://lucide.dev/) icons. |
-| **Document inspection** | `.docx` is read in the browser with [Mammoth](https://github.com/mwilliamson/mammoth.js) (`src/lib/docxText.ts`). PDFs / images / audio / video are not parsed client-side — they are uploaded to Supabase Storage and (when grading) shipped as `inlineData` to Gemini through `src/lib/geminiAttachments.ts`. |
-| **AI report UI** | `src/components/AIDocumentEvaluationReport.tsx` renders rubric scores, executive summary, key strengths/gaps, verified excerpts, **per-page Before → After**, **document overview & scoring**, **visual & diagram evaluation**, and language fixes. |
-| **Student UX extras** | `StudentRateUsButton.tsx` (floating Google Form / in-app modal) and `StudentOnboardingTour.tsx` (the **Eva** anime guide with typewriter steps). |
-| **Performance** | Vite code-splits per route; `lucide-react` is excluded from prebundling (`vite.config.ts`) to avoid huge dev preloads. |
-| **Build output** | `npm run build` emits a static SPA into `dist/`. The host (Vercel + `vercel.json`, Netlify + `public/_redirects`) must rewrite unknown routes to `index.html`. |
+### Runtime / build tools
 
-**Frontend folders at a glance**
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **Node.js** | **18 LTS** (tested up to 22.x) | JavaScript runtime |
+| **npm** | **10+** | Package manager (ships with Node 18+) |
+| **TypeScript** | **5.6.3** | Static typing across the codebase |
+| **Vite** | **5.4.21** | Dev server + production bundler |
+| **PostCSS** | **8.5.14** | CSS pipeline |
+| **Autoprefixer** | **10.4.20** | CSS vendor prefixes |
+| **ESLint** | **9.12.0** | Linting (flat config) |
+| **typescript-eslint** | **8.8.1** | TS-aware lint rules |
+| **@eslint/js** | **9.12.0** | ESLint recommended JS rules |
+| **eslint-plugin-react-hooks** | **5.1.0-rc** | React hook rules |
+| **eslint-plugin-react-refresh** | **0.4.12** | Vite HMR safety |
+| **globals** | **15.11.0** | Globals presets for ESLint |
 
-```
-src/
-├─ App.tsx                      ← routes
-├─ components/
-│   ├─ Layout.tsx               ← shell + mounts Rate us + Eva (student-only)
-│   ├─ Sidebar.tsx              ← role-aware nav
-│   ├─ AIDocumentEvaluationReport.tsx
-│   ├─ SubmissionOpenLink.tsx
-│   ├─ student/
-│   │   ├─ StudentRateUsButton.tsx
-│   │   ├─ StudentOnboardingTour.tsx
-│   │   └─ StudentWorkspaceChrome.tsx
-│   └─ teacher/
-│       ├─ TeacherWorkspaceChrome.tsx
-│       ├─ TeacherSubmissionRosterTable.tsx
-│       └─ TeacherViewScoreModal.tsx
-├─ context/AuthContext.tsx      ← session, role, OAuth
-├─ lib/                         ← Supabase client + domain helpers (see Backend)
-├─ pages/
-│   ├─ Login.tsx
-│   ├─ student/                 ← Dashboard, Assignments, Submissions, …
-│   └─ teacher/                 ← Dashboard, ReviewQueue, Analytics, …
-└─ types/index.ts
-```
+### Frontend dependencies
 
----
+| Package | Version | Purpose |
+|---------|---------|---------|
+| **React** | **18.3.1** | UI framework |
+| **react-dom** | **18.3.1** | DOM renderer |
+| **@types/react** | **18.3.11** | React types |
+| **@types/react-dom** | **18.3.0** | React-DOM types |
+| **react-router-dom** | **7.15.0** | Client-side routing |
+| **@vitejs/plugin-react** | **4.3.2** | Vite React plugin |
+| **Tailwind CSS** | **3.4.17** | Utility CSS |
+| **lucide-react** | **0.344.0** | Icon set |
+| **mammoth** | **1.12.0** | Browser-side `.docx` parsing |
+| **@supabase/supabase-js** | **2.57.4** | Supabase browser/server SDK |
 
-## Backend
+### Backend / infrastructure (managed services + serverless)
 
-There is **no custom backend service** in this repo. The “backend” is composed of **Supabase** for data, auth, and files plus optional **Google services** for AI grading and survey feedback. Everything the client needs is reached over HTTPS using the public anon key, with **Row Level Security** enforcing access.
+| Service / library | Version | Role |
+|---|---|---|
+| **Supabase Postgres** | **15.x** (managed) | App database (Row-Level-Security) |
+| **Supabase Auth** | Current (Gotrue v2) | Google OAuth (PKCE) |
+| **Supabase Storage** | Current | Student upload bucket |
+| **Vercel Functions** | Node runtime (latest) | Serverless `api/send-invitation-email.ts` |
+| **Resend** | API v1 | Transactional email (DKIM-signed) |
+| **nodemailer** | **8.0.7** | Gmail SMTP fallback (`invite:gmail`) |
+| **Google Gemini** | `gemini-2.5-flash` (configurable) | Optional AI evaluator |
+| **Google Forms** | n/a | Optional Rate-us survey backend |
 
-### 1) Supabase (primary backend)
+### CLI / dev tooling (devDependencies)
 
-| Component | Role |
-|----------|------|
-| **Auth** | Google OAuth (PKCE). The browser receives a session, `AuthContext` rehydrates it, and protected routes only render once a session exists. |
-| **Postgres** | App tables: `public.users` (profile + role), submissions, roster data, etc. Schemas and policies live in [`docs/`](docs/) — start with [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql). |
-| **Row Level Security (RLS)** | Required. Without RLS, the anon key would expose all rows. See [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql) if profile loads fail at sign-in. |
-| **Storage** | Bucket for student uploads (default name `student-submissions`, configurable via `VITE_SUBMISSION_STORAGE_BUCKET`). Policy SQL: [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql). |
-| **Realtime / Edge Functions** | Not used today; the client polls/queries directly. |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| **pg** | **8.20.0** | Postgres client for `npm run db:apply` |
+| **sharp** | **0.34.5** | Mascot PNG matte removal (`npm run mascot:strip-bg`) |
 
-**How the client talks to Supabase**
+### Hosting / DNS
 
-```
-Browser ──HTTPS──▶ Supabase REST/Storage  (anon key, RLS-checked per request)
-       ◀──────── Postgres rows / signed file URLs / OAuth session
-```
-
-### 2) Google Gemini (optional AI backend)
-
-The teacher Run AI Evaluator flow can call Gemini in **two modes**:
-
-| Mode | Variable | Use it for | Notes |
-|------|----------|------------|-------|
-| **Server proxy (recommended in production)** | `VITE_GEMINI_EVAL_URL` | Production | POST JSON: `{ docType, content, template, attachments? }`. Response: the same JSON shape Gemini returns (`executiveSummary`, `criteria`, `languageCorrections`, `correctHighlights`, `pageRewrites`, `documentOverviewScores`, `diagramEvaluations`). Keep the real Gemini key on the server. |
-| **Direct REST (dev only)** | `VITE_GEMINI_API_KEY` + `VITE_GEMINI_MODEL` | Local development | The browser calls `https://generativelanguage.googleapis.com/...:generateContent`. The key ends up in the JS bundle, so **never use this in production**. |
-
-`src/lib/geminiDocumentEvaluation.ts` handles model fallbacks (Pro / Flash / Lite), high `maxOutputTokens`, concatenating all `parts[].text`, balanced-brace JSON extraction, prompt construction, normalization, and embedding a parseable JSON tail inside `ai_draft_summary` so reports survive after publish. `src/lib/geminiAttachments.ts` packages PDFs, images, audio, and video as `inlineData` content parts.
-
-**Without a proxy or key**, AI grading still works — it falls back to a heuristic rubric draft generated in the browser. The student/teacher UI labels this clearly.
-
-### 3) Google Forms (optional survey backend)
-
-The **Rate us** pill in the student portal opens the **Software Usability Feedback Survey** — a Google Form. Survey copy and structure are in [`docs/SoftwareUsabilitySurvey-StudentRateUs.md`](docs/SoftwareUsabilitySurvey-StudentRateUs.md), and [`scripts/google-forms/create-rate-us-form.gs`](scripts/google-forms/create-rate-us-form.gs) is an Apps Script that builds the entire form on your account in one run. Override the URL anytime with `VITE_STUDENT_RATE_US_URL`.
-
-### 4) Local-only tooling under `scripts/`
-
-These are **not** part of the runtime backend — they are Node scripts you run on a trusted machine.
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/check-env.mjs` | Validate `.env` shape |
-| `scripts/test-gemini.mjs` | Smoke-test Gemini credentials |
-| `scripts/apply-supabase-schema.mjs` | Apply SQL via `DATABASE_URL` |
-| `scripts/prompt-supabase-setup.mjs`, `scripts/prompt-supabase-fix-rls.mjs` | Interactive helpers |
-| `scripts/remove-mascot-white-matte.mjs` | Regenerate the transparent mascot PNG |
-| `scripts/google-forms/create-rate-us-form.gs` | Apps Script to auto-build the Google Form |
-
-### 5) Bring-your-own backend (recommended for AI)
-
-If you want to keep Gemini keys off the browser, add a tiny HTTPS endpoint anywhere (Vercel Edge / Cloud Run / Cloudflare Workers / your own Express) that:
-
-1. Accepts `POST` of `{ docType, content, template, attachments? }`.
-2. Calls Gemini server-side with your secret key.
-3. Returns the same JSON shape the client expects.
-
-Point the app at it with **`VITE_GEMINI_EVAL_URL`**. No other changes needed in this repo.
+| Component | Provider | Notes |
+|---|---|---|
+| **Frontend hosting** | Vercel (free / Hobby) | Auto-deploys from `main` |
+| **Domain registrar** | GoDaddy | Domain: `smartformevaluator.com` |
+| **DNS** | Vercel nameservers (`ns1.vercel-dns.com`, `ns2.vercel-dns.com`) | Auto-issues SSL via Let's Encrypt |
+| **Email DNS records** | Vercel DNS | Resend domain `send.smartformevaluator.com` (DKIM + SPF MX + SPF TXT) |
 
 ---
 
@@ -142,31 +100,46 @@ Point the app at it with **`VITE_GEMINI_EVAL_URL`**. No other changes needed in 
 flowchart LR
   subgraph client [Browser SPA]
     UI[React pages + Layout]
-    Auth[AuthContext + Supabase Auth]
-    Store[Supabase client + Storage uploads]
+    Auth[AuthContext + access gate]
+    Store[Supabase client + uploads]
     AI[Gemini eval + AIDocumentEvaluationReport]
+    Notifier[InvitedStudentEmailNotifier]
+  end
+  subgraph vercel [Vercel]
+    SPA[Static SPA]
+    Fn["/api/send-invitation-email"]
   end
   subgraph supa [Supabase]
     PG[(Postgres + RLS)]
     ST[Storage bucket]
-    SA[Auth / OAuth]
+    SA[Auth / Google OAuth]
   end
-  subgraph google [Optional]
+  subgraph google [Google services]
     GEM[Gemini API or custom eval URL]
-    FORM[Google Forms Rate Us]
+    FORM[Google Forms Rate us]
+  end
+  subgraph mail [Email]
+    RS[Resend transactional]
+    SMTP[Gmail SMTP fallback]
   end
   UI --> Auth
   UI --> Store
   UI --> AI
+  UI --> Notifier
+  Notifier --> Fn
+  Fn --> RS
   Auth --> SA
   Store --> PG
   Store --> ST
   AI --> GEM
   UI --> FORM
+  SPA -.-> UI
+  SMTP -.fallback.-> RS
 ```
 
-- **Single-page app (SPA)** — all routes render inside `Layout` after login; role (`student` | `teacher` | `admin`) gates which routes exist.
-- **Environment variables** — any `VITE_*` value is inlined at **build time**; production hosts must set the same keys in their build environment (never rely on a committed `.env` in production).
+- **Single-page app (SPA)** — all routes render inside `Layout` after sign-in; role (`student` | `teacher` | `admin`) gates which routes exist.
+- **Access gate** — student sign-in is restricted to the gmails in `src/data/invitedStudentEmails.ts`. Teachers / admins are whitelisted via env vars.
+- **`VITE_*`** values are inlined at **build time**; **server-only** values (`RESEND_API_KEY`, `SMARTDOCS_FROM_EMAIL`, …) are read at request time by the Vercel serverless function only.
 
 ---
 
@@ -174,80 +147,284 @@ flowchart LR
 
 | Area | Description |
 |------|-------------|
-| **Authentication** | Supabase Auth with **Google OAuth** (PKCE). Unauthenticated users are sent to `/login` with query string preserved for the OAuth code. |
-| **Roles** | `student`, `teacher`, `admin`. Optional `VITE_ADMIN_EMAILS` / `VITE_TEACHER_EMAILS` (comma-separated) elevate by email; profiles live in `public.users`. |
-| **Students** | Dashboard, **Submit work** (`/assignments`), **My Submissions**, tasks, boards, calendar, drive, sheets, analytics, team page, settings. |
-| **Student UX** | Floating **Rate us** (opens your Google Form URL or in-app fallback), **Eva** onboarding tour (first visit + replay from **Tour**). |
-| **Teachers** | Dashboard, **grading** (`/grading` — review queue), student submissions, documents, analytics, class list, instructions/inbox, settings; legacy paths redirect (see `src/App.tsx`). |
-| **AI grading (optional)** | **Run AI Evaluator** on submissions: heuristic fallback if Gemini is unavailable; with Gemini — structured JSON including rubric, executive summary, language fixes, verified highlights, **per-page before/after**, **document overview & scoring**, **visual & diagram evaluation**; multimodal attachments (PDF, images, audio, video) via `inlineData` when configured. |
-| **Persistence** | AI draft extras can be stored in `ai_draft_summary` (parseable JSON tail) for student-facing reports after publish. |
+| **Authentication** | Supabase Auth with **Google OAuth** (PKCE). |
+| **Roles** | `student`, `teacher`, `admin`. `VITE_ADMIN_EMAILS` / `VITE_TEACHER_EMAILS` elevate by email; everything else is a student. |
+| **Class-list access gate** | Students whose Gmail isn't on the official roster are signed out immediately with a friendly message — the app shell is never mounted for unauthorized accounts. |
+| **Students** | Dashboard, Submit work, My Submissions, Tasks, Boards, Calendar, Drive, Sheets, Analytics, **TEAM 14**, Settings. |
+| **Student UX** | Floating **Rate us** button + **Eva** anime onboarding tour. |
+| **Teachers** | Dashboard, **Grading** (review queue), Student Submissions, Documents, Analytics, Class list, Instructions/Inbox, Settings. |
+| **AI grading (optional)** | **Run AI Evaluator** — heuristic fallback when Gemini is unavailable; otherwise structured rubric + executive summary + per-page Before/After + diagram review + multimodal (PDF / image / audio / video) attachments. |
+| **Invitation emails** | Branded HTML email sent **once per user** when an invited student signs in for the first time; also bulk-sendable via CLI. |
+| **Bulk actions** | Multi-select + "Delete selected" controls on class list, student submissions, grading, and submission-status pages. |
+| **Stable UI** | No flicker on alt-tab or route swap; background fetches are throttled. |
 
 ---
 
-## Prerequisites
+## Test accounts / sample credentials
 
-- **Node.js** 18+ (LTS recommended)
-- A **Supabase** project: Auth (Google provider), Postgres + RLS, Storage bucket for submissions (see `docs/`)
-- (Optional) **Google Gemini** API key (dev only in browser) or a **server-side eval proxy**
-- (Optional) **Google Form** URL for the student **Rate us** survey
+Sign-in is **Google OAuth only** — there is no traditional email-and-password screen. The "password" is always the Google account's own password (we never see or store it). To test the system as a particular role, you must sign into Google with an account whose email matches one of the lists below.
 
----
+> ⚠️ Do not commit real passwords to git. If you need to share working credentials with an evaluator, send them out-of-band (email, encrypted message) and rotate after the evaluation window.
 
-## Quick start
+### Live (production) test accounts on `https://www.smartformevaluator.com`
 
-1. **Clone and install**
+| Role | Sign-in email (Google) | Password | Notes |
+|------|------------------------|----------|-------|
+| **Admin** | _(fill in your admin Gmail — must be listed in `VITE_ADMIN_EMAILS`)_ | _Google account password_ | Full access to every page and to teacher tools. |
+| **Teacher** | _(fill in your teacher Gmail — must be listed in `VITE_TEACHER_EMAILS`)_ | _Google account password_ | Sees teacher Dashboard, Grading, Class list, Analytics. |
+| **Student (project owner)** | `trafalgardreii@gmail.com` | _Google account password_ | On the official class list; can submit work, see AI feedback, click Rate us. |
+| **Student (cohort sample)** | `anaclaireellen@gmail.com` *(or any address from `src/data/invitedStudentEmails.ts`)* | _Google account password_ | Only the owner of that Gmail can log in — share their own credentials separately. |
+| **Blocked sample** | _any other Gmail_ | _Google account password_ | Should be auto-signed-out and shown: *"Smart Docs is for IT332 / CS342 students on the official class list only…"* |
 
-   ```bash
-   git clone <your-repo-url>
-   cd Smart_Document_Evalutator
-   npm install
-   ```
+### Local-dev sample roles
 
-2. **Environment**
+When running `npm run dev`, the same Google OAuth flow applies. Configure the role-mapping env vars in your `.env`:
 
-   ```bash
-   cp .env.example .env   # Windows: copy .env.example .env
-   ```
+```bash
+VITE_ADMIN_EMAILS=alice.admin@gmail.com
+VITE_TEACHER_EMAILS=bob.teacher@gmail.com,carol.teacher@gmail.com
+```
 
-   Set at least **`VITE_SUPABASE_URL`** and **`VITE_SUPABASE_ANON_KEY`**. All variables are documented in [`.env.example`](.env.example).
+Any Gmail not in those lists, but listed in `src/data/invitedStudentEmails.ts`, signs in as a **student**.
 
-3. **Validate env**
+### Convenience: how to add a temporary evaluator account
 
-   ```bash
-   npm run verify:env
-   ```
+1. Edit `src/data/invitedStudentEmails.ts` — add the evaluator's Gmail (alphabetical).
+2. Mirror the same Gmail in the server-side allow-list at the top of `api/send-invitation-email.ts`.
+3. Commit + push → Vercel auto-deploys.
+4. The evaluator can now sign in at `https://www.smartformevaluator.com` with their Google account.
 
-4. **Run the dev server**
-
-   ```bash
-   npm run dev
-   ```
-
-   Default: **http://localhost:5173** (see `vite.config.ts`). Add this origin (and `http://localhost:5173/**`) under Supabase **Authentication → URL Configuration** so Google sign-in works locally.
-
-5. **(Optional) Gemini smoke test**
-
-   ```bash
-   npm run verify:gemini
-   ```
+To grant **teacher** access instead, add the Gmail to **Vercel → Settings → Environment Variables → `VITE_TEACHER_EMAILS`** (comma-separated), then redeploy.
 
 ---
 
-## Environment variables (summary)
+## Database export / dump
+
+The latest schema lives in [`docs/`](docs/) (per-feature SQL files). To export a **complete dump** of the live Supabase database (schema **and** data), use the bundled helper:
+
+```bash
+# 1. Set DATABASE_URL (Supabase → Project Settings → Database → Connection string)
+$env:DATABASE_URL = "postgresql://postgres.<ref>:<PASSWORD>@db.<ref>.supabase.co:5432/postgres"
+
+# 2. Generate the dump (requires pg_dump on PATH)
+npm run db:dump                       # full: schema + data
+npm run db:dump -- --schema-only      # schema only
+npm run db:dump -- --data-only        # data only
+npm run db:dump -- --out=path\to\custom.sql
+```
+
+Output is written to **`db-dumps/smart-docs-<UTC-timestamp>.sql`** (folder created if missing). See [`db-dumps/README.md`](db-dumps/README.md) for restore instructions.
+
+> 📄 **Why isn't the dump committed to git?** It contains real student PII (emails, submissions, scores). The `db-dumps/` folder is gitignored. Share the file out-of-band (USB, encrypted Drive folder, email attachment) with whoever needs the snapshot. Submit a freshly generated dump with each deliverable.
+
+### Installing `pg_dump`
+
+| OS | Command |
+|----|---------|
+| **Windows** | Install **PostgreSQL Command Line Tools** from <https://www.postgresql.org/download/windows/> (untick "PostgreSQL Server", keep "Command Line Tools"). Make sure `pg_dump --version` works in a new terminal. |
+| **macOS** | `brew install libpq && brew link --force libpq` |
+| **Linux (Debian/Ubuntu)** | `sudo apt-get install postgresql-client` |
+
+### Schema-only reference
+
+If you only need the canonical schema (no data), the files under [`docs/`](docs/) make a self-contained schema dump:
+
+| File | Purpose |
+|------|---------|
+| [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) | Consolidated bootstrap (recommended starting point) |
+| [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) | `public.users` table + auth trigger |
+| [`docs/supabase-users-table.sql`](docs/supabase-users-table.sql) | Standalone `users` table definition |
+| [`docs/supabase-assignments-submissions-core.sql`](docs/supabase-assignments-submissions-core.sql) | Assignments + submissions core schema |
+| [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql) | Bucket + policies for student uploads |
+| [`docs/supabase-rls-*.sql`](docs/) | All RLS policies (per-feature) |
+| [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql) | Hotfix for recursive RLS on `users` |
+
+---
+
+## Deployment instructions
+
+The system is deployed in two halves:
+
+- **Frontend** = a static SPA bundle on **Vercel** (auto-deploys from GitHub).
+- **Backend** = managed services (Supabase + Resend + optional Gemini) + one Vercel serverless function for transactional email.
+
+### Frontend (Vercel)
+
+1. **Push the repo to GitHub**
+
+   ```bash
+   git remote add origin https://github.com/<you>/<repo>.git
+   git push -u origin main
+   ```
+
+2. **Import the repo on Vercel** at <https://vercel.com/new>. Pick the GitHub repo, accept the auto-detected **Vite** preset (Build command `npm run build`, Output `dist`).
+
+3. **Set environment variables** in **Vercel → Project → Settings → Environment Variables**. Apply each to all three environments (**Production**, **Preview**, **Development**):
+
+   | Key | Example value |
+   |-----|---------------|
+   | `VITE_SUPABASE_URL` | `https://<ref>.supabase.co` |
+   | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOi…` |
+   | `VITE_ADMIN_EMAILS` | `admin@example.com` |
+   | `VITE_TEACHER_EMAILS` | `teacher1@example.com,teacher2@example.com` |
+   | `VITE_SUBMISSION_STORAGE_BUCKET` | `student-submissions` |
+   | `VITE_GEMINI_API_KEY` *(optional, dev only)* | `AIza…` |
+   | `VITE_GEMINI_MODEL` *(optional)* | `gemini-2.5-flash` |
+   | `RESEND_API_KEY` | `re_…` |
+   | `SMARTDOCS_FROM_EMAIL` | `Smart Docs <noreply@send.smartformevaluator.com>` |
+   | `SMARTDOCS_APP_URL` | `https://www.smartformevaluator.com` |
+   | `SMARTDOCS_SURVEY_URL` *(optional)* | Google Form URL |
+
+4. **Custom domain** (optional, but used in production): **Vercel → Domains → Add** `smartformevaluator.com` and `www.smartformevaluator.com`. Vercel will print the two nameservers to set at your registrar:
+
+   ```
+   ns1.vercel-dns.com
+   ns2.vercel-dns.com
+   ```
+
+   At **GoDaddy** (or your registrar) → **DNS → Nameservers → Change Nameservers → "Enter my own nameservers"** → paste the two above → **Save**. Vercel will auto-detect within 5–30 minutes, mark the domain green, and issue SSL via Let's Encrypt.
+
+5. **SPA + serverless routing** is already configured in [`vercel.json`](vercel.json):
+
+   ```json
+   { "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }] }
+   ```
+
+   This rewrites all non-API routes to `index.html` (so React Router can take over) while letting `/api/*` resolve to serverless functions.
+
+6. **Trigger the first deploy** (push any commit, or click **Redeploy** in Vercel). Confirm the build log ends with "Production: Ready" and the assigned `*.vercel.app` URL works.
+
+7. **Smoke test**:
+
+   ```bash
+   curl -I https://<project>.vercel.app                       # → 200
+   curl -I https://www.smartformevaluator.com                 # → 200 (after DNS propagates)
+   curl -sX POST https://<project>.vercel.app/api/send-invitation-email   # → 405 or 400 (function is reachable)
+   ```
+
+### Backend (Supabase + Resend + Gemini)
+
+#### 1. Supabase project
+
+1. Create a Supabase project at <https://supabase.com/dashboard>.
+2. **Authentication → Providers → Google** → enable, paste a Google OAuth Client ID + Secret (from <https://console.cloud.google.com/apis/credentials>). Authorised redirect URI for the OAuth client:
+   ```
+   https://<ref>.supabase.co/auth/v1/callback
+   ```
+3. **Authentication → URL Configuration**:
+   - **Site URL:** `https://www.smartformevaluator.com`
+   - **Redirect URLs** (add all):
+     ```
+     https://www.smartformevaluator.com/**
+     https://smartformevaluator.com/**
+     https://<your-vercel-project>.vercel.app/**
+     http://localhost:5173/**
+     ```
+4. **Database → SQL Editor** → run [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) (creates `public.users`, assignments, submissions, RLS policies). If your fresh project has a stricter `auth.users` trigger, also run [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) and [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql).
+5. **Storage → Create bucket** → `student-submissions` (private). Then in the SQL editor run [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql).
+6. **Project Settings → API** → copy the **Project URL** into `VITE_SUPABASE_URL` and the **anon public key** into `VITE_SUPABASE_ANON_KEY` (back in Vercel env vars).
+
+#### 2. Resend (transactional email)
+
+> Walkthrough: [`docs/INVITATION_EMAIL_SETUP.md`](docs/INVITATION_EMAIL_SETUP.md)
+
+1. Sign up at <https://resend.com> (free tier: 100 emails/day, 3 000/month).
+2. **Domains → Add Domain** → `send.smartformevaluator.com` → **Manual setup**. Resend prints 3 DNS records (1 DKIM TXT, 1 SPF MX, 1 SPF TXT).
+3. Add those 3 records in **Vercel → Domains → smartformevaluator.com → DNS Records** (using the exact `Name`, `Type`, `Value`, and `Priority=10` for the MX row).
+4. Back in Resend, click **"I've already added the records"**. The badge flips to **Verified** within 5–30 min. If it sticks on Pending for over an hour, delete + re-add the domain in Resend — the DKIM key is stable per account so the existing DNS rows usually still work.
+5. **API Keys → Create API Key** → copy the `re_…` value → paste into **Vercel env var `RESEND_API_KEY`**.
+6. Set **`SMARTDOCS_FROM_EMAIL`** to a verified-domain address, e.g.:
+   ```
+   Smart Docs <noreply@send.smartformevaluator.com>
+   ```
+7. Redeploy in Vercel so the serverless function picks up the new env vars.
+
+#### 3. Google Gemini (optional)
+
+Two options:
+
+| Option | When | How |
+|--------|------|-----|
+| **Direct REST (dev only)** | Local development | Get a key at <https://aistudio.google.com/app/apikey>; set `VITE_GEMINI_API_KEY` + `VITE_GEMINI_MODEL` in `.env`. |
+| **Server proxy (production)** | Production | Build a tiny HTTPS endpoint anywhere (Vercel Edge / Cloudflare Workers / Cloud Run) that accepts `POST { docType, content, template, attachments? }`, calls Gemini server-side, and returns the same JSON shape. Point `VITE_GEMINI_EVAL_URL` at it. The browser then never sees the key. |
+
+Without either, the AI evaluator still works — it falls back to a heuristic rubric draft generated in the browser.
+
+#### 4. Google Forms (optional — Rate us survey)
+
+- Survey content: [`docs/SoftwareUsabilitySurvey-StudentRateUs.md`](docs/SoftwareUsabilitySurvey-StudentRateUs.md)
+- Auto-generator (Apps Script): [`scripts/google-forms/create-rate-us-form.gs`](scripts/google-forms/create-rate-us-form.gs) — paste into <https://script.google.com>, run `createSmartDocsValidatorSurvey`, copy the form URL into `VITE_STUDENT_RATE_US_URL`.
+
+#### 5. Verify everything
+
+```bash
+npm run verify:env             # checks Supabase env vars
+npm run verify:gemini          # optional Gemini connectivity test
+npm run invite:test            # sends one Resend test email
+```
+
+---
+
+## Local development quick-start
+
+```bash
+git clone https://github.com/<you>/Smart_Document_Evaluator.git
+cd Smart_Document_Evaluator
+npm install
+
+# 1. Copy and fill env (use the values from your Supabase project)
+cp .env.example .env                # Windows: copy .env.example .env
+
+# 2. Validate
+npm run verify:env
+
+# 3. Apply Supabase schema (one-time, requires DATABASE_URL in .env)
+npm run db:apply
+npm run db:fix-rls                  # only if profile loads fail at sign-in
+
+# 4. Run
+npm run dev
+```
+
+Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration** add `http://localhost:5173/**` under **Redirect URLs** so Google sign-in works locally.
+
+---
+
+## Environment variables
+
+### Client (build-time, prefixed `VITE_*`)
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Yes | Publishable anon key (RLS must protect data) |
+| `VITE_SUPABASE_URL` | **Yes** | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | **Yes** | Publishable anon key (RLS must protect data) |
 | `VITE_ADMIN_EMAILS` | No | Comma-separated emails → `admin` role |
 | `VITE_TEACHER_EMAILS` | No | Comma-separated emails → `teacher` role |
 | `VITE_STUDENT_EMAIL_DOMAINS` | No | Restrict which domains resolve as students |
 | `VITE_SUBMISSION_STORAGE_BUCKET` | No | Storage bucket for uploads (default `student-submissions`) |
-| `VITE_STUDENT_RATE_US_URL` | No | Override URL for the student **Rate us** button (defaults to your form if set in code) |
+| `VITE_STUDENT_RATE_US_URL` | No | Override URL for the student **Rate us** button |
 | `VITE_GEMINI_EVAL_URL` | No | **Preferred in production** — POST proxy that returns the same JSON shape as Gemini |
-| `VITE_GEMINI_API_KEY` | No | **Dev only** — key is visible in the built JS bundle |
-| `VITE_GEMINI_MODEL` | No | Model id (e.g. `gemini-2.5-flash`); see `geminiDocumentEvaluation.ts` for fallbacks |
-| `DATABASE_URL` | No | **Local only** — for `npm run db:apply` / `db:fix-rls`; never commit |
+| `VITE_GEMINI_API_KEY` | No | **Dev only** — visible in the built JS bundle |
+| `VITE_GEMINI_MODEL` | No | Model id (e.g. `gemini-2.5-flash`) |
+
+### Server-only (Vercel Function — **never** prefixed with `VITE_`)
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `RESEND_API_KEY` | `api/send-invitation-email.ts` | Resend API key (`re_…`) |
+| `SMARTDOCS_FROM_EMAIL` | `api/send-invitation-email.ts` | Verified-domain From address |
+| `SMARTDOCS_APP_URL` | `api/send-invitation-email.ts` | URL the "Open Smart Docs" button in the email points to |
+| `SMARTDOCS_SURVEY_URL` | `api/send-invitation-email.ts` | URL of the Rate us Google Form |
+
+### CLI-only (your machine — never commit)
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | `db:apply`, `db:fix-rls`, `db:dump` | Direct Postgres connection string |
+| `GMAIL_USER` | `invite:gmail` | Sender Gmail address |
+| `GMAIL_APP_PASSWORD` | `invite:gmail` | 16-char Google App Password ([create one](https://myaccount.google.com/apppasswords)) |
+| `GMAIL_FROM_NAME` | `invite:gmail` | Display name (default `Smart Docs`) |
+| `INVITE_BATCH_GAP_MS` | `invite:send-all` / `invite:gmail` | Gap between sends in ms (default 350 / 1500) |
 
 ---
 
@@ -262,110 +439,126 @@ flowchart LR
 | `npm run typecheck` | TypeScript check (`tsconfig.app.json`) |
 | `npm run verify:env` | Validate `.env` shape for Supabase |
 | `npm run verify:gemini` | Optional Gemini connectivity test |
-| `npm run db:apply` | Apply SQL schema (needs `DATABASE_URL`) |
+| `npm run db:apply` | Apply SQL schema files (needs `DATABASE_URL`) |
 | `npm run db:fix-rls` | Apply users RLS recursion fix SQL |
+| `npm run db:dump` | Export the full Supabase database to `db-dumps/*.sql` (needs `pg_dump`) |
 | `npm run supabase:setup` | Interactive Supabase setup helper |
 | `npm run supabase:fix-rls` | Interactive RLS fix helper |
-| `npm run mascot:strip-bg` | Regenerate `public/mascot/eva-welcome-nobg.png` from `eva-welcome.png` (uses **sharp**) |
-
----
-
-## Database & storage
-
-SQL and docs live under [`docs/`](docs/). Useful entry points:
-
-| File | Purpose |
-|------|---------|
-| [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) | Consolidated bootstrap |
-| [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) | `public.users` and related |
-| [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql) | Bucket + policies for student uploads |
-| [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql) | Fix recursive RLS on `users` if sign-in profile loads fail |
-| [`docs/SoftwareUsabilitySurvey-StudentRateUs.md`](docs/SoftwareUsabilitySurvey-StudentRateUs.md) | Software usability survey copy + Google Form wiring |
-| [`docs/SRS-Smart-Document-Evaluator.md`](docs/SRS-Smart-Document-Evaluator.md) | Product / requirements notes |
-
-**Apply SQL from a trusted machine** (requires `DATABASE_URL` in `.env` — never commit it):
-
-```bash
-npm run db:apply
-npm run db:fix-rls
-```
-
----
-
-## Google Forms (survey + script)
-
-- **Survey content & wiring:** [`docs/SoftwareUsabilitySurvey-StudentRateUs.md`](docs/SoftwareUsabilitySurvey-StudentRateUs.md)
-- **Apps Script to auto-create the form in your Google account:** [`scripts/google-forms/create-rate-us-form.gs`](scripts/google-forms/create-rate-us-form.gs) — paste into [script.google.com](https://script.google.com), run `createSmartDocsValidatorSurvey`, copy the published URL into `VITE_STUDENT_RATE_US_URL` if you do not bake a default into the app.
-
----
-
-## Deployment
-
-- **Do not commit `.env`.** Hosted builds need the same `VITE_*` variables in the host’s environment; they are baked into the client at build time.
-- Step-by-step (Vercel, SPA rewrites, OAuth URLs): **[`DEPLOY.md`](DEPLOY.md)**.
-- This repo includes [`vercel.json`](vercel.json) for a Vite SPA.
-- [`CNAME`](CNAME) in the repo documents a custom domain target (`www.smartformevaluator.com`); adjust for your own DNS.
+| `npm run mascot:strip-bg` | Regenerate `public/mascot/eva-welcome-nobg.png` (uses **sharp**) |
+| `npm run invite:test` | Send one test invitation email via Resend |
+| `npm run invite:send-all` | Bulk-send invitation emails via Resend to the entire class list |
+| `npm run invite:gmail` | Bulk-send via Gmail SMTP fallback (Nodemailer) |
 
 ---
 
 ## Project layout
 
-| Path | Role |
-|------|------|
-| `src/App.tsx` | Router, auth gate, teacher vs student routes |
-| `src/components/Layout.tsx` | Shell: sidebar, mobile header, student-only **Rate us** + **Eva** tour |
-| `src/context/AuthContext.tsx` | Session, profile, OAuth, student email policy |
-| `src/lib/supabase.ts` | Supabase browser client |
-| `src/lib/geminiDocumentEvaluation.ts` | Gemini / proxy evaluation, parsing, persisted AI draft extras |
-| `src/lib/geminiAttachments.ts` | Build multimodal `inlineData` parts for Gemini (PDF, images, etc.) |
-| `src/lib/teacherSubmissionLoad.ts` | Teacher queue / submission types and helpers |
-| `src/components/AIDocumentEvaluationReport.tsx` | Student + teacher UI for AI rubric, overview, diagrams, per-page rewrites |
-| `src/pages/teacher/` | Teacher screens (grading, roster, analytics, …) |
-| `src/pages/student/` | Student screens |
-| `src/components/student/StudentRateUsButton.tsx` | Rate us pill + optional Google Form |
-| `src/components/student/StudentOnboardingTour.tsx` | Eva mascot onboarding |
-| `public/mascot/` | Mascot PNG assets |
-| `scripts/` | Env checks, DB apply, Gemini test, mascot matte removal, Google Forms script |
+```
+.
+├── api/
+│   └── send-invitation-email.ts        ← Vercel serverless: Resend transactional email
+├── db-dumps/                           ← Generated SQL dumps (gitignored)
+│   └── README.md                       ← How to dump / restore
+├── docs/                               ← SQL bootstrap, RLS, storage policies, SRS, setup guides
+├── public/                             ← Static assets, mascot PNGs, _redirects
+├── scripts/
+│   ├── lib/invitationEmailTemplate.mjs ← Shared HTML/text template for CLI scripts
+│   ├── send-invitation-email-test.mjs  ← npm run invite:test
+│   ├── send-invitation-email-bulk.mjs  ← npm run invite:send-all (Resend)
+│   ├── send-invitation-email-gmail.mjs ← npm run invite:gmail (Nodemailer + Gmail SMTP)
+│   ├── dump-supabase-database.mjs      ← npm run db:dump
+│   ├── apply-supabase-schema.mjs       ← npm run db:apply
+│   ├── check-env.mjs                   ← npm run verify:env
+│   ├── test-gemini.mjs                 ← npm run verify:gemini
+│   ├── remove-mascot-white-matte.mjs   ← npm run mascot:strip-bg
+│   ├── swap-cit-emails-to-gmail.mjs    ← one-off roster migration helper
+│   ├── gen-it332-roster-snippet.mjs    ← roster TS code generator
+│   └── google-forms/create-rate-us-form.gs  ← Apps Script (paste at script.google.com)
+├── src/
+│   ├── App.tsx                         ← Routes + access gate; AccessGateScreen while verifying
+│   ├── components/
+│   │   ├── Layout.tsx                  ← shell + Rate us + Eva + InvitedStudentEmailNotifier
+│   │   ├── Sidebar.tsx
+│   │   ├── AIDocumentEvaluationReport.tsx
+│   │   ├── UserAvatar.tsx
+│   │   ├── student/
+│   │   │   ├── StudentRateUsButton.tsx
+│   │   │   ├── StudentOnboardingTour.tsx
+│   │   │   └── InvitedStudentEmailNotifier.tsx   ← headless: triggers /api/send-invitation-email
+│   │   └── teacher/
+│   │       ├── TeacherWorkspaceChrome.tsx
+│   │       ├── TeacherSubmissionRosterTable.tsx
+│   │       └── TeacherViewScoreModal.tsx
+│   ├── context/AuthContext.tsx         ← session, role, OAuth, campus + class-list gates
+│   ├── data/
+│   │   ├── invitedStudentEmails.ts     ← 45 gmails authorized to sign in
+│   │   ├── it332Sem2ClassRoster.ts     ← personalized first/last names for the greeting
+│   │   └── team14.ts
+│   ├── lib/
+│   │   ├── supabase.ts                 ← browser Supabase client
+│   │   ├── geminiDocumentEvaluation.ts ← Gemini / proxy evaluation + parsing
+│   │   ├── geminiAttachments.ts        ← multimodal inlineData parts
+│   │   ├── sendInvitationEmail.ts      ← client → /api/send-invitation-email (once per user)
+│   │   ├── classRosterCache.ts
+│   │   ├── studentEmailPolicy.ts
+│   │   └── teacherSubmissionLoad.ts
+│   ├── pages/
+│   │   ├── Login.tsx
+│   │   ├── student/                    ← Dashboard, Assignments, Submissions, Tasks, Team14, …
+│   │   └── teacher/                    ← Dashboard, ReviewQueue, StudentSubmissions, Team14, …
+│   └── types/index.ts
+├── vercel.json                         ← /api/* passthrough + SPA rewrite
+├── DEPLOY.md                           ← Long-form deployment walkthrough
+├── CNAME                               ← www.smartformevaluator.com
+└── README.md (this file)
+```
+
+---
+
+## Class list & invitation emails
+
+Smart Docs is currently a **private build for the IT332 / CS342 cohort**. The class list lives in one file:
+
+```
+src/data/invitedStudentEmails.ts   ← 45 gmail addresses (alphabetised)
+```
+
+### The access gate (`src/context/AuthContext.tsx`)
+
+After Google sign-in completes, the gate runs three checks. Any failure → immediate `signOut` and a friendly message on `/login`:
+
+1. **`rejectStudentIfWrongCampusEmail`** — if `VITE_STUDENT_EMAIL_DOMAINS` is configured, students must sign in with a campus email.
+2. **`rejectIfNotInvitedStudent`** — students must be on `INVITED_STUDENT_GMAILS`. Teachers / admins are exempt.
+3. The app shell (Layout, sidebar, routes) is **only mounted after both checks pass** — unauthorized accounts see only a brief "Verifying access" screen.
+
+### Inviting a new student
+
+1. Edit `src/data/invitedStudentEmails.ts` (and optionally add a row in `src/data/it332Sem2ClassRoster.ts` for a personalized greeting).
+2. Mirror the same gmail in the server-side allow-list at the top of `api/send-invitation-email.ts`.
+3. Commit + push → Vercel redeploys.
+4. Send the email: `npm run invite:send-all -- --only=newstudent@gmail.com`.
+
+### Sending invitation emails
+
+| Command | What it does |
+|---------|--------------|
+| `npm run invite:send-all` | Bulk-send via **Resend** to every student in `INVITED_STUDENT_GMAILS`. Supports `--only=`, `--skip=`, `--dry-run`. Requires `RESEND_API_KEY` + verified `SMARTDOCS_FROM_EMAIL`. |
+| `npm run invite:test` | Send one test email to a single recipient. |
+| `npm run invite:gmail` | Same bulk send, but over **Gmail SMTP** using Nodemailer (no Resend domain needed). Requires `GMAIL_USER` + `GMAIL_APP_PASSWORD`. |
+
+All three CLIs share the same HTML/text template (`scripts/lib/invitationEmailTemplate.mjs`), so the email is identical regardless of channel.
 
 ---
 
 ## Security notes
 
-- The **anon key** is safe in the browser only with correct **RLS** on all tables and storage policies. Never expose the **service role** key or `DATABASE_URL` in the client.
-- **Gemini:** for any public deployment, use **`VITE_GEMINI_EVAL_URL`** and keep API keys on a server you control. Browser `VITE_GEMINI_API_KEY` is for local development only.
-- Student uploads should use a **dedicated bucket** with policies scoped to the authenticated user (see storage SQL in `docs/`).
-
----
-
-## Others
-
-Anything that isn't strictly “frontend” or “backend” but still ships with the project:
-
-| Topic | Where it lives | Notes |
-|-------|----------------|-------|
-| **Branding** | `index.html`, `public/`, `src/components/Layout.tsx` | App is branded **Smart Docs Validator** with a maroon + yellow palette. Update `<title>`, `favicon`, and any hard-coded headers if you fork. |
-| **Mascot (Eva)** | `public/mascot/eva-welcome.png`, `eva-welcome-nobg.png` | Used by `StudentOnboardingTour`. Regenerate the transparent version with `npm run mascot:strip-bg`. |
-| **Onboarding tour** | `src/components/student/StudentOnboardingTour.tsx` | Stores “seen” state in `localStorage`. Steps live in a `STEPS` array — edit text/icons there. |
-| **Rate us survey** | `docs/SoftwareUsabilitySurvey-StudentRateUs.md`, `scripts/google-forms/create-rate-us-form.gs` | Full question bank + Apps Script generator. Override the live URL with `VITE_STUDENT_RATE_US_URL`. |
-| **Custom domain** | [`CNAME`](CNAME) | Documents `www.smartformevaluator.com` as the production domain. Change this for your own DNS. |
-| **Hosting config** | [`vercel.json`](vercel.json), [`DEPLOY.md`](DEPLOY.md), `public/_redirects` | SPA rewrites for Vercel and Netlify-style hosts. |
-| **Docs** | [`docs/`](docs/) | SQL bootstrap, RLS fixes, storage policies, survey copy, and the SRS. Read these before deploying to a new Supabase project. |
-| **Scripts** | [`scripts/`](scripts/) | All Node/Apps-Script utilities; see the Backend → *Local-only tooling* table. |
-| **Build artifacts** | `dist/` | Generated by `npm run build`; never commit. Already in `.gitignore`. |
-| **Type-checking** | `tsconfig*.json`, `npm run typecheck` | Strict TS via `tsc --noEmit`; CI/host build will fail on TS errors. |
-| **Linting** | `eslint.config.js`, `npm run lint` | Flat ESLint 9 config with `typescript-eslint` + React hooks/refresh plugins. |
-| **Accessibility** | Tailwind + native semantics | Buttons have `aria-label`s where icon-only; the Eva tour can be skipped and minimized; toasts are non-blocking. |
-| **Internationalization** | English-only today | All copy is inline. Wrap with i18n if you need locales. |
-| **Telemetry** | None bundled | Add your own (Plausible, PostHog, etc.) if you need analytics. |
-
----
-
-## Ignored local folders
-
-The following are listed in [`.gitignore`](.gitignore) so they are not committed:
-
-- **`node_modules/`**, **`dist/`**, **`.env`**, editor junk
-- **`.bolt/`**, **`.claude/`** — IDE / template scaffolding (not part of the app)
+- **Anon key + RLS** — the Supabase anon key is safe in the browser only when **Row Level Security** is enabled on every table and storage policy. Never expose the **service role** key or `DATABASE_URL` in the client.
+- **Gemini** — for any public deployment, use **`VITE_GEMINI_EVAL_URL`** and keep API keys on a server you control. Browser `VITE_GEMINI_API_KEY` is for local development only.
+- **Resend** — `RESEND_API_KEY` is a **server-only** variable. It lives in Vercel env vars (not prefixed with `VITE_`) and is read only inside `api/send-invitation-email.ts`.
+- **Gmail App Password** — never commit, never share, never paste in the browser. Only used on the developer's machine for the SMTP fallback.
+- **Student uploads** — use a dedicated bucket with policies scoped to the authenticated user (see storage SQL in `docs/`).
+- **Class-list source of truth** — the gate is enforced both in the client (`AuthContext.rejectIfNotInvitedStudent`) and on the server (`api/send-invitation-email.ts` allow-list). Keep the two lists in sync.
+- **Database dumps** — files in `db-dumps/` contain real student PII. The folder is gitignored; share dumps out-of-band only.
 
 ---
 
