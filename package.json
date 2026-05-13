@@ -17,7 +17,8 @@
     "supabase:setup": "node scripts/prompt-supabase-setup.mjs",
     "supabase:fix-rls": "node scripts/prompt-supabase-fix-rls.mjs",
     "mascot:strip-bg": "node scripts/remove-mascot-white-matte.mjs",
-    "invite:test": "node scripts/send-invitation-email-test.mjs"
+    "invite:test": "node scripts/send-invitation-email-test.mjs",
+    "invite:send-all": "node scripts/send-invitation-email-bulk.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

@@ -11,7 +11,12 @@
  * scripts that want to surface the outcome.
  */
 
-const SENT_KEY_PREFIX = 'sde_invitation_email_sent_v1';
+/**
+ * Bumped v2 → v1 keys are ignored, so any account that previously had a
+ * stuck/failed send attempt (e.g. from before the Resend API key was wired
+ * up in Vercel) automatically gets a fresh send on the next sign-in.
+ */
+const SENT_KEY_PREFIX = 'sde_invitation_email_sent_v2';
 
 function storageKey(userId: string): string {
   return `${SENT_KEY_PREFIX}:${userId}`;
