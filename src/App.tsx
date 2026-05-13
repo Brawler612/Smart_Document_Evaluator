@@ -23,6 +23,26 @@ import StudentDrive from './pages/student/Drive';
 import StudentSheets from './pages/student/Sheets';
 import StudentAnalytics from './pages/student/Analytics';
 
+/** Full-screen gate while Supabase session exists but the app has not finished roster / access checks (no `user` yet). */
+function AccessGateScreen() {
+  return (
+    <div className="flex min-h-dvh w-full flex-col items-center justify-center gap-4 bg-[#6b0014] px-6 text-center text-[#f5e6c8]">
+      <div
+        className="h-9 w-9 animate-spin rounded-full border-2 border-[#f5e6c8]/25 border-t-[#ffd21a]"
+        role="status"
+        aria-label="Loading"
+      />
+      <div>
+        <p className="text-sm font-semibold tracking-wide">Verifying access</p>
+        <p className="mt-2 max-w-sm text-xs leading-relaxed text-white/55">
+          Checking your account against the IT332 / CS342 class list. You will not see course data until this
+          finishes.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Teacher shell: pathless `<Route element={<Layout />}>` + segment paths (`grading` → `/grading`). Avoid `path="/"` on the layout and avoid `[<Route/>]` arrays — both can yield an empty `<Outlet />` in RR7. */
 function AuthenticatedRoutes() {
   const { session, user } = useAuth();
@@ -38,6 +58,15 @@ function AuthenticatedRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Navigate to={loginRedirect} replace />} />
         <Route path="*" element={<Navigate to={loginRedirect} replace />} />
+      </Routes>
+    );
+  }
+
+  /** Session cookie is set, but AuthContext has not finished profile + class-list gates — do not mount Layout or student/teacher routes. */
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="*" element={<AccessGateScreen />} />
       </Routes>
     );
   }

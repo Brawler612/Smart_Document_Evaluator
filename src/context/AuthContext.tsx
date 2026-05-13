@@ -314,28 +314,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (next?.user) {
         profileLoadGen.current += 1;
         const gen = profileLoadGen.current;
-        const fb = fallbackProfile(next.user);
-        mergeProfileIntoClassRosterCache(fb);
-        setUser(fb);
+        /** Do not set `user` until campus + class-list gates pass — avoids flashing the app shell to unauthorized accounts. */
+        setUser(null);
+        setLoading(true);
         void ensureUserProfileOrFallback(next.user).then(async (profile) => {
           if (!alive) return;
           if (gen !== profileLoadGen.current) return;
           if (rejectStudentIfWrongCampusEmail(profile)) {
             await supabase.auth.signOut({ scope: 'global' });
+            if (alive) setLoading(false);
             return;
           }
           if (rejectIfNotInvitedStudent(profile)) {
             await supabase.auth.signOut({ scope: 'global' });
+            if (alive) setLoading(false);
             return;
           }
           mergeProfileIntoClassRosterCache(profile);
           setUser(profile);
+          setLoading(false);
         });
       } else {
         profileLoadGen.current += 1;
         setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     }
 
     void (async () => {
@@ -345,8 +348,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!oauthLanding) apply(next ?? null);
           return;
         }
-        if (next?.user) apply(next);
-        else if (event === 'SIGNED_OUT') apply(null);
+        if (event === 'SIGNED_OUT') {
+          apply(null);
+          return;
+        }
+        if (event === 'TOKEN_REFRESHED' && next) {
+          /** Refresh must not clear `user` or re-run roster gates — that would flash the access gate. */
+          if (!alive) return;
+          setSession(next);
+          return;
+        }
+        if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && next?.user) {
+          apply(next);
+        }
       });
       subscription = subData.subscription;
 
