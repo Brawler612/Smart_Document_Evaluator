@@ -232,9 +232,97 @@ function extractBalancedJsonObject(raw: string): string | null {
   return null;
 }
 
+/**
+ * Best-effort repair of a truncated JSON payload from Gemini.
+ *
+ * When Gemini hits `MAX_TOKENS` mid-payload the response is malformed JSON
+ * and `JSON.parse` throws, so without repair the whole evaluator falls back
+ * to the 2% keyword heuristic. This walks BACKWARD from the end of the raw
+ * string looking for a clean cut (a value/closer character outside any
+ * unterminated string), strips trailing commas, and appends the right
+ * closers (`]` / `}`) so what survived parses as valid JSON. As long as the
+ * `criteria` array was at least partly written, the model's real rubric
+ * scores survive.
+ */
+function repairTruncatedJson(raw: string): string | null {
+  let s = raw.trim();
+  if (!s) return null;
+  const fence = /^```(?:json)?\s*([\s\S]*?)```$/im.exec(s);
+  if (fence) s = fence[1].trim();
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  s = s.slice(start);
+
+  /** Precompute "is character i inside a string literal" once. */
+  const inStrAt: boolean[] = new Array(s.length).fill(false);
+  {
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < s.length; i++) {
+      inStrAt[i] = inString;
+      const c = s[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (inString) {
+        if (c === '\\') escape = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+    }
+  }
+
+  /** Try cut points walking backward; stop at the first one that parses. */
+  const valueEndChar = /[\]\}"0-9aAbBcCdDeEfFlLnNoOrRsStTuU]/;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (inStrAt[i]) continue;
+    const c = s[i];
+    if (!valueEndChar.test(c)) continue;
+    const prefix = s.slice(0, i + 1);
+    const stack: ('}' | ']')[] = [];
+    let inString = false;
+    let escape = false;
+    let abort = false;
+    for (let j = 0; j < prefix.length; j++) {
+      const ch = prefix[j];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (inString) {
+        if (ch === '\\') escape = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') stack.push('}');
+      else if (ch === '[') stack.push(']');
+      else if (ch === '}' || ch === ']') {
+        if (stack[stack.length - 1] === ch) stack.pop();
+        else {
+          abort = true;
+          break;
+        }
+      }
+    }
+    if (abort || inString) continue;
+    let candidate = prefix.replace(/,\s*$/m, '');
+    while (stack.length > 0) candidate += stack.pop();
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      /* try an earlier cut */
+    }
+  }
+  return null;
+}
+
 function extractJsonObject(raw: string): ParsedPayload | null {
   const balanced = extractBalancedJsonObject(raw);
-  const candidates = [balanced, (() => {
+  const greedy = (() => {
     let s = raw.trim();
     const fence = /^```(?:json)?\s*([\s\S]*?)```$/im.exec(s);
     if (fence) s = fence[1].trim();
@@ -242,7 +330,9 @@ function extractJsonObject(raw: string): ParsedPayload | null {
     const end = s.lastIndexOf('}');
     if (start === -1 || end <= start) return null;
     return s.slice(start, end + 1);
-  })()].filter((x): x is string => Boolean(x));
+  })();
+  const repaired = repairTruncatedJson(raw);
+  const candidates = [balanced, greedy, repaired].filter((x): x is string => Boolean(x));
   for (const slice of candidates) {
     try {
       return JSON.parse(slice) as ParsedPayload;
@@ -682,6 +772,29 @@ Return EXACTLY this shape (keep each comment 1–2 sentences, executive summary 
 {"executiveSummary":"<2-4 sentences ending with 'Strengths: ...' and 'Needs improvement: ...' on their own lines>","documentQualityNotes":"","criteria":[{"name":"exact rubric name","score":<int 0..max>,"comment":"<1-2 sentences grounded in the submission>"}],"languageCorrections":[],"correctHighlights":[],"pageRewrites":[],"documentOverviewScores":[],"diagramEvaluations":[]}`;
 }
 
+/**
+ * Ultra-minimal last-ditch prompt: rubric scores ONLY. Used if the medium
+ * and minimal prompts both fail (e.g. the model keeps truncating). At this
+ * size the JSON virtually always fits inside 2K output tokens, so we still
+ * get real Gemini grades instead of the 2% heuristic baseline.
+ */
+function buildUltraMinimalPrompt(
+  docType: string,
+  template: RubricCriterionRow[],
+  attachments: GeminiInlineAttachment[] = []
+): string {
+  const rubric = template.map((c) => ({ name: c.name, max: c.max }));
+  return `Grade the submission below as ${docType}. Return ONLY a tiny JSON object. No prose, no markdown.
+
+Rubric (score each, 0..max inclusive):
+${JSON.stringify(rubric, null, 0)}
+
+Format (NEVER skip any rubric name; one 1-sentence comment each):
+{"criteria":[{"name":"exact rubric name","score":<int 0..max>,"comment":"<1 sentence>"}]}
+
+${attachments.length > 0 ? 'Use the attached file content as the submission.' : ''}`;
+}
+
 function isRetryableGeminiFailure(status: number, message: string): boolean {
   if (isGeminiBillingOrCreditsBlock(message)) return false;
   if (status === 429 || status === 503) return true;
@@ -707,26 +820,24 @@ function normalizeGeminiModelId(raw: string): string {
   return m.trim();
 }
 
-/** Ordered list: env first, then ids for generativelanguage.googleapis.com (Google retires older ids for new keys). */
-function geminiModelCandidates(preferred: string, preferHeavyModelForMedia: boolean): string[] {
+/**
+ * Ordered list: env first, then ids for generativelanguage.googleapis.com.
+ * Flash 2.5 leads even for multimodal: Pro is slower, hits rate-limits faster,
+ * and is more likely to truncate the JSON at MAX_TOKENS — both of which were
+ * pushing real submissions to the 2% heuristic fallback in production. Pro
+ * stays in the list as a backup if Flash fails outright.
+ */
+function geminiModelCandidates(preferred: string, _preferHeavyModelForMedia: boolean): string[] {
+  void _preferHeavyModelForMedia;
   const p = normalizeGeminiModelId(preferred);
-  /** With PDF / images / video attached, try Pro + Flash first for longer, more grounded multimodal grading. */
-  const mediaFirst = [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-  ].filter((id): id is string => Boolean(id));
-  const textFirst = [
+  const order = [
     'gemini-2.5-flash',
     'gemini-2.5-pro',
     'gemini-2.5-flash-lite',
     'gemini-2.0-flash',
     'gemini-1.5-flash',
   ].filter((id): id is string => Boolean(id));
-  const tail = preferHeavyModelForMedia ? mediaFirst : textFirst;
-  const pool = [p, ...tail].filter((id): id is string => Boolean(id));
+  const pool = [p, ...order].filter((id): id is string => Boolean(id));
   return pool.filter((id, i) => pool.indexOf(id) === i);
 }
 
@@ -915,22 +1026,34 @@ export async function runGeminiBackedEvaluation(options: {
   const prompt = buildPrompt(docType, content, template, attachments);
 
   let parsed: ParsedPayload | null = null;
-  if (evalUrl) {
-    parsed = await callEvalProxy(evalUrl, { docType, content, template, attachments });
-  } else if (apiKey) {
-    parsed = await callGeminiRest(apiKey, model, prompt, attachments);
-  } else {
-    return null;
+  let lastError: unknown = null;
+
+  /**
+   * Tier 1: medium prompt via proxy (if configured) or direct REST. This is
+   * the call that produces the rich review with per-page rewrites etc.
+   */
+  try {
+    if (evalUrl) {
+      parsed = await callEvalProxy(evalUrl, { docType, content, template, attachments });
+    } else if (apiKey) {
+      parsed = await callGeminiRest(apiKey, model, prompt, attachments);
+    } else {
+      return null;
+    }
+  } catch (err) {
+    lastError = err;
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      console.warn('[gemini] tier 1 (medium prompt) failed:', err);
+    }
+    if (isGeminiAccountOrBillingBlock(err)) throw err;
   }
 
   let merged = normalizeCriteriaPayload(parsed, template);
 
   /**
-   * If the rich/medium response failed to produce parseable rubric scores
-   * (truncated JSON, model returned prose, model returned an empty payload),
-   * fall back to a tiny "criteria + summary only" prompt with a smaller token
-   * budget. This is what stops every submission from defaulting to the 2%
-   * heuristic fallback when Gemini is reachable but the long prompt failed.
+   * Tier 2: minimal prompt (criteria + short summary) at 4K output tokens.
+   * Triggered when tier 1 fails OR returns un-parseable JSON. This is what
+   * keeps Gemini scores flowing even when the long prompt truncates.
    */
   if (!merged && apiKey) {
     try {
@@ -941,14 +1064,44 @@ export async function runGeminiBackedEvaluation(options: {
         parsed = fallbackParsed;
         merged = fallbackMerged;
       }
-    } catch (fallbackErr) {
+    } catch (err) {
+      lastError = err;
       if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
-        console.warn('[gemini] minimal-fallback prompt also failed:', fallbackErr);
+        console.warn('[gemini] tier 2 (minimal prompt) failed:', err);
       }
+      if (isGeminiAccountOrBillingBlock(err)) throw err;
     }
   }
 
-  if (!merged) return null;
+  /**
+   * Tier 3: ultra-minimal "criteria only" prompt at 2K output tokens. Last
+   * line of defence so we still surface real Gemini scores when the medium
+   * and minimal prompts both fail (very long PDFs, flaky network, brief
+   * model brownouts). Without this, the UI would fall through to the 2%
+   * keyword heuristic.
+   */
+  if (!merged && apiKey) {
+    try {
+      const ultra = buildUltraMinimalPrompt(docType, template, attachments);
+      const ultraParsed = await callGeminiRest(apiKey, model, ultra, attachments, 2_048);
+      const ultraMerged = normalizeCriteriaPayload(ultraParsed, template);
+      if (ultraMerged) {
+        parsed = ultraParsed;
+        merged = ultraMerged;
+      }
+    } catch (err) {
+      lastError = err;
+      if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+        console.warn('[gemini] tier 3 (ultra-minimal) failed:', err);
+      }
+      if (isGeminiAccountOrBillingBlock(err)) throw err;
+    }
+  }
+
+  if (!merged) {
+    if (lastError) throw lastError;
+    return null;
+  }
   let executiveSummary = normalizeExecutiveSummary(parsed);
   executiveSummary = enrichThinExecutiveSummary(executiveSummary, merged);
   const documentQualityNotes = normalizeDocumentQualityNotes(parsed);
