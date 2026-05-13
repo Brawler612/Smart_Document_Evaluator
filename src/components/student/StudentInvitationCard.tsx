@@ -4,6 +4,7 @@ import {
   getInvitedStudentRosterEntry,
   isInvitedStudent,
 } from '../../data/invitedStudentEmails';
+import { sendInvitationEmailOnce } from '../../lib/sendInvitationEmail';
 
 /**
  * Storage key prefix — we append the user id so each Gmail account on the same
@@ -118,6 +119,23 @@ export default function StudentInvitationCard({ userId, email, fullName }: Props
       } catch {
         /* quota / private mode — best-effort */
       }
+    }
+
+    /**
+     * Fire the invitation email exactly once per (userId × browser). Best-effort
+     * — if the serverless function is missing the RESEND_API_KEY env var, the
+     * call returns a clear error and the in-app card still does its job.
+     */
+    if (email) {
+      const fname =
+        rosterEntry
+          ? `${rosterEntry.firstName} ${rosterEntry.lastName}`.trim()
+          : fullName ?? null;
+      void sendInvitationEmailOnce({ userId, email, fullName: fname }).then((result) => {
+        if (!result.ok && import.meta.env.DEV) {
+          console.warn('[smart-docs] Invitation email send failed:', result.error);
+        }
+      });
     }
   }, [userId, invited, rosterEntry, email, fullName]);
 
