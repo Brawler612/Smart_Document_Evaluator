@@ -6,12 +6,10 @@ import { useAuth } from '../../context/AuthContext';
 const STORAGE_KEY = 'sde_student_rate_us_v1';
 
 /**
- * Built-in Google Form for the "Software Usability Feedback Survey".
- * Override at deploy time by setting `VITE_STUDENT_RATE_US_URL` in `.env` — useful for
- * staging vs. production survey forms.
+ * Public Google Form (short link) — opens in a new tab for any signed-in student.
+ * Override at deploy time with `VITE_STUDENT_RATE_US_URL` if you publish a different form.
  */
-const DEFAULT_RATE_URL =
-  'https://docs.google.com/forms/d/e/1FAIpQLSeZGz5bD6sf-XMKk3tjachS03eZOsLmDYb3Sd1GgtnB2o_qlA/viewform';
+const DEFAULT_RATE_URL = 'https://forms.gle/5uZtCTgv9WjatGvk7';
 
 /** Final URL the pill opens — env override wins, otherwise the built-in form. Empty string = fall back to in-app modal. */
 const EXTERNAL_RATE_URL =
