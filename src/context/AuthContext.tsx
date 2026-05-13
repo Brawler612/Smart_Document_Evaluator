@@ -10,6 +10,7 @@ import {
   getConfiguredStudentDomains,
   STUDENT_EMAIL_REJECT_STORAGE_KEY,
 } from '../lib/studentEmailPolicy';
+import { isInvitedStudent } from '../data/invitedStudentEmails';
 import { AppUser, UserRole } from '../types';
 
 interface Ctx {
@@ -249,6 +250,24 @@ function rejectStudentIfWrongCampusEmail(profile: AppUser): boolean {
   return true;
 }
 
+/**
+ * Smart Docs is currently a private evaluation build for the IT332 / CS342 cohort.
+ * Only the gmail addresses listed in `INVITED_STUDENT_GMAILS` may sign in as students;
+ * teachers and admins (whitelisted via VITE_TEACHER_EMAILS / VITE_ADMIN_EMAILS) are
+ * always allowed.
+ */
+function rejectIfNotInvitedStudent(profile: AppUser): boolean {
+  if (profile.role !== 'student') return false;
+  if (isInvitedStudent(profile.email)) return false;
+  sessionStorage.setItem(
+    STUDENT_EMAIL_REJECT_STORAGE_KEY,
+    'Smart Docs is currently a private evaluation build for the IT332 / CS342 cohort. ' +
+      'Please sign in with the Gmail address that received your invitation, or contact ' +
+      'the Smart Docs team if you believe you should have access.'
+  );
+  return true;
+}
+
 const SESSION_BOOT_MS = 8_000;
 /** Longer window when Google returns ?code= — PKCE exchange must finish before we treat boot as idle. */
 const SESSION_BOOT_OAUTH_CALLBACK_MS = 52_000;
@@ -303,6 +322,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!alive) return;
           if (gen !== profileLoadGen.current) return;
           if (rejectStudentIfWrongCampusEmail(profile)) {
+            await supabase.auth.signOut({ scope: 'global' });
+            return;
+          }
+          if (rejectIfNotInvitedStudent(profile)) {
             await supabase.auth.signOut({ scope: 'global' });
             return;
           }

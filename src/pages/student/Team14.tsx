@@ -64,8 +64,7 @@ export default function StudentTeam14() {
 
       <div className="rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 bg-[#fffaf5] border-b border-[#ffd21a]/40">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#84001B]">Team roster</p>
-          <p className="text-[11px] text-gray-500 mt-0.5">Same maroon header pattern as the teacher view — your row is highlighted.</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[#84001B]">Team 14</p>
         </div>
         <div className="max-h-[min(520px,70vh)] overflow-auto">
           <table className="w-full min-w-[680px] border-collapse text-left text-[13px] leading-snug">
