@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
 import StudentRateUsButton from './student/StudentRateUsButton';
 import StudentOnboardingTour from './student/StudentOnboardingTour';
+import StudentInvitationCard from './student/StudentInvitationCard';
 import UserAvatar from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 
@@ -89,6 +90,14 @@ export default function Layout() {
     </div>
     {isStudent && <StudentRateUsButton />}
     {isStudent && user?.id ? <StudentOnboardingTour key={user.id} userId={user.id} /> : null}
+    {isStudent && user?.id ? (
+      <StudentInvitationCard
+        key={`invite-${user.id}`}
+        userId={user.id}
+        email={user.email}
+        fullName={user.full_name}
+      />
+    ) : null}
     </>
   );
 }

@@ -93,7 +93,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-6700-709',
     lastName: 'Najarro',
     firstName: 'Monica',
-    citEmail: 'monica.najarro@cit.edu',
+    citEmail: 'monicanajarro111@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-02',
@@ -109,7 +109,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-4551-411',
     lastName: 'Naranjo',
     firstName: 'Ana Claire Ellen',
-    citEmail: 'anaclaireellen.naranjo@cit.edu',
+    citEmail: 'anaclaireellen@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-03',
@@ -205,7 +205,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '13-2035-649',
     lastName: 'Narsico',
     firstName: 'Theodore Benjamin',
-    citEmail: 'theodorebenjamin.narsico@cit.edu',
+    citEmail: 'tedbennarsico04@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-05',
@@ -237,7 +237,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '2011-40169',
     lastName: 'Rosalina',
     firstName: 'Kremer',
-    citEmail: 'kremer.rosalina@cit.edu',
+    citEmail: 'drakathrosalina@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-06',
@@ -301,7 +301,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '21-4357-905',
     lastName: 'Cantero',
     firstName: 'Patrick James',
-    citEmail: 'patrickjames.cantero@cit.edu',
+    citEmail: 'polarsystem09@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-07',
@@ -309,7 +309,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-5450-886',
     lastName: 'Barangan',
     firstName: 'Mark Lorenz',
-    citEmail: 'marklorenz.barangan@cit.edu',
+    citEmail: 'marklorenzbarangan@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-08',
@@ -317,7 +317,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-5247-177',
     lastName: 'Villadarez',
     firstName: 'Niña Nicole',
-    citEmail: 'ninanicole.villadarez@cit.edu',
+    citEmail: 'villadareznn@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-08',
@@ -381,7 +381,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-1010-477',
     lastName: 'Banico',
     firstName: 'Joseph James',
-    citEmail: 'josephjames.banico@cit.edu',
+    citEmail: 'banicojosephjames@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-09',
@@ -397,7 +397,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-0801-572',
     lastName: 'Igonia',
     firstName: 'Ashley',
-    citEmail: 'ashley.igonia@cit.edu',
+    citEmail: 'sonephoenix46@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-10',
@@ -493,7 +493,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-7059-389',
     lastName: 'Arong',
     firstName: 'Kylene',
-    citEmail: 'kylene.arong@cit.edu',
+    citEmail: 'kylenearong127@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-12',
@@ -637,7 +637,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '2011-40187',
     lastName: 'Galo',
     firstName: 'Margel Destine Krizia',
-    citEmail: 'margeldestinekrizia.galo@cit.edu',
+    citEmail: 'destinegalo29@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-16',
@@ -653,7 +653,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '17-0726-103',
     lastName: 'Amad',
     firstName: 'Karylle',
-    citEmail: 'karylle.amad@cit.edu',
+    citEmail: 'karylleamad1@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-16',
@@ -725,7 +725,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-4893-322',
     lastName: 'Lanticse',
     firstName: 'Vince Clark',
-    citEmail: 'vinceclark.lanticse@cit.edu',
+    citEmail: 'lanticsev@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-18',
@@ -765,7 +765,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-1934-189',
     lastName: 'Armamento',
     firstName: 'Justin Rey',
-    citEmail: 'justinrey.armamento@cit.edu',
+    citEmail: 'justinrey312@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-19',
@@ -885,7 +885,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-0952-972',
     lastName: 'Salonga',
     firstName: 'Andre D.',
-    citEmail: 'andre.slonga@cit.edu',
+    citEmail: 'andresalonga.cit@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-22',
@@ -909,7 +909,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '17-1660-521',
     lastName: 'Belen',
     firstName: 'Gyrald Migel A.',
-    citEmail: 'gyraldmigel.belen@cit.edu',
+    citEmail: 'gyraldmigelbelen4604@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-23',
@@ -965,7 +965,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '21-3892-741',
     lastName: 'Aytona',
     firstName: 'Rod Ivanne',
-    citEmail: 'rodivanne.aytona@cit.edu',
+    citEmail: 'rodayban@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-24',
@@ -1045,7 +1045,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '17-0628-478',
     lastName: 'Lacida',
     firstName: 'Zyrrah Kaye',
-    citEmail: 'zyrrahkaye.lacida@cit.edu',
+    citEmail: 'zyrrahkayelacida@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-27',
@@ -1077,7 +1077,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-1061-884',
     lastName: 'Rentuma',
     firstName: 'Trixie Ann V.',
-    citEmail: 'trixieann.rentuma@cit.edu',
+    citEmail: 'trixieann750@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-27',
@@ -1093,7 +1093,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-6845-234',
     lastName: 'Matsuda',
     firstName: 'Joji',
-    citEmail: 'joji.matsuda@cit.edu',
+    citEmail: 'rubyxmanalo@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-28',
@@ -1189,7 +1189,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-2217-877',
     lastName: 'Binagatan',
     firstName: 'Alexander Jr.',
-    citEmail: 'alexander.binagatanjr@cit.edu',
+    citEmail: 'binagatanalexander2005@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-30',
@@ -1245,7 +1245,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-4103-535',
     lastName: 'Sy',
     firstName: 'Brye Kane',
-    citEmail: 'bryekane.sy@cit.edu',
+    citEmail: 'bryekanesy@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-32',
@@ -1301,7 +1301,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-5528-274',
     lastName: 'Morre',
     firstName: 'Lyndon Luke',
-    citEmail: 'lyndonluke.morre@cit.edu',
+    citEmail: 'morrelukerz@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-33',
@@ -1317,7 +1317,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-2854-502',
     lastName: 'Salutan',
     firstName: 'Sharaine Allyson',
-    citEmail: 'sharaineallyson.salutan@cit.edu',
+    citEmail: 'allysonsharaine@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-33',
@@ -1333,7 +1333,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '24-6911-700',
     lastName: 'Cañete',
     firstName: 'Rod Gabrielle',
-    citEmail: 'rodgabrielle.canete@cit.edu',
+    citEmail: 'rodgabriellecanete2002@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-34',
@@ -1493,7 +1493,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-0270-877',
     lastName: 'Camoro',
     firstName: 'Mark Anton',
-    citEmail: 'markanton.camoro@cit.edu',
+    citEmail: 'markantoncamoro@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-38',
@@ -1501,7 +1501,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-4222-156',
     lastName: 'Cabataña',
     firstName: 'Chris Daniel',
-    citEmail: 'chris.cabatana@cit.edu',
+    citEmail: 'chrisdanielcabatana@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-38',
@@ -1573,7 +1573,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '19-3374-587',
     lastName: 'Tan',
     firstName: 'Christian Aire',
-    citEmail: 'christianaire.tan@cit.edu',
+    citEmail: 'christianaire18@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-40',
@@ -1597,7 +1597,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-6862-913',
     lastName: 'Cabalida',
     firstName: 'John Gil',
-    citEmail: 'johngil.cabalida@cit.edu',
+    citEmail: 'jgcjgc123123@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-41',
@@ -1605,7 +1605,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-3597-554',
     lastName: 'Sia',
     firstName: 'David Ryan',
-    citEmail: 'davidryan.sia@cit.edu',
+    citEmail: 'davidrysia12@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-41',
@@ -1613,7 +1613,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-2250-144',
     lastName: 'Fernandez',
     firstName: 'Homer',
-    citEmail: 'homer.fernandez@cit.edu',
+    citEmail: 'homerfernandez213@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-41',
@@ -1637,7 +1637,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-4370-394',
     lastName: 'Esparcia',
     firstName: 'Earl Gerald',
-    citEmail: 'earlgerald.esparcia@cit.edu',
+    citEmail: 'earlgeraldesparcia@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-42',
@@ -1653,7 +1653,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-3389-294',
     lastName: 'Mando',
     firstName: 'Jhecy Leigh',
-    citEmail: 'jhecyleigh.mando@cit.edu',
+    citEmail: 'jhecyleightolibasmando@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-42',
@@ -1717,7 +1717,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '24-6011-462',
     lastName: 'Bramwell',
     firstName: 'Earion Icer',
-    citEmail: 'earionicer.bramwell@cit.edu',
+    citEmail: 'bramwellicer@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-44',
@@ -1749,7 +1749,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-1688-114',
     lastName: 'Batucan',
     firstName: 'Zly hanson',
-    citEmail: 'zly.batucan@cit.edu',
+    citEmail: 'zlyhansonbatucan@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-45',
@@ -1773,7 +1773,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-5194-719',
     lastName: 'Valmera',
     firstName: 'Harvey Rod Christian',
-    citEmail: 'harveyrodchristian.valmera@cit.edu',
+    citEmail: 'valmera27@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-45',
@@ -1781,7 +1781,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-4906-355',
     lastName: 'Baldon',
     firstName: 'Kirsten Shane',
-    citEmail: 'kirstenshane.baldon@cit.edu',
+    citEmail: 'kirstenshaneb@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-45',
@@ -1829,7 +1829,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-5971-220',
     lastName: 'Obejero',
     firstName: 'Kelvin Chad',
-    citEmail: 'kelvinchad.obejero@cit.edu',
+    citEmail: 'obejerochad@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-47',
@@ -1837,7 +1837,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '2011-40028',
     lastName: 'Ang',
     firstName: 'Joshua Phillip',
-    citEmail: 'joshuaphillip.ang@cit.edu',
+    citEmail: 'Joshuaphillipanggamer@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-47',
@@ -1877,7 +1877,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '20-1477-175',
     lastName: 'Geraldez',
     firstName: 'Junjie',
-    citEmail: 'junjie.geraldez@cit.edu',
+    citEmail: 'geraldezjunjie@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-48',
@@ -1893,7 +1893,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '23-6087-993',
     lastName: 'Pangan',
     firstName: 'Arnnon Zevv',
-    citEmail: 'arnnonzevv.pangan@cit.edu',
+    citEmail: 'arnnon.pangan123@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-48',
@@ -1901,7 +1901,7 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     studentSchoolId: '22-4020-761',
     lastName: 'Hudar',
     firstName: 'Charles Darwin',
-    citEmail: 'charlesdarwin.hudar@cit.edu',
+    citEmail: 'charlesdarwinhudar@gmail.com',
   },
   {
     teamCode: '2526-sem2-it332-48',

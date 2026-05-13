@@ -41,3 +41,13 @@
  navigation. Keep the `page-enter` class so existing markup stays valid — the rule is a no-op.
  */
 .page-enter { animation: none; }
+
+/*
+ Local keyframes used by one-shot notifications such as the student invitation
+ card (`StudentInvitationCard`). Page surfaces still render instantly — only
+ the dismissible toast slides in once when an invited Gmail account signs in.
+ */
+@keyframes fadeSlideIn {
+  0%   { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0)     scale(1);    }
+}
