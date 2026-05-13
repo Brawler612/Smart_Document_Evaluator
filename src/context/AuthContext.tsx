@@ -10,7 +10,7 @@ import {
   getConfiguredStudentDomains,
   STUDENT_EMAIL_REJECT_STORAGE_KEY,
 } from '../lib/studentEmailPolicy';
-import { isInvitedStudent } from '../data/invitedStudentEmails';
+import { isInvitedStudent, getInvitedStudentRosterEntry } from '../data/invitedStudentEmails';
 import { AppUser, UserRole } from '../types';
 
 interface Ctx {
@@ -106,7 +106,13 @@ function gatherAvatarSources(authUser: User): Array<Record<string, unknown>> {
 function fallbackProfile(authUser: User): AppUser {
   const email = authUser.email ?? '';
   const meta = authUser.user_metadata ?? {};
+  const rosterEntry = getInvitedStudentRosterEntry(email);
+  const officialRosterName = rosterEntry
+    ? `${rosterEntry.firstName} ${rosterEntry.lastName}`.trim()
+    : '';
+  const officialRosterSchoolId = rosterEntry?.studentSchoolId?.trim() ?? '';
   const full_name =
+    officialRosterName ||
     (typeof meta.full_name === 'string' && meta.full_name) ||
     (typeof meta.name === 'string' && meta.name) ||
     email.split('@')[0] ||
@@ -123,6 +129,7 @@ function fallbackProfile(authUser: User): AppUser {
     role,
     created_at: new Date().toISOString(),
     avatar_url,
+    ...(officialRosterSchoolId ? { student_number: officialRosterSchoolId } : {}),
   };
 }
 
@@ -141,13 +148,29 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     );
   }
 
+  /**
+   * The IT332 / CS342 class roster is the authoritative source for student display
+   * names. If this signing-in account is an invited student, we PIN their full_name
+   * to the official `firstName lastName` from `it332Sem2ClassRoster.ts` and never
+   * let the Google profile name (which may be a nickname, alias, or anime handle)
+   * overwrite it on subsequent sign-ins. For teachers / admins / other users, we
+   * keep the existing Google-profile-name behaviour.
+   */
+  const officialRosterEntry = getInvitedStudentRosterEntry(email);
+  const officialRosterName = officialRosterEntry
+    ? `${officialRosterEntry.firstName} ${officialRosterEntry.lastName}`.trim()
+    : '';
+  const officialRosterSchoolId = officialRosterEntry?.studentSchoolId?.trim() ?? '';
+
   const resolvedFullName =
+    officialRosterName ||
     (typeof meta.full_name === 'string' && meta.full_name.trim()) ||
     (typeof meta.name === 'string' && meta.name.trim()) ||
     (email ? email.split('@')[0] : '');
 
   const roster = rosterFieldsFromOAuthMetadata(meta as Record<string, unknown>);
   const avatar_url = extractAvatarUrl(...gatherAvatarSources(authUser));
+  const resolvedRosterStudentNumber = officialRosterSchoolId || roster.student_number;
 
   if (existing) {
     const patch: {
@@ -161,8 +184,8 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     if (existing.role !== roleFromConfig) patch.role = roleFromConfig;
     if (email && existing.email !== email) patch.email = email;
     if (resolvedFullName && existing.full_name !== resolvedFullName) patch.full_name = resolvedFullName;
-    if (roster.student_number && roster.student_number !== existing.student_number) {
-      patch.student_number = roster.student_number;
+    if (resolvedRosterStudentNumber && resolvedRosterStudentNumber !== existing.student_number) {
+      patch.student_number = resolvedRosterStudentNumber;
     }
     if (roster.course_year && roster.course_year !== existing.course_year) {
       patch.course_year = roster.course_year;
@@ -196,7 +219,7 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
     full_name,
     role: roleFromConfig,
   };
-  if (roster.student_number) insertRow.student_number = roster.student_number;
+  if (resolvedRosterStudentNumber) insertRow.student_number = resolvedRosterStudentNumber;
   if (roster.course_year) insertRow.course_year = roster.course_year;
   if (avatar_url) insertRow.avatar_url = avatar_url;
 

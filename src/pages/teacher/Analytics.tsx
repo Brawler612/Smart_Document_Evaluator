@@ -20,6 +20,7 @@ import {
 } from '../../components/teacher/TeacherWorkspaceChrome';
 import { supabase } from '../../lib/supabase';
 import { studentSubmissionsLinkForSubmission } from '../../lib/gradingRoutes';
+import { resolveStudentDisplayName } from '../../lib/teacherSubmissionLoad';
 import { useAuth } from '../../context/AuthContext';
 
 interface Stats {
@@ -43,7 +44,7 @@ interface RecentSub {
   file_name: string;
   score: number | null;
   submitted_at: string;
-  users: { full_name: string } | null;
+  users: { full_name: string; email: string } | null;
 }
 
 export default function Analytics() {
@@ -87,7 +88,7 @@ export default function Analytics() {
         table
           ? supabase
               .from(table)
-              .select('id, status, score, submitted_at, file_name, users(full_name)')
+              .select('id, status, score, submitted_at, file_name, users(full_name, email)')
               .order('submitted_at', { ascending: false })
           : Promise.resolve({ data: [] } as { data: unknown[] }),
         supabase.from('users').select('id', { count: 'exact' }).eq('role', 'student'),
@@ -104,7 +105,7 @@ export default function Analytics() {
         score: number | null;
         submitted_at: string;
         file_name: string;
-        users: { full_name: string } | null;
+        users: { full_name: string; email: string } | null;
       }[];
 
       const avgScore =
@@ -422,7 +423,9 @@ export default function Analytics() {
                               </div>
                             </td>
                             <td className="px-4 py-3 text-slate-700 truncate max-w-[140px]">
-                              {s.users?.full_name ?? 'Learner'}
+                              {resolveStudentDisplayName(s.users?.email, s.users?.full_name)?.trim() ||
+                                s.users?.full_name?.trim() ||
+                                'Learner'}
                             </td>
                             <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{formatShortDate(s.submitted_at)}</td>
                             <td className="px-4 py-3">

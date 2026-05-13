@@ -2,7 +2,46 @@
  * Shared Supabase/local merge pipeline for teacher submission lists (grading + submission log pages).
  */
 import { supabase } from './supabase';
+import { getInvitedStudentRosterEntry } from '../data/invitedStudentEmails';
 import type { DocType, SubStatus } from '../types';
+
+/**
+ * Resolve a student's display name from the **official class roster** when their
+ * email is on the IT332 / CS342 invite list. The class roster is the source of
+ * truth — Google profile names (which can be nicknames, anime handles, etc.) are
+ * ignored for invited students so the UI is "steady" regardless of how a student
+ * has renamed their Google account.
+ *
+ * For non-invited rows (teachers, admins, unmatched students) we keep whatever
+ * `full_name` came back from `public.users`.
+ */
+export function resolveStudentDisplayName(
+  email: string | null | undefined,
+  fallbackName: string | null | undefined
+): string {
+  const entry = getInvitedStudentRosterEntry(email);
+  if (entry) {
+    return `${entry.firstName} ${entry.lastName}`.trim();
+  }
+  return (fallbackName ?? '').trim();
+}
+
+/**
+ * Official school ID from the IT332 / CS342 planned roster when the student's
+ * Gmail is on the invite list. Supabase `users.student_number` is often empty
+ * until OAuth claims sync — this keeps submission / grading tables showing the
+ * steady `XX-XXXX-XXX` ID from the class list instead of a truncated auth UUID.
+ */
+export function resolveStudentSchoolId(
+  email: string | null | undefined,
+  fallbackSchoolId: string | null | undefined
+): string | null {
+  const entry = getInvitedStudentRosterEntry(email);
+  const fromRoster = entry?.studentSchoolId?.trim();
+  if (fromRoster) return fromRoster;
+  const fb = (fallbackSchoolId ?? '').trim();
+  return fb || null;
+}
 
 export const TEACHER_LOCAL_SUBMISSION_KEY = 'local_submission_fallback_v1';
 
@@ -34,6 +73,15 @@ export interface TeacherSubmission {
     course_year: string | null;
     avatar_url: string | null;
   } | null;
+}
+
+function applyInvitedRosterPinsToSubmission(s: TeacherSubmission): TeacherSubmission {
+  if (!s.users) return s;
+  const email = s.users.email;
+  const nextName = resolveStudentDisplayName(email, s.users.full_name) || s.users.full_name;
+  const nextId = resolveStudentSchoolId(email, s.users.student_number);
+  if (nextName === s.users.full_name && nextId === s.users.student_number) return s;
+  return { ...s, users: { ...s.users, full_name: nextName, student_number: nextId } };
 }
 
 export type LocalSubmissionRow = {
@@ -228,9 +276,15 @@ export function normalizeSubmissionRow(row: Record<string, unknown>): TeacherSub
       : null,
     users: uRec
       ? {
-          full_name: String(uRec.full_name ?? ''),
+          full_name: resolveStudentDisplayName(
+            String(uRec.email ?? ''),
+            String(uRec.full_name ?? '')
+          ) || String(uRec.full_name ?? ''),
           email: String(uRec.email ?? ''),
-          student_number: optTrimmedText(uRec.student_number),
+          student_number: resolveStudentSchoolId(
+            String(uRec.email ?? ''),
+            optTrimmedText(uRec.student_number)
+          ),
           course_year: optTrimmedText(uRec.course_year),
           avatar_url: optTrimmedText(uRec.avatar_url),
         }
@@ -327,7 +381,7 @@ async function enrichStudentRows(rows: TeacherSubmission[]): Promise<TeacherSubm
     }
   }
   return rows.map((s) => {
-    if (!submissionNeedsUserLookup(s)) return s;
+    if (!submissionNeedsUserLookup(s)) return applyInvitedRosterPinsToSubmission(s);
     const prevMail = (s.users?.email ?? '').trim();
     const u = userMap[s.student_id];
     const resolvedName = u?.full_name?.trim();
@@ -347,16 +401,22 @@ async function enrichStudentRows(rows: TeacherSubmission[]): Promise<TeacherSubm
 
     if (!label) label = inferNameFromFileName(s.file_name) ?? 'Unknown learner';
 
-    return {
+    /** Class roster wins — if this email is on the IT332/CS342 list, use the official name. */
+    const officialName = resolveStudentDisplayName(resolvedEmail, label);
+
+    return applyInvitedRosterPinsToSubmission({
       ...s,
       users: {
-        full_name: label,
+        full_name: officialName || label,
         email: resolvedEmail,
-        student_number: optTrimmedText(u?.student_number) ?? s.users?.student_number ?? null,
+        student_number: resolveStudentSchoolId(
+          resolvedEmail,
+          optTrimmedText(u?.student_number) ?? s.users?.student_number ?? null
+        ),
         course_year: optTrimmedText(u?.course_year) ?? s.users?.course_year ?? null,
         avatar_url: optTrimmedText(u?.avatar_url) ?? s.users?.avatar_url ?? null,
       },
-    };
+    });
   });
 }
 
@@ -421,10 +481,13 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
         },
         users: (() => {
           const u = userMap[row.student_id];
+          const email = (u?.email ?? '').trim();
+          const dbName = u?.full_name ?? row.student_id;
+          const dbNum = optTrimmedText(row.student_number) ?? optTrimmedText(u?.student_number);
           return {
-            full_name: u?.full_name ?? row.student_id,
+            full_name: resolveStudentDisplayName(email, dbName) || dbName,
             email: u?.email ?? '',
-            student_number: optTrimmedText(row.student_number) ?? optTrimmedText(u?.student_number),
+            student_number: resolveStudentSchoolId(email, dbNum),
             course_year: optTrimmedText(row.course_year) ?? optTrimmedText(u?.course_year),
             avatar_url: optTrimmedText(u?.avatar_url),
           };

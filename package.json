@@ -14,6 +14,7 @@
     "verify:gemini": "node scripts/test-gemini.mjs",
     "db:apply": "node scripts/apply-supabase-schema.mjs",
     "db:fix-rls": "node scripts/apply-supabase-schema.mjs docs/supabase-fix-users-rls-recursion.sql",
+    "db:dump": "node scripts/dump-supabase-database.mjs",
     "supabase:setup": "node scripts/prompt-supabase-setup.mjs",
     "supabase:fix-rls": "node scripts/prompt-supabase-fix-rls.mjs",
     "mascot:strip-bg": "node scripts/remove-mascot-white-matte.mjs",

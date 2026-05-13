@@ -132,7 +132,7 @@ This repo includes `vercel.json` so routes like `/assignments` load your React a
 
 1. New site from Git → build `npm run build`, publish directory `dist`.
 2. Site settings → Environment variables → add the same `VITE_*` keys.
-3. `public/_redirects` is copied into `dist` for SPA fallback.
+3. Add a `_redirects` file with `/* /index.html 200` (or a `netlify.toml` redirect rule) so the SPA falls back to `index.html` on deep links. This repo deploys on Vercel where `vercel.json` already handles that, so no `_redirects` is checked in.
 
 ## 4. Supabase (required for Google login on your live URL)
 

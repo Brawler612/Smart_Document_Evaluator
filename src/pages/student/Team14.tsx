@@ -11,7 +11,7 @@ export default function StudentTeam14() {
     const s = q.trim().toLowerCase();
     if (!s) return TEAM_14;
     return TEAM_14.filter((m) => {
-      const hay = [m.fullName, m.studentId, m.courseYear, m.citEmail, m.gmail].join(' ').toLowerCase();
+      const hay = [m.fullName, m.studentId, m.courseYear, m.citEmail, m.gmail, m.role].join(' ').toLowerCase();
       return hay.includes(s);
     });
   }, [q]);
@@ -67,7 +67,7 @@ export default function StudentTeam14() {
           <p className="text-[11px] font-semibold uppercase tracking-wide text-[#84001B]">Team 14</p>
         </div>
         <div className="max-h-[min(520px,70vh)] overflow-auto">
-          <table className="w-full min-w-[680px] border-collapse text-left text-[13px] leading-snug">
+          <table className="w-full min-w-[780px] border-collapse text-left text-[13px] leading-snug">
             <thead>
               <tr className="bg-[#84001B] text-white text-[11px] font-semibold uppercase tracking-wide">
                 <th className="px-4 py-3 whitespace-nowrap">Student name</th>
@@ -75,6 +75,7 @@ export default function StudentTeam14() {
                 <th className="px-3 py-3 whitespace-nowrap">Course &amp; year</th>
                 <th className="px-3 py-3 min-w-[10rem]">CIT email</th>
                 <th className="px-4 py-3 min-w-[10rem]">Gmail</th>
+                <th className="px-4 py-3 whitespace-nowrap text-center">Role</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -122,6 +123,17 @@ export default function StudentTeam14() {
                       <a href={`mailto:${m.gmail}`} className="text-gray-700 hover:text-[#84001B] hover:underline break-all">
                         {m.gmail}
                       </a>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+                          m.role === 'Leader'
+                            ? 'bg-[#84001B] text-white shadow-sm'
+                            : 'bg-[#ffd21a]/35 text-[#84001B] border border-[#ffd21a]/60'
+                        }`}
+                      >
+                        {m.role}
+                      </span>
                     </td>
                   </tr>
                 );

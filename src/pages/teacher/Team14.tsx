@@ -18,7 +18,7 @@ export default function Team14() {
     const s = q.trim().toLowerCase();
     if (!s) return TEAM_14;
     return TEAM_14.filter((m) => {
-      const hay = [m.fullName, m.studentId, m.courseYear, m.citEmail, m.gmail].join(' ').toLowerCase();
+      const hay = [m.fullName, m.studentId, m.courseYear, m.citEmail, m.gmail, m.role].join(' ').toLowerCase();
       return hay.includes(s);
     });
   }, [q]);
@@ -86,7 +86,7 @@ export default function Team14() {
           Same maroon spreadsheet header pattern as Class list — student first, identifiers and mail columns to the right.
         </TeacherAmberCue>
         <div className="max-h-[min(520px,70vh)] overflow-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,sans-serif] text-[13px] leading-snug">
+          <table className="w-full min-w-[820px] border-collapse text-left [font-family:system-ui,-apple-system,'Segoe_UI',Roboto,sans-serif] text-[13px] leading-snug">
             <thead>
               <tr className={teacherMaroonTheadClasses}>
                 <th className="px-4 py-3.5 whitespace-nowrap">Student name</th>
@@ -94,6 +94,7 @@ export default function Team14() {
                 <th className="px-3 py-3.5 whitespace-nowrap">Course &amp; year</th>
                 <th className="px-3 py-3.5 min-w-[10rem]">CIT email</th>
                 <th className="px-4 py-3.5 min-w-[10rem]">Gmail</th>
+                <th className="px-4 py-3.5 whitespace-nowrap text-center">Role</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -127,6 +128,17 @@ export default function Team14() {
                     <a href={`mailto:${m.gmail}`} className="text-slate-700 hover:text-[#84001B] hover:underline break-all">
                       {m.gmail}
                     </a>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-center">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+                        m.role === 'Leader'
+                          ? 'bg-[#84001B] text-white shadow-sm'
+                          : 'bg-[#ffd21a]/35 text-[#84001B] border border-[#ffd21a]/60'
+                      }`}
+                    >
+                      {m.role}
+                    </span>
                   </td>
                 </tr>
               ))}

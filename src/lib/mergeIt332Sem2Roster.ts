@@ -27,10 +27,12 @@ function syntheticId(p: It332PlannedMember): string {
 }
 
 function enrichFromPlanned(row: AppUser, p: It332PlannedMember): AppUser {
+  // The class list is the official source of truth — always display the roster name,
+  // even if the student's Google profile name is something different (nickname, alias, etc.).
   const fromRoster = rosterDisplayName(p);
   return {
     ...row,
-    full_name: row.full_name?.trim() ? row.full_name : fromRoster,
+    full_name: fromRoster,
     student_number: p.studentSchoolId,
     course_year: IT332_SEM2_COURSE_DISPLAY,
     school_year: IT332_SEM2_SCHOOL_YEAR,
@@ -57,7 +59,7 @@ function syntheticUser(p: It332PlannedMember): AppUser {
 }
 
 /**
- * Merges the official IT332 Sem 2 team sheet (G1–G65) with students from Supabase / cache.
+ * Merges the official IT332 Sem 2 team sheet with students from Supabase / cache.
  * Roster order is preserved; students who signed in with a different email still appear after the cohort.
  */
 export function mergeIt332Sem2RosterWithDatabase(dbAndCacheStudents: AppUser[]): AppUser[] {

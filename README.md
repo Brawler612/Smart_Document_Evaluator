@@ -460,7 +460,7 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 ├── db-dumps/                           ← Generated SQL dumps (gitignored)
 │   └── README.md                       ← How to dump / restore
 ├── docs/                               ← SQL bootstrap, RLS, storage policies, SRS, setup guides
-├── public/                             ← Static assets, mascot PNGs, _redirects
+├── public/                             ← Static assets, mascot PNGs
 ├── scripts/
 │   ├── lib/invitationEmailTemplate.mjs ← Shared HTML/text template for CLI scripts
 │   ├── send-invitation-email-test.mjs  ← npm run invite:test
@@ -471,7 +471,6 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 │   ├── check-env.mjs                   ← npm run verify:env
 │   ├── test-gemini.mjs                 ← npm run verify:gemini
 │   ├── remove-mascot-white-matte.mjs   ← npm run mascot:strip-bg
-│   ├── swap-cit-emails-to-gmail.mjs    ← one-off roster migration helper
 │   ├── gen-it332-roster-snippet.mjs    ← roster TS code generator
 │   └── google-forms/create-rate-us-form.gs  ← Apps Script (paste at script.google.com)
 ├── src/
@@ -509,7 +508,6 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 │   └── types/index.ts
 ├── vercel.json                         ← /api/* passthrough + SPA rewrite
 ├── DEPLOY.md                           ← Long-form deployment walkthrough
-├── CNAME                               ← www.smartformevaluator.com
 └── README.md (this file)
 ```
 

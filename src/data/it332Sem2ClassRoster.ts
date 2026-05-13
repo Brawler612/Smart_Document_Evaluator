@@ -1,5 +1,5 @@
 /**
- * IT332 · Sem 2 · 2025–2026 team formation (G1–G65 = teams 2526-sem2-it332-01 … 65).
+ * IT332 · Sem 2 · 2025–2026 team formation (teams 2526-sem2-it332-01 … 65).
  * Source: “IT332-CS342 Team Formation 2025-2026.ods” — Member #1 = team lead.
  *
  * Notes on data integrity:

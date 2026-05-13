@@ -1,6 +1,6 @@
 /**
  * Generates TS roster entries from unzipped ODS content.xml.
- * Filters IT332 Sem 2 teams 01–65 (G1–G65). Run:
+ * Filters IT332 Sem 2 teams 01–65. Run:
  * node scripts/gen-it332-roster-snippet.mjs C:/path/to/content.xml
  */
 import fs from 'fs';

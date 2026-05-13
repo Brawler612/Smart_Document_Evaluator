@@ -45,7 +45,7 @@ const DOC_COLORS: Record<string, string> = {
   Other: 'bg-slate-100 text-slate-600',
 };
 
-const QUICK_DOC_TYPES = ['SRS', 'SDD', 'SPMP', 'STD'] as const;
+const QUICK_DOC_TYPES = ['SRS', 'SDD', 'SPMP', 'STD', 'Other'] as const;
 
 function isMissingSubmissionDocTypeColumn(message: string | undefined): boolean {
   return /submission_doc_type|could not find|column|pgrst204|schema cache/i.test(message ?? '');
@@ -99,41 +99,54 @@ function SubmitUploadFields({
   quickDocType?: string;
   onPickDocType?: (code: string) => void;
 }) {
-  return (
-    <div className="space-y-3.5">
-      {variant === 'quick' && quickDocType != null && onPickDocType && (
-        <section>
-          <label
-            htmlFor="quick-doc-type-select"
-            className="block text-sm font-semibold text-slate-800 mb-1.5"
-          >
-            Document type
-          </label>
-          <div className="relative max-w-xs">
+  const quickDocTypeSection =
+    variant === 'quick' && quickDocType != null && onPickDocType ? (
+      <section>
+        <label
+          htmlFor="quick-doc-type-select"
+          className="block text-sm font-semibold text-slate-800 mb-1.5"
+        >
+          Document type <span className="text-[#84001B] font-bold">*</span>{' '}
+          <span className="text-slate-500 font-normal text-xs font-medium">(required)</span>
+        </label>
+        <div className="relative max-w-xs">
             <select
               id="quick-doc-type-select"
+              required
+              aria-required="true"
               value={quickDocType}
-              onChange={(e) => onPickDocType(e.target.value)}
-              className="w-full appearance-none pl-3 pr-9 py-2 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
-            >
-              <option value="">— None —</option>
-              {QUICK_DOC_TYPES.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"
-              aria-hidden
-            />
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">
-            Shown as the <span className="font-semibold text-slate-700">Title</span> in your instructor&apos;s grading queue.
-          </p>
-        </section>
-      )}
+              onChange={(e) => {
+                const code = e.target.value;
+                onPickDocType?.(code);
+                const t = code.trim();
+                if (selectedFile) {
+                  setFileName(t ? `${t}_${selectedFile.name}` : selectedFile.name);
+                }
+              }}
+            className={`w-full appearance-none pl-3 pr-9 py-2 border rounded-lg text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] ${
+              quickDocType ? 'border-slate-200 text-slate-800' : 'border-[#84001B]/40 text-slate-500'
+            }`}
+          >
+            <option value="" disabled>Select a document type…</option>
+            {QUICK_DOC_TYPES.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+          <ChevronDown
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"
+            aria-hidden
+          />
+        </div>
+        <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">
+          Pick the document type your file represents — it labels the upload for the instructor queue. <span className="font-semibold text-slate-700">You must choose one to send.</span>
+        </p>
+      </section>
+    ) : null;
 
+  return (
+    <div className="space-y-3.5">
       <div className="rounded-lg border border-[#84001B]/20 bg-[#84001B]/10 px-3 py-2.5">
         <div className="flex gap-2">
           {variant === 'quick' ? (
@@ -144,7 +157,9 @@ function SubmitUploadFields({
           <div className="min-w-0 text-[11px] text-slate-700 leading-snug">
             {variant === 'quick' ? (
               <p>
-                <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path</span> · Pick a type (optional), attach one file. Confirm on{' '}
+                <span className="font-bold text-[#84001B] uppercase tracking-wide">Quick path</span> ·{' '}
+                <span className="font-semibold text-slate-900">Choose a file first</span> (or type a display name if you have no file yet). Document type is{' '}
+                <span className="font-semibold text-slate-900">required</span>. Confirm on{' '}
                 <span className="font-semibold text-slate-900">Submission status</span>.
               </p>
             ) : (
@@ -160,7 +175,7 @@ function SubmitUploadFields({
 
       <div>
         <label htmlFor={`su-file-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
-          Attach file
+          Attach file <span className="text-slate-500 font-normal text-xs font-medium">(recommended)</span>
         </label>
         <input
           id={`su-file-${variant}`}
@@ -190,7 +205,7 @@ function SubmitUploadFields({
 
       <div>
         <label htmlFor={`su-name-${variant}`} className="block text-sm font-semibold text-slate-800 mb-1.5">
-          Display name <span className="text-slate-400 font-normal text-xs font-medium">— required if no file</span>
+          Display name <span className="text-slate-400 font-normal text-xs font-medium">— only if you are not attaching a file</span>
         </label>
         <div className="relative">
           <FileText className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" aria-hidden />
@@ -198,11 +213,13 @@ function SubmitUploadFields({
             id={`su-name-${variant}`}
             value={fileName}
             onChange={(e) => setFileName(e.target.value)}
-            placeholder={variant === 'quick' ? 'Fills when you choose a file' : 'e.g. SRS_final_Group3.pdf'}
+            placeholder={variant === 'quick' ? 'e.g. My_SRS_draft.pdf (or leave blank when you attach a file)' : 'e.g. SRS_final_Group3.pdf'}
             className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] bg-white"
           />
         </div>
       </div>
+
+      {variant === 'quick' ? quickDocTypeSection : null}
 
       {variant === 'task' && (
         <div>
@@ -545,6 +562,10 @@ export default function StudentAssignments() {
     e.preventDefault();
     if ((!fileName.trim() && !selectedFile) || !user?.id) return;
     if (submissionSchemaMissing) return;
+    if (!quickDocType.trim()) {
+      alert('Please choose a document type (SRS, SDD, SPMP, STD, or Other) before sending.');
+      return;
+    }
     setSaving(true);
     try {
       const finalFileName = selectedFile?.name || fileName.trim();
@@ -1193,15 +1214,7 @@ export default function StudentAssignments() {
                 key="quick-fields"
                 variant="quick"
                 quickDocType={quickDocType}
-                onPickDocType={(code) => {
-                  setQuickDocType(code);
-                  const t = code.trim();
-                  if (selectedFile) {
-                    setFileName(t ? `${t}_${selectedFile.name}` : selectedFile.name);
-                  } else {
-                    setFileName(t);
-                  }
-                }}
+                onPickDocType={setQuickDocType}
                 fileName={fileName}
                 setFileName={setFileName}
                 selectedFile={selectedFile}
@@ -1209,15 +1222,22 @@ export default function StudentAssignments() {
                 submissionText={submissionText}
                 setSubmissionText={setSubmissionText}
               />
-              {!canSendUpload && (
+              {(!canSendUpload || !quickDocType) && (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5 mt-3">
-                  Choose a file or type a display name before sending.
+                  {!canSendUpload && (
+                    <>Choose a file or type a display name before sending. </>
+                  )}
+                  {!quickDocType && (
+                    <>
+                      <span className="font-semibold">Document type is required</span> — pick one of SRS, SDD, SPMP, STD, or Other to enable upload.
+                    </>
+                  )}
                 </p>
               )}
               <div className="flex gap-2.5 pt-3 border-t border-slate-100 mt-4">
                 <button type="button" onClick={() => setQuickSubmitOpen(false)}
                   className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={saving || !canSendUpload || submissionSchemaMissing}
+                <button type="submit" disabled={saving || !canSendUpload || !quickDocType || submissionSchemaMissing}
                   className="flex-1 bg-[#84001B] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 shadow-md shadow-[#84001B]/20">
                   {saving ? 'Sending…' : 'Send upload'}
                 </button>

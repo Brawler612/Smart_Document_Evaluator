@@ -26,3 +26,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Local Supabase database dumps (real student PII; share out-of-band, don't commit)
+db-dumps/*.sql
+db-dumps/*.dump
+db-dumps/*.tar
+db-dumps/*.gz

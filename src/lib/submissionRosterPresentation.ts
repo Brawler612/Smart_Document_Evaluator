@@ -1,5 +1,5 @@
 import type { SubStatus } from '../types';
-import type { TeacherSubmission } from './teacherSubmissionLoad';
+import { resolveStudentSchoolId, type TeacherSubmission } from './teacherSubmissionLoad';
 
 /** Both instructor-published score and AI draft exist — treat as fully graded for roster/status display even if `status` lags. */
 export function submissionHasPublishedScoreAndAiDraft(s: {
@@ -70,7 +70,9 @@ export function rosterStatusChip(s: TeacherSubmission): { label: string; classNa
 }
 
 export function studentIdBadge(s: TeacherSubmission): string {
-  const num = s.users?.student_number?.trim();
+  const num =
+    resolveStudentSchoolId(s.users?.email, s.users?.student_number ?? null)?.trim() ||
+    s.users?.student_number?.trim();
   if (num) return `# ${num}`;
   const id = s.student_id?.trim();
   if (!id) return '—';

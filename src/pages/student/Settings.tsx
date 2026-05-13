@@ -1,47 +1,18 @@
-import { useEffect, useState } from 'react';
 import {
   ShieldCheck,
-  Save,
-  CheckCircle,
-  AlertCircle,
   Mail,
   BadgeCheck,
   UserRound,
   ExternalLink,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import UserAvatar from '../../components/UserAvatar';
+import { resolveStudentDisplayName } from '../../lib/teacherSubmissionLoad';
 
 export default function Settings() {
   const { user } = useAuth();
-  const [fullName, setFullName] = useState('');
-  const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
-  const [savingProfile, setSavingProfile] = useState(false);
-
-  useEffect(() => {
-    setFullName(user?.full_name || '');
-    setProfileMsg(null);
-  }, [user?.id, user?.full_name]);
-
-  const trimmed = fullName.trim();
-  const noChanges = !!(user?.full_name ?? '').trim() && trimmed === (user?.full_name ?? '').trim();
-
-  async function updateProfile(e: React.FormEvent) {
-    e.preventDefault();
-    if (!user?.id || !trimmed) return;
-    setSavingProfile(true);
-    setProfileMsg(null);
-    const { error } = await supabase.from('users').update({ full_name: trimmed }).eq('id', user.id);
-    setSavingProfile(false);
-    setProfileMsg(
-      error
-        ? { type: 'error', text: 'Could not save your name. Try again in a moment.' }
-        : { type: 'success', text: 'Your display name has been saved.' }
-    );
-  }
+  const displayName =
+    resolveStudentDisplayName(user?.email, user?.full_name)?.trim() || user?.full_name?.trim() || '—';
 
   return (
     <div className="min-h-full bg-gradient-to-b from-slate-100/95 via-[#faf8f8] to-slate-100/85">
@@ -55,7 +26,8 @@ export default function Settings() {
             <span className="pt-1">Account settings</span>
           </h1>
           <p className="text-slate-600 text-sm mt-3 max-w-md leading-relaxed">
-            Update how your name appears, and review how Google keeps your sign-in secure.
+            Your display name is set from the official IT332 / CS342 class roster and cannot be changed here.
+            Review how Google keeps your sign-in secure below.
           </p>
         </header>
 
@@ -64,7 +36,7 @@ export default function Settings() {
             <div className="flex items-start gap-4 mb-6">
               <UserAvatar
                 src={user?.avatar_url}
-                name={trimmed || user?.full_name}
+                name={displayName}
                 email={user?.email}
                 size={56}
                 rounded="2xl"
@@ -73,45 +45,27 @@ export default function Settings() {
                 fallbackFg="text-[#84001B]"
               />
               <div className="min-w-0 pt-0.5">
-                <h2 className="font-bold text-slate-900 leading-tight text-lg">
-                  {trimmed || 'Add your name'}
-                </h2>
+                <h2 className="font-bold text-slate-900 leading-tight text-lg">{displayName}</h2>
                 <p className="text-sm text-slate-500 mt-1 truncate">{user?.email ?? '—'}</p>
               </div>
             </div>
 
-            {profileMsg && (
-              <div
-                className={`flex items-start gap-2.5 p-3.5 rounded-xl mb-5 text-sm border ${
-                  profileMsg.type === 'success'
-                    ? 'bg-[#ffd21a]/12 text-slate-800 border-[#84001B]/15'
-                    : 'bg-red-50 text-red-800 border-red-100'
-                }`}
-                role={profileMsg.type === 'error' ? 'alert' : 'status'}
-              >
-                {profileMsg.type === 'success' ? (
-                  <CheckCircle className="w-4 h-4 flex-shrink-0 text-[#84001B] mt-0.5" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                )}
-                {profileMsg.text}
-              </div>
-            )}
-
-            <form onSubmit={updateProfile} className="space-y-5">
+            <div className="space-y-5">
               <div>
                 <label htmlFor="settings-full-name" className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
                   Full name
                 </label>
                 <input
                   id="settings-full-name"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                  autoComplete="name"
-                  placeholder="e.g. Casey Martinez"
-                  className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]"
+                  value={displayName}
+                  disabled
+                  readOnly
+                  aria-readonly="true"
+                  className="w-full px-4 py-3 border border-slate-200/80 rounded-xl text-sm bg-slate-50 text-slate-700 cursor-default"
                 />
+                <p className="text-xs text-slate-500 mt-1.5 leading-snug">
+                  To correct a spelling, ask your instructor — the roster is updated in Smart Docs, not in Google.
+                </p>
               </div>
 
               <div className="rounded-xl bg-slate-50/90 border border-slate-100 p-4 md:p-5 space-y-4">
@@ -148,32 +102,7 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
-
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <button
-                  type="submit"
-                  disabled={savingProfile || !trimmed || noChanges}
-                  className="inline-flex items-center gap-2 bg-[#84001B] text-[#ffd21a] px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#6b0016] transition-colors disabled:opacity-50 disabled:pointer-events-none shadow-sm"
-                >
-                  <Save className="w-4 h-4" aria-hidden />
-                  {savingProfile ? 'Saving…' : 'Save name'}
-                </button>
-                <button
-                  type="button"
-                  disabled={noChanges && !profileMsg}
-                  onClick={() => {
-                    setFullName(user?.full_name || '');
-                    setProfileMsg(null);
-                  }}
-                  className="inline-flex items-center gap-2 border border-slate-300 bg-white text-slate-700 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-50 hover:border-slate-400 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  Cancel
-                </button>
-                {noChanges && trimmed && (
-                  <span className="text-xs text-slate-500">No edits to save yet.</span>
-                )}
-              </div>
-            </form>
+            </div>
           </section>
 
           <section className="bg-white border border-slate-200/90 rounded-2xl p-6 md:p-7 shadow-sm">

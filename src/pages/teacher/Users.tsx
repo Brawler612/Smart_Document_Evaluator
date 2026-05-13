@@ -45,12 +45,6 @@ function looksLikeUuid(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
 }
 
-function it332TeamGroupLabel(teamCode: string | null | undefined): string | null {
-  const m = teamCode?.match(/2526-sem2-it332-(\d{2})$/);
-  if (!m) return null;
-  return `IT332 G${Number(m[1])}`;
-}
-
 function formatClassListDateTime(iso: string | null | undefined): string {
   if (!iso?.trim()) return '—';
   const d = new Date(iso);
@@ -542,7 +536,6 @@ export default function UserManagement() {
       'Student name',
       'Student ID',
       'Team code',
-      'Group',
       'Course',
       'School year',
       'Email',
@@ -552,13 +545,11 @@ export default function UserManagement() {
     ];
     const lines = filtered.map((u, idx) => {
       const latest = latestSubmissionByStudentId.get(u.id) ?? null;
-      const group = it332TeamGroupLabel(u.team_code) ?? '';
       return [
         csvCell(String(idx + 1)),
         csvCell(u.full_name),
         csvCell(u.student_number ?? ''),
         csvCell(u.team_code ?? ''),
-        csvCell(group),
         csvCell(u.course_year ?? ''),
         csvCell(u.school_year ?? ''),
         csvCell(u.email ?? ''),
@@ -590,7 +581,7 @@ export default function UserManagement() {
                 Class list
               </h1>
               <p className="text-slate-600 text-sm mt-2 max-w-2xl leading-relaxed">
-                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> (G1–G65) first, then everyone else.
+                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> first, then everyone else.
                 <span className="font-medium text-slate-800"> Awaiting sign-in</span> — roster only until Google matches email or ID.
                 <span className="font-medium text-slate-800"> Uploaded files</span> — grade, resubmit, or delete like grading. Groups:{' '}
                 <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
@@ -921,7 +912,6 @@ export default function UserManagement() {
                 <tbody className="divide-y divide-slate-100">
                   {filtered.map((u, idx) => {
                     const latest = directoryRowExtras(u);
-                    const teamG = it332TeamGroupLabel(u.team_code);
                     const submittedAt =
                       latest && latest.submitted_at?.trim() !== ''
                         ? formatClassListDateTime(latest.submitted_at)
@@ -946,9 +936,8 @@ export default function UserManagement() {
                               <p className="font-semibold text-[13.5px] text-slate-900 truncate tracking-tight">
                                 {u.full_name?.trim() || 'Unnamed'}
                               </p>
-                              {teamG && (
+                              {(u.roster_member_number === 1 || u.roster_pending) && (
                                 <p className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                                  <span className="font-medium">{teamG}</span>
                                   {u.roster_member_number === 1 && (
                                     <span className="text-[10px] font-semibold uppercase tracking-wide text-[#84001B]/90">
                                       Lead
