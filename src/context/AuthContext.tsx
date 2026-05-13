@@ -251,19 +251,18 @@ function rejectStudentIfWrongCampusEmail(profile: AppUser): boolean {
 }
 
 /**
- * Smart Docs is currently a private evaluation build for the IT332 / CS342 cohort.
- * Only the gmail addresses listed in `INVITED_STUDENT_GMAILS` may sign in as students;
- * teachers and admins (whitelisted via VITE_TEACHER_EMAILS / VITE_ADMIN_EMAILS) are
- * always allowed.
+ * Student sign-in is limited to Team 14: only Gmail addresses on the class roster
+ * (`INVITED_STUDENT_GMAILS`) may sign in as students. Teachers and admins (whitelisted
+ * via VITE_TEACHER_EMAILS / VITE_ADMIN_EMAILS) are always allowed.
  */
 function rejectIfNotInvitedStudent(profile: AppUser): boolean {
   if (profile.role !== 'student') return false;
   if (isInvitedStudent(profile.email)) return false;
   sessionStorage.setItem(
     STUDENT_EMAIL_REJECT_STORAGE_KEY,
-    'Smart Docs is currently a private evaluation build for the IT332 / CS342 cohort. ' +
-      'Please sign in with the Gmail address that received your invitation, or contact ' +
-      'the Smart Docs team if you believe you should have access.'
+    'Smart Docs is for TEAM 14 only. This Google account is not on the TEAM 14 class roster. ' +
+      'Sign in with the Gmail your instructor has on file for TEAM 14, or contact your instructor ' +
+      'or the Smart Docs team if you think you should be in this class.'
   );
   return true;
 }
