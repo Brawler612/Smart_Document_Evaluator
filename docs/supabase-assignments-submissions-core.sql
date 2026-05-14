@@ -20,7 +20,7 @@ create table if not exists public.assignments (
 
 alter table public.assignments drop constraint if exists assignments_document_type_check;
 alter table public.assignments
-  add constraint assignments_document_type_check check (document_type in ('SRS', 'SDD', 'SPMP', 'Other'));
+  add constraint assignments_document_type_check check (document_type in ('SRS', 'SDD', 'SPMP', 'STD', 'Other'));
 
 alter table public.assignments drop constraint if exists assignments_status_check;
 alter table public.assignments

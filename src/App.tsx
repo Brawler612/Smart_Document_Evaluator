@@ -7,6 +7,7 @@ import ReviewQueue from './pages/teacher/ReviewQueue';
 import TeacherStudentSubmissions from './pages/teacher/StudentSubmissions';
 import TeacherDocuments from './pages/teacher/Documents';
 import Analytics from './pages/teacher/Analytics';
+import TeacherCourseAssignments from './pages/teacher/TeacherCourseAssignments';
 import ClassList from './pages/teacher/Users';
 import Instructions from './pages/teacher/Instructions';
 import TeacherSettings from './pages/teacher/Settings';
@@ -87,6 +88,7 @@ function AuthenticatedRoutes() {
         {isTeacher && <Route path="documents" element={<TeacherDocuments />} />}
         {isTeacher && <Route path="analytics" element={<Analytics />} />}
         {isTeacher && <Route path="teacher-settings" element={<TeacherSettings />} />}
+        {isTeacher && <Route path="course-tasks" element={<TeacherCourseAssignments />} />}
         {isTeacher && <Route path="class-list" element={<ClassList />} />}
         {isTeacher && <Route path="inbox" element={<Instructions />} />}
         {isTeacher && <Route path="instructions" element={<Instructions />} />}

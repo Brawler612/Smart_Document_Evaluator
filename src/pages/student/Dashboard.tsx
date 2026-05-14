@@ -30,11 +30,12 @@ import {
   formatShortDate,
   useStudentWorkspace,
 } from '../../lib/studentWorkspaceData';
+import StudentDeadlineReminders from '../../components/student/StudentDeadlineReminders';
 
 const QUICK_LINKS: { to: string; label: string; description: string; icon: typeof Home; tint: string }[] = [
   {
     to: '/assignments',
-    label: 'Submit work',
+    label: 'Submit Work',
     description: 'Quick path or per-task uploads',
     icon: Upload,
     tint: 'bg-[#84001B] text-[#ffd21a]',
@@ -145,6 +146,8 @@ export default function StudentDashboard() {
         ]}
       />
 
+      <StudentDeadlineReminders />
+
       {!loading && resubmit.length > 0 && (
         <div
           role="alert"
@@ -156,13 +159,13 @@ export default function StudentDashboard() {
               Your instructor requested a revised upload ({resubmit.length} file{resubmit.length !== 1 ? 's' : ''})
             </p>
             <p className="text-red-900/90 mt-1">
-              Open Submission status to read feedback and submit again.
+              Open Submission Status to read feedback and submit again.
             </p>
             <Link
               to="/my-submissions"
               className="inline-flex items-center gap-1 mt-3 text-sm font-semibold text-red-900 underline hover:text-red-950"
             >
-              Go to Submission status
+              Go to Submission Status
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>

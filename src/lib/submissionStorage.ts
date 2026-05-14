@@ -143,3 +143,25 @@ function guessedMimeFromName(fileName: string): string | null {
   };
   return map[ext] ?? null;
 }
+
+/** Teacher-uploaded task spec / rubric file; stored under `handouts/` prefix in the same bucket as submissions. */
+export async function uploadAssignmentHandout(
+  file: File,
+  teacherId: string
+): Promise<{ publicUrl: string; storedName: string }> {
+  const bucket = getSubmissionStorageBucket();
+  if (!bucket) throw new Error('NO_BUCKET');
+  const safe = sanitizeStoredFileName(file.name);
+  const path = `handouts/${sanitizeIdSegment(teacherId)}/${Date.now()}_${safe}`;
+  const ct = file.type?.trim() || guessedMimeFromName(file.name) || 'application/octet-stream';
+
+  const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+    contentType: ct,
+  });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  return { publicUrl: data.publicUrl, storedName: file.name };
+}

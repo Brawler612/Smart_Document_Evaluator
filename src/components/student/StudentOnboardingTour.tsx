@@ -37,7 +37,7 @@ const STEPS: Step[] = [
   {
     title: 'TASK',
     body:
-      "When your teacher posts work, open Submit work in the side menu to read the brief and upload your task. " +
+      "When your teacher posts work, open Submit Work in the side menu to read the brief and upload your task. " +
       "PDFs, Word documents, and images are all accepted — the AI evaluator reads them all.",
   },
   {

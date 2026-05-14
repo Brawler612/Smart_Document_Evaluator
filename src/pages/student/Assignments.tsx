@@ -20,6 +20,7 @@ import {
   Inbox,
   Clock,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resolveStudentSubmissionFileUrl } from '../../lib/submissionStorage';
@@ -35,6 +36,8 @@ interface Assignment {
   due_date: string | null;
   status: string;
   submitted?: boolean;
+  handout_url?: string | null;
+  handout_file_name?: string | null;
 }
 
 const DOC_COLORS: Record<string, string> = {
@@ -314,6 +317,8 @@ export default function StudentAssignments() {
   const [taskFilter, setTaskFilter] = useState<'all' | 'open' | 'sent'>('all');
   /** Synchronous guard so double-clicks / double Enter cannot enqueue two inserts before `saving` paints. */
   const submitInFlightRef = useRef(false);
+  const openTaskConsumedRef = useRef<string | null>(null);
+  const openTaskId = searchParams.get('openTask');
 
   async function resolveAssignmentTable(): Promise<'assignments' | 'assignment' | null> {
     if (assignmentTable) return assignmentTable;
@@ -397,6 +402,31 @@ export default function StudentAssignments() {
   }
 
   useEffect(() => { load(); }, [user]);
+
+  useEffect(() => {
+    if (!openTaskId) {
+      openTaskConsumedRef.current = null;
+      return;
+    }
+    if (loading || assignments.length === 0) return;
+    if (openTaskConsumedRef.current === openTaskId) return;
+    const a = assignments.find((x) => x.id === openTaskId);
+    openTaskConsumedRef.current = openTaskId;
+    if (a && !a.submitted) {
+      setSubmitting(a);
+      setFileName('');
+      setSubmissionText('');
+      setSelectedFile(null);
+    }
+    setSearchParams(
+      (prev) => {
+        const n = new URLSearchParams(prev);
+        n.delete('openTask');
+        return n;
+      },
+      { replace: true }
+    );
+  }, [openTaskId, loading, assignments, setSearchParams]);
 
   async function ensureGeneralAssignment(): Promise<string | null> {
     const table = await resolveAssignmentTable();
@@ -627,7 +657,10 @@ export default function StudentAssignments() {
     }
   }
 
-  const filtered = assignments.filter(a =>
+  const nonGeneralAssignments = assignments.filter((a) => a.title !== GENERAL_SUBMISSION_ASSIGNMENT_TITLE);
+
+  const filtered = nonGeneralAssignments.filter(
+    (a) =>
     a.title.toLowerCase().includes(search.toLowerCase()) ||
     a.document_type.toLowerCase().includes(search.toLowerCase())
   );
@@ -638,7 +671,7 @@ export default function StudentAssignments() {
 
   const canSendUpload = Boolean(fileName.trim() || selectedFile);
 
-  const hasAnyTasks = assignments.length > 0;
+  const hasAnyTasks = nonGeneralAssignments.length > 0;
   const visibleTasks =
     taskFilter === 'open' ? upcoming : taskFilter === 'sent' ? submitted : filtered;
 
@@ -646,7 +679,7 @@ export default function StudentAssignments() {
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const firstName = user?.full_name?.split(/\s+/)[0] ?? 'there';
 
-  const totalAssignments = assignments.length;
+  const totalAssignments = nonGeneralAssignments.length;
   const overdueCount = upcoming.filter((a) => describeDueDate(a.due_date).tone === 'overdue').length;
 
   function openQuickSubmitModal() {
@@ -1029,6 +1062,18 @@ export default function StudentAssignments() {
                               </div>
                               {a.description && !isSent && (
                                 <p className="text-sm text-slate-500 mt-1 line-clamp-2">{a.description}</p>
+                              )}
+                              {a.handout_url && !isSent && (
+                                <a
+                                  href={a.handout_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  download={a.handout_file_name ?? true}
+                                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-[#84001B] hover:underline"
+                                >
+                                  <Download className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                  Instructor handout
+                                </a>
                               )}
                               {!isSent && (
                                 <div className="mt-2 inline-flex">

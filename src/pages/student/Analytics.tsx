@@ -93,7 +93,18 @@ export default function StudentAnalytics() {
   }, [submissions]);
 
   const totalActive = assignments.filter((a) => a.status === 'active').length;
-  const completion = pct(submittedAssignmentIds.size, totalActive);
+  const activeAssignmentIds = useMemo(
+    () => new Set(assignments.filter((a) => a.status === 'active').map((a) => a.id)),
+    [assignments]
+  );
+  const submittedActiveCount = useMemo(() => {
+    let n = 0;
+    for (const id of submittedAssignmentIds) {
+      if (activeAssignmentIds.has(id)) n += 1;
+    }
+    return n;
+  }, [submittedAssignmentIds, activeAssignmentIds]);
+  const completion = pct(submittedActiveCount, totalActive);
 
   const recentTrend = useMemo(() => {
     return [...reviewedScored]

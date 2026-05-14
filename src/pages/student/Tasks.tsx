@@ -11,6 +11,7 @@ import {
   ChevronRight,
   RotateCcw,
   FileText,
+  Download,
 } from 'lucide-react';
 import {
   StudentPageHero,
@@ -28,6 +29,7 @@ import {
   type StudentAssignmentRow,
 } from '../../lib/studentWorkspaceData';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
+import StudentDeadlineReminders from '../../components/student/StudentDeadlineReminders';
 
 type Group = 'overdue' | 'today' | 'thisWeek' | 'later' | 'noDate';
 type GroupedItem = { a: StudentAssignmentRow; due: ReturnType<typeof describeDueRelative> };
@@ -139,6 +141,8 @@ export default function StudentTasks() {
           { label: 'Overdue', value: loading ? '—' : groups.overdue.length },
         ]}
       />
+
+      <StudentDeadlineReminders />
 
       {!loading && redoCount > 0 && (
         <div
@@ -385,6 +389,18 @@ export default function StudentTasks() {
                             {a.description && !done && !needsRedo && (
                               <p className="text-sm text-slate-500 mt-1 line-clamp-2">{a.description}</p>
                             )}
+                            {a.handout_url && !done && !needsRedo && (
+                              <a
+                                href={a.handout_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                download={a.handout_file_name ?? true}
+                                className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-[#84001B] hover:underline"
+                              >
+                                <Download className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                Instructor handout
+                              </a>
+                            )}
                             {needsRedo && sub && (
                               <div className="mt-2 rounded-xl border border-red-200 bg-red-50/80 p-2.5 text-[12px] text-red-950">
                                 <p className="font-semibold mb-1 flex items-center gap-1.5">
@@ -443,7 +459,7 @@ export default function StudentTasks() {
                               </Link>
                             ) : (
                               <Link
-                                to="/assignments"
+                                to={`/assignments?openTask=${encodeURIComponent(a.id)}`}
                                 className="inline-flex items-center gap-1 bg-[#84001B] text-white text-xs px-3 py-2 rounded-xl hover:bg-[#6b0016] font-semibold shadow-sm whitespace-nowrap"
                               >
                                 Turn in <ChevronRight className="w-3 h-3" />

@@ -317,6 +317,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   /** Bump on sign-out or session cleared so late profile fetches cannot repopulate `user`. */
   const profileLoadGen = useRef(0);
+  /**
+   * Auth `user.id` after campus + class-list gates succeeded. Used so duplicate
+   * `SIGNED_IN` / `USER_UPDATED` events (e.g. tab refocus, token sync) do not call
+   * `setUser(null)` again — that was remounting the whole app shell ("Verifying access")
+   * and resetting scroll on /class-list and other routes.
+   */
+  const hydratedAuthUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -335,6 +342,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(safetyTimer);
       setSession(next);
       if (next?.user) {
+        const authId = next.user.id;
+        if (hydratedAuthUserIdRef.current === authId) {
+          /** Same account already passed gates — keep UI mounted; only rotate session. */
+          setLoading(false);
+          return;
+        }
         profileLoadGen.current += 1;
         const gen = profileLoadGen.current;
         /** Do not set `user` until campus + class-list gates pass — avoids flashing the app shell to unauthorized accounts. */
@@ -344,21 +357,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!alive) return;
           if (gen !== profileLoadGen.current) return;
           if (rejectStudentIfWrongCampusEmail(profile)) {
+            hydratedAuthUserIdRef.current = null;
             await supabase.auth.signOut({ scope: 'global' });
             if (alive) setLoading(false);
             return;
           }
           if (rejectIfNotInvitedStudent(profile)) {
+            hydratedAuthUserIdRef.current = null;
             await supabase.auth.signOut({ scope: 'global' });
             if (alive) setLoading(false);
             return;
           }
           mergeProfileIntoClassRosterCache(profile);
+          hydratedAuthUserIdRef.current = profile.id;
           setUser(profile);
           setLoading(false);
         });
       } else {
         profileLoadGen.current += 1;
+        hydratedAuthUserIdRef.current = null;
         setUser(null);
         setLoading(false);
       }
@@ -381,7 +398,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(next);
           return;
         }
-        if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && next?.user) {
+        if (event === 'USER_UPDATED' && next?.user) {
+          /** Metadata sync — must not clear `user` or the SPA remounts and scroll resets. */
+          if (!alive) return;
+          window.clearTimeout(safetyTimer);
+          setSession(next);
+          return;
+        }
+        if (event === 'SIGNED_IN' && next?.user) {
           apply(next);
         }
       });
@@ -423,6 +447,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     profileLoadGen.current += 1;
+    hydratedAuthUserIdRef.current = null;
     setSession(null);
     setUser(null);
     await Promise.resolve();

@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import { syncLocalSubmissionsToSupabase } from './localSubmissionSync';
 import { getStudentHiddenSubmissionIds } from './studentDeleteSubmission';
 import { useAuth } from '../context/AuthContext';
+import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from './teacherSubmissionLoad';
 
 /**
  * Broadcast channel name fired by `studentDeleteSubmission` whenever a row is
@@ -23,6 +24,8 @@ export interface StudentAssignmentRow {
   due_date: string | null;
   max_score: number | null;
   status: string;
+  handout_url?: string | null;
+  handout_file_name?: string | null;
 }
 
 export interface StudentSubmissionRow {
@@ -47,14 +50,38 @@ interface StudentWorkspaceData {
   refresh: () => Promise<void>;
 }
 
+function mapAssignmentRow(row: Record<string, unknown>): StudentAssignmentRow {
+  return {
+    id: String(row.id ?? ''),
+    title: String(row.title ?? ''),
+    description: row.description != null ? String(row.description) : null,
+    document_type: String(row.document_type ?? 'Other'),
+    due_date: row.due_date != null ? String(row.due_date) : null,
+    max_score: typeof row.max_score === 'number' ? row.max_score : row.max_score != null ? Number(row.max_score) : null,
+    status: String(row.status ?? 'active'),
+    handout_url: typeof row.handout_url === 'string' && row.handout_url ? row.handout_url : null,
+    handout_file_name:
+      typeof row.handout_file_name === 'string' && row.handout_file_name ? row.handout_file_name : null,
+  };
+}
+
 async function safeFetchAssignments(): Promise<StudentAssignmentRow[]> {
   const tables = ['assignments', 'assignment'] as const;
+  const baseCols = 'id, title, description, document_type, due_date, max_score, status';
+  const extCols = `${baseCols}, handout_url, handout_file_name`;
   for (const t of tables) {
-    const r = await supabase
-      .from(t)
-      .select('id, title, description, document_type, due_date, max_score, status')
-      .order('due_date', { ascending: true });
-    if (!r.error) return (r.data ?? []) as StudentAssignmentRow[];
+    const ext = await supabase.from(t).select(extCols).order('due_date', { ascending: true });
+    if (!ext.error) {
+      return (ext.data ?? []).map((row) => mapAssignmentRow(row as Record<string, unknown>));
+    }
+    if (
+      /handout_url|handout_file_name|column|does not exist|schema cache|42703/i.test(ext.error.message ?? '')
+    ) {
+      const base = await supabase.from(t).select(baseCols).order('due_date', { ascending: true });
+      if (!base.error) {
+        return (base.data ?? []).map((row) => mapAssignmentRow(row as Record<string, unknown>));
+      }
+    }
   }
   return [];
 }
@@ -96,7 +123,7 @@ async function safeFetchSubmissions(studentId: string): Promise<StudentSubmissio
 function assignmentsSignature(rows: StudentAssignmentRow[]): string {
   if (rows.length === 0) return '0';
   let out = String(rows.length);
-  for (const r of rows) out += `|${r.id}:${r.title}:${r.due_date ?? ''}:${r.status}:${r.max_score ?? ''}`;
+  for (const r of rows) out += `|${r.id}:${r.title}:${r.due_date ?? ''}:${r.status}:${r.max_score ?? ''}:${r.handout_url ?? ''}`;
   return out;
 }
 
@@ -144,14 +171,15 @@ export function useStudentWorkspace(): StudentWorkspaceData {
         /* best-effort sync; ignore failures */
       }
       const [a, s] = await Promise.all([safeFetchAssignments(), safeFetchSubmissions(userId)]);
+      const visibleAssignments = a.filter((row) => row.title !== GENERAL_SUBMISSION_ASSIGNMENT_TITLE);
       /** Honor the per-browser soft-delete set so removed rows disappear everywhere. */
       const hidden = getStudentHiddenSubmissionIds();
       const nextSubmissions = hidden.size === 0 ? s : s.filter((row) => !hidden.has(row.id));
 
-      const aSig = assignmentsSignature(a);
+      const aSig = assignmentsSignature(visibleAssignments);
       if (aSig !== assignmentsSigRef.current) {
         assignmentsSigRef.current = aSig;
-        setAssignments(a);
+        setAssignments(visibleAssignments);
       }
       const sSig = submissionsSignature(nextSubmissions);
       if (sSig !== submissionsSigRef.current) {

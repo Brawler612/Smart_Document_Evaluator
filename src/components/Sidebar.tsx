@@ -15,6 +15,7 @@ import {
   Folder,
   Table2,
   BarChart3,
+  NotebookPen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -42,9 +43,10 @@ const TEACHER_SECTIONS: NavSection[] = [
   {
     label: 'Teaching',
     items: [
-      { to: '/class-list', icon: Users, label: 'Class list' },
+      { to: '/class-list', icon: Users, label: 'Class List' },
       { to: '/student-submissions', icon: FileText, label: 'Student Submissions' },
-      { to: '/grading', icon: ClipboardList, label: 'Grading System' },
+      { to: '/course-tasks', icon: NotebookPen, label: 'Course Tasks' },
+      { to: '/grading', icon: ClipboardList, label: 'Grades' },
       { to: '/reports', icon: CheckSquare, label: 'Reports' },
     ],
   },
@@ -73,8 +75,8 @@ const STUDENT_SECTIONS: NavSection[] = [
   {
     label: 'Submit',
     items: [
-      { to: '/assignments', icon: Upload, label: 'Submit work' },
-      { to: '/my-submissions', icon: FileText, label: 'Submission status' },
+      { to: '/assignments', icon: Upload, label: 'Submit Work' },
+      { to: '/my-submissions', icon: FileText, label: 'Submission Status' },
     ],
   },
   {
