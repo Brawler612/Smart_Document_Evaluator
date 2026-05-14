@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -99,6 +99,14 @@ function SubmitUploadFields({
   quickDocType?: string;
   onPickDocType?: (code: string) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function clearSelectedFile() {
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setFileName('');
+  }
+
   const quickDocTypeSection =
     variant === 'quick' && quickDocType != null && onPickDocType ? (
       <section>
@@ -178,6 +186,7 @@ function SubmitUploadFields({
           Attach file <span className="text-slate-500 font-normal text-xs font-medium">(recommended)</span>
         </label>
         <input
+          ref={fileInputRef}
           id={`su-file-${variant}`}
           type="file"
           onChange={(e) => {
@@ -191,15 +200,26 @@ function SubmitUploadFields({
           className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1.5 file:px-3 file:border-0 file:rounded-lg file:bg-[#84001B] file:text-white file:text-xs file:font-semibold bg-white"
         />
         {selectedFile && (
-          <p className="text-[11px] text-slate-600 mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1 border border-slate-100">
-            <span className="font-semibold">Selected:</span> {selectedFile.name}{' '}
-            <span className="tabular-nums text-slate-500">
-              ({selectedFile.size < 1048576
-                ? `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`
-                : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
-              )
-            </span>
-          </p>
+          <div className="flex items-start gap-2 mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 border border-slate-100">
+            <p className="text-[11px] text-slate-600 min-w-0 flex-1 leading-snug">
+              <span className="font-semibold">Selected:</span> {selectedFile.name}{' '}
+              <span className="tabular-nums text-slate-500">
+                ({selectedFile.size < 1048576
+                  ? `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`
+                  : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
+                )
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={clearSelectedFile}
+              className="shrink-0 rounded-lg p-1 text-slate-500 hover:bg-slate-200/80 hover:text-slate-800 transition-colors"
+              aria-label="Remove selected file"
+              title="Remove file"
+            >
+              <X className="w-4 h-4" aria-hidden />
+            </button>
+          </div>
         )}
       </div>
 
@@ -292,6 +312,8 @@ export default function StudentAssignments() {
   });
   const [linkCopied, setLinkCopied] = useState(false);
   const [taskFilter, setTaskFilter] = useState<'all' | 'open' | 'sent'>('all');
+  /** Synchronous guard so double-clicks / double Enter cannot enqueue two inserts before `saving` paints. */
+  const submitInFlightRef = useRef(false);
 
   async function resolveAssignmentTable(): Promise<'assignments' | 'assignment' | null> {
     if (assignmentTable) return assignmentTable;
@@ -526,8 +548,11 @@ export default function StudentAssignments() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    if (submitInFlightRef.current || saving) return;
     if (!submitting || (!fileName.trim() && !selectedFile)) return;
     if (submissionSchemaMissing) return;
+    submitInFlightRef.current = true;
     setSaving(true);
     const finalFileName = selectedFile?.name || fileName.trim();
     let extractedText = submissionText.trim();
@@ -554,18 +579,22 @@ export default function StudentAssignments() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Submit failed.');
     } finally {
+      submitInFlightRef.current = false;
       setSaving(false);
     }
   }
 
   async function handleQuickSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    if (submitInFlightRef.current || saving) return;
     if ((!fileName.trim() && !selectedFile) || !user?.id) return;
     if (submissionSchemaMissing) return;
     if (!quickDocType.trim()) {
       alert('Please choose a document type (SRS, SDD, SPMP, STD, or Other) before sending.');
       return;
     }
+    submitInFlightRef.current = true;
     setSaving(true);
     try {
       const finalFileName = selectedFile?.name || fileName.trim();
@@ -593,6 +622,7 @@ export default function StudentAssignments() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Submit failed.');
     } finally {
+      submitInFlightRef.current = false;
       setSaving(false);
     }
   }
