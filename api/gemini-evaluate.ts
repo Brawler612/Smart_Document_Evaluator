@@ -7,6 +7,11 @@
  * `*.vercel.app` / custom domains (a common reason localhost works but
  * production always falls back to the 2% heuristic).
  *
+ * Uses Vercel’s **Web fetch** export (`export default { fetch }`) so the
+ * function matches the current Node.js runtime contract. The legacy
+ * `(req, res)` default export can fail at cold start with
+ * `FUNCTION_INVOCATION_FAILED` on newer builders.
+ *
  * Vercel → Project → Environment Variables (Production + Preview as needed):
  *   - GEMINI_API_KEY   (required) Google AI Studio key (usually AIzaSy…).
  *                        Aliases also accepted: GOOGLE_GEMINI_API_KEY,
@@ -25,31 +30,23 @@ import {
   type RubricCriterionRow,
 } from '../src/lib/geminiDocumentEvaluation.ts';
 
-type RequestLike = {
-  method?: string;
-  headers?: Record<string, string | string[] | undefined>;
-  body?: unknown;
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-type ResponseLike = {
-  setHeader: (name: string, value: string) => void;
-  status: (code: number) => ResponseLike;
-  json: (data: unknown) => void;
-  end: () => void;
-};
+/** ~10 MiB decoded payload budget so JSON.parse + Gemini request stay under serverless RAM. */
+const MAX_ATTACHMENT_DECODED_BYTES = 10 * 1024 * 1024;
 
-function headerString(req: RequestLike, name: string): string | undefined {
-  const h = req.headers;
-  if (!h) return undefined;
-  const v = h[name] ?? h[name.toLowerCase()];
-  if (Array.isArray(v)) return v[0];
-  return typeof v === 'string' ? v : undefined;
+function jsonResponse(data: unknown, status: number): Response {
+  return Response.json(data, { status, headers: CORS_HEADERS });
 }
 
-function originOrFromReferrer(req: RequestLike): string | undefined {
-  const o = headerString(req, 'origin') ?? headerString(req, 'Origin');
+function originFromRequest(request: Request): string | undefined {
+  const o = request.headers.get('origin')?.trim();
   if (o) return o;
-  const ref = headerString(req, 'referer') ?? headerString(req, 'Referer');
+  const ref = request.headers.get('referer')?.trim();
   if (!ref) return undefined;
   try {
     return new URL(ref).origin;
@@ -81,6 +78,23 @@ function isAttachmentList(x: unknown): x is GeminiInlineAttachment[] {
 }
 
 /**
+ * Keeps multimodal calls stable on Vercel: huge base64 PDFs / many Word images
+ * can OOM the isolate before Google is reached.
+ */
+function clampAttachmentsForServer(list: GeminiInlineAttachment[] | undefined): GeminiInlineAttachment[] | undefined {
+  if (!list?.length) return undefined;
+  let total = 0;
+  const out: GeminiInlineAttachment[] = [];
+  for (const a of list) {
+    const estDecoded = Math.floor(a.data.length * 0.75);
+    if (total + estDecoded > MAX_ATTACHMENT_DECODED_BYTES) break;
+    total += estDecoded;
+    out.push(a);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
  * Loose allow-list: same deployment family + localhost. Stops drive-by
  * abuse of your Gemini quota from random origins (the key is still server-only).
  */
@@ -100,21 +114,6 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   }
 }
 
-function readJsonBody(body: unknown): Record<string, unknown> {
-  if (!body) return {};
-  if (typeof body === 'string') {
-    try {
-      return JSON.parse(body) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-  if (typeof body === 'object') {
-    return body as Record<string, unknown>;
-  }
-  return {};
-}
-
 function serverGeminiApiKey(): string {
   return (
     process.env.GEMINI_API_KEY ||
@@ -125,79 +124,91 @@ function serverGeminiApiKey(): string {
   ).trim();
 }
 
-export default async function handler(req: RequestLike, res: ResponseLike): Promise<void> {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
-  if (req.method !== 'POST') {
-    res.status(405).json({ ok: false, error: 'Method not allowed' });
-    return;
-  }
-
-  const origin = originOrFromReferrer(req);
-  if (!isAllowedOrigin(origin)) {
-    res.status(403).json({
-      ok: false,
-      error:
-        'Forbidden: invalid Origin. The AI evaluator proxy only accepts requests from this app’s own domain.',
-    });
-    return;
-  }
-
-  const apiKey = serverGeminiApiKey();
-  if (!apiKey) {
-    res.status(503).json({
-      ok: false,
-      error:
-        'GEMINI_API_KEY is not set on the server. In Vercel → Settings → Environment Variables add GEMINI_API_KEY (your AI Studio key), then redeploy.',
-    });
-    return;
-  }
-
-  const raw = readJsonBody(req.body);
-  const docType = typeof raw.docType === 'string' ? raw.docType : '';
-  const content = typeof raw.content === 'string' ? raw.content : '';
-  const templateRaw = Array.isArray(raw.template) ? raw.template : null;
-  if (!docType || !templateRaw || templateRaw.length === 0 || !isRubricTemplate(templateRaw)) {
-    res.status(400).json({
-      ok: false,
-      error: 'JSON body must include docType (string) and template (non-empty array of { name, score, max, comment }).',
-    });
-    return;
-  }
-  const template = templateRaw;
-  const attachments = isAttachmentList(raw.attachments) ? raw.attachments : undefined;
-
-  const modelFromBody = typeof raw.model === 'string' ? raw.model.trim() : '';
-  const model = modelFromBody || (process.env.VITE_GEMINI_MODEL || '').trim() || null;
-
-  try {
-    const result = await runGeminiBackedEvaluation({
-      docType,
-      content,
-      template,
-      attachments,
-      evalUrl: null,
-      apiKey,
-      model,
-    });
-
-    if (!result) {
-      res.status(502).json({
-        ok: false,
-        error: 'Gemini did not return usable rubric JSON. Try again in a minute or shorten the submission.',
-      });
-      return;
+export default {
+  async fetch(request: Request): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    if (request.method !== 'POST') {
+      return jsonResponse({ ok: false, error: 'Method not allowed' }, 405);
     }
 
-    res.status(200).json({ ok: true, ...result });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    res.status(502).json({ ok: false, error: msg.slice(0, 800) });
-  }
-}
+    const origin = originFromRequest(request);
+    if (!isAllowedOrigin(origin)) {
+      return jsonResponse(
+        {
+          ok: false,
+          error:
+            'Forbidden: invalid Origin. The AI evaluator proxy only accepts requests from this app’s own domain.',
+        },
+        403
+      );
+    }
+
+    const apiKey = serverGeminiApiKey();
+    if (!apiKey) {
+      return jsonResponse(
+        {
+          ok: false,
+          error:
+            'GEMINI_API_KEY is not set on the server. In Vercel → Settings → Environment Variables add GEMINI_API_KEY (your AI Studio key), then redeploy.',
+        },
+        503
+      );
+    }
+
+    let raw: Record<string, unknown>;
+    try {
+      raw = (await request.json()) as Record<string, unknown>;
+    } catch {
+      return jsonResponse({ ok: false, error: 'Invalid or malformed JSON body.' }, 400);
+    }
+
+    const docType = typeof raw.docType === 'string' ? raw.docType : '';
+    const content = typeof raw.content === 'string' ? raw.content : '';
+    const templateRaw = Array.isArray(raw.template) ? raw.template : null;
+    if (!docType || !templateRaw || templateRaw.length === 0 || !isRubricTemplate(templateRaw)) {
+      return jsonResponse(
+        {
+          ok: false,
+          error:
+            'JSON body must include docType (string) and template (non-empty array of { name, score, max, comment }).',
+        },
+        400
+      );
+    }
+    const template = templateRaw;
+    const rawAttachments = isAttachmentList(raw.attachments) ? raw.attachments : undefined;
+    const attachments = clampAttachmentsForServer(rawAttachments);
+
+    const modelFromBody = typeof raw.model === 'string' ? raw.model.trim() : '';
+    const model = modelFromBody || (process.env.VITE_GEMINI_MODEL || '').trim() || null;
+
+    try {
+      const result = await runGeminiBackedEvaluation({
+        docType,
+        content,
+        template,
+        attachments,
+        evalUrl: null,
+        apiKey,
+        model,
+      });
+
+      if (!result) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: 'Gemini did not return usable rubric JSON. Try again in a minute or shorten the submission.',
+          },
+          502
+        );
+      }
+
+      return jsonResponse({ ok: true, ...result }, 200);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return jsonResponse({ ok: false, error: msg.slice(0, 800) }, 502);
+    }
+  },
+};
