@@ -2693,7 +2693,7 @@ export default function ReviewQueue() {
                             </p>
                           )}
                           <AIDocumentEvaluationReport
-                            criteria={[]}
+                            criteria={aiCriteria}
                             aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
                             teacherScorePercent={gradeMode === 'ai' ? null : selected.status === 'reviewed' && selected.score != null ? selected.score : null}
                             summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}

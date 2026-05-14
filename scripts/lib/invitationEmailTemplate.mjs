@@ -6,7 +6,12 @@
  * when changing the design.
  */
 
-const APP_URL_DEFAULT = 'https://smartformevaluator.com';
+const APP_URL_DEFAULT = 'https://smart-document-evalutator.vercel.app';
+
+function loginUrlFromBase(base) {
+  const b = String(base || '').trim().replace(/\/$/, '');
+  return b ? `${b}/login` : '/login';
+}
 const SURVEY_URL_DEFAULT =
   'https://docs.google.com/forms/d/e/1FAIpQLSeZGz5bD6sf-XMKk3tjachS03eZOsLmDYb3Sd1GgtnB2o_qlA/viewform';
 
@@ -27,6 +32,7 @@ export function firstName(value) {
 
 export function buildInvitationHtml(name, options = {}) {
   const appUrl = options.appUrl || APP_URL_DEFAULT;
+  const loginUrl = loginUrlFromBase(appUrl);
   const surveyUrl = options.surveyUrl || SURVEY_URL_DEFAULT;
   const safeName = escapeHtml(firstName(name));
 
@@ -71,7 +77,7 @@ export function buildInvitationHtml(name, options = {}) {
 
           <tr>
             <td align="center" style="padding:22px 32px 8px;">
-              <a href="${appUrl}"
+              <a href="${loginUrl}"
                  style="display:inline-block;background:#84001B;color:#ffffff;padding:14px 40px;border-radius:999px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.3px;box-shadow:0 4px 14px rgba(132,0,27,0.28);">
                 Open Smart Docs
               </a>
@@ -106,7 +112,7 @@ export function buildInvitationHtml(name, options = {}) {
             <td style="padding:0 30px 26px;text-align:center;">
               <p style="margin:0;font-size:11.5px;color:#94a3b8;line-height:1.6;">
                 If the button doesn&rsquo;t work, copy and paste this link into your browser:<br>
-                <a href="${appUrl}" style="color:#84001B;text-decoration:underline;">${appUrl}</a>
+                <a href="${loginUrl}" style="color:#84001B;text-decoration:underline;">${loginUrl}</a>
               </p>
             </td>
           </tr>
@@ -126,6 +132,7 @@ export function buildInvitationHtml(name, options = {}) {
 
 export function buildInvitationText(name, options = {}) {
   const appUrl = options.appUrl || APP_URL_DEFAULT;
+  const loginUrl = loginUrlFromBase(appUrl);
   const surveyUrl = options.surveyUrl || SURVEY_URL_DEFAULT;
   return [
     `Hi ${firstName(name)},`,
@@ -135,7 +142,7 @@ export function buildInvitationText(name, options = {}) {
     'this Gmail to upload your task, view your complete AI evaluation report, and',
     'tell us how to make the system better.',
     '',
-    `Open Smart Docs:  ${appUrl}`,
+    `Open Smart Docs:  ${loginUrl}`,
     `Rate us:          ${surveyUrl}`,
     '',
     'Note: You are receiving this email because you are part of the IT332 / CS342',

@@ -426,6 +426,25 @@ function enrichThinExecutiveSummary(exec: string, criteria: RubricCriterionRow[]
   return t ? `${t}\n\nFurther rubric-backed detail:\n\n${expansion}` : expansion;
 }
 
+/**
+ * The grading UI parses "Strengths:" / "Needs improvement:" for the two summary
+ * columns. Models sometimes omit them (especially on long prose). Derive a
+ * minimal tail from rubric scores so the report never looks "empty above the fold".
+ */
+function appendStrengthsGapsTailFromCriteria(exec: string, criteria: RubricCriterionRow[]): string {
+  const t = exec.trim();
+  if (criteria.length === 0 || executiveSummaryHasUiTail(t)) return t;
+  const ratio = (c: RubricCriterionRow) => (c.max > 0 ? c.score / c.max : 0);
+  const strengths = criteria.filter((c) => c.max > 0 && ratio(c) >= 0.85).map((c) => c.name);
+  const improvements = criteria.filter((c) => c.max > 0 && ratio(c) < 0.75).map((c) => c.name);
+  const tail = [
+    strengths.length ? `Strengths: ${strengths.join(', ')}.` : '',
+    improvements.length ? `Needs improvement: ${improvements.join(', ')}.` : '',
+  ].filter(Boolean);
+  if (tail.length === 0) return t;
+  return t ? `${t}\n\n${tail.join('\n')}` : tail.join('\n');
+}
+
 function normalizeDocumentQualityNotes(parsed: ParsedPayload | null): string {
   const n = parsed?.documentQualityNotes;
   return typeof n === 'string' ? n.trim().slice(0, DOC_QUALITY_NOTES_MAX_CHARS) : '';
@@ -748,6 +767,8 @@ Length budget (KEEP RESPONSES MEDIUM — long answers get truncated and lose the
 
 Other rules:
 - Include every rubric name exactly once in criteria; names must match character-for-character (case-sensitive).
+- If the extracted text body is empty or very short but usable PDF/images/audio/video are attached, treat the attachment(s) as the full submission. Read them end-to-end and return MEDIUM-depth criteria comments plus a full executive summary grounded in what you actually see — do not assign all zeros unless the visible work is missing, blank, or clearly non-compliant.
+- When any PDF/image/video/audio attachment contains real content, you MUST NOT leave correctHighlights, pageRewrites, and documentOverviewScores all empty at once — populate at least 3 correctHighlights (use bracketed PDF/diagram labels in excerpt when there is no plain quote), at least 3 pageRewrites (page numbers you can infer from the file), and at least 3 documentOverviewScores spans. languageCorrections may stay [] if there is truly no extractable text.
 - If the body is empty or too short AND no usable media was attached, still return real per-criterion scores (low if appropriate) plus a short executive summary; pageRewrites / diagramEvaluations may then be empty arrays.
 - If you start to run long, shorten the optional sections (pageRewrites, documentOverviewScores, diagramEvaluations, languageCorrections, correctHighlights, documentQualityNotes) FIRST — never sacrifice criteria scores or executiveSummary.`;
 }
@@ -782,6 +803,8 @@ ${submissionLabel}
 ---
 ${hasTextBody ? truncateBody(content) : '(no text — use attached media)'}
 ---
+
+If there is no text but attached media is present, grade strictly from that media; do not return all-zero scores unless the visible work is empty or clearly non-compliant.
 
 Return EXACTLY this shape (keep each comment 1–2 sentences, executive summary 2–4 sentences):
 {"executiveSummary":"<2-4 sentences ending with 'Strengths: ...' and 'Needs improvement: ...' on their own lines>","documentQualityNotes":"","criteria":[{"name":"exact rubric name","score":<int 0..max>,"comment":"<1-2 sentences grounded in the submission>"}],"languageCorrections":[],"correctHighlights":[],"pageRewrites":[],"documentOverviewScores":[],"diagramEvaluations":[]}`;
@@ -874,7 +897,7 @@ async function callGeminiRestOnce(
   model: string,
   prompt: string,
   attachments: GeminiInlineAttachment[],
-  maxOutputTokens = 12_288
+  maxOutputTokens = 16_384
 ): Promise<ParsedPayload | null> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
@@ -928,7 +951,7 @@ async function callGeminiRest(
   model: string,
   prompt: string,
   attachments: GeminiInlineAttachment[],
-  maxOutputTokens = 12_288
+  maxOutputTokens = 16_384
 ): Promise<ParsedPayload | null> {
   const candidates = geminiModelCandidates(model || 'gemini-2.5-flash', attachments.length > 0);
   let lastError: Error | null = null;
@@ -1121,6 +1144,7 @@ export async function runGeminiBackedEvaluation(options: {
   }
   let executiveSummary = normalizeExecutiveSummary(parsed);
   executiveSummary = enrichThinExecutiveSummary(executiveSummary, merged);
+  executiveSummary = appendStrengthsGapsTailFromCriteria(executiveSummary, merged);
   const documentQualityNotes = normalizeDocumentQualityNotes(parsed);
   const languageCorrections = normalizeLanguageCorrections(parsed?.languageCorrections);
   const correctHighlights = normalizeCorrectHighlights(parsed?.correctHighlights);

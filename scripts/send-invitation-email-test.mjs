@@ -12,7 +12,7 @@
  *
  * Optional env overrides:
  *   SMARTDOCS_FROM_EMAIL   default "Smart Docs Validator <onboarding@resend.dev>"
- *   SMARTDOCS_APP_URL      default "https://smartformevaluator.com"
+ *   SMARTDOCS_APP_URL      default "https://smart-document-evalutator.vercel.app"
  *   SMARTDOCS_SURVEY_URL   default the IT332 Software Usability survey
  */
 
@@ -28,7 +28,7 @@ const FROM_EMAIL =
   (process.env.SMARTDOCS_FROM_EMAIL || '').trim() ||
   'Smart Docs Validator <onboarding@resend.dev>';
 const APP_URL =
-  (process.env.SMARTDOCS_APP_URL || '').trim() || 'https://smartformevaluator.com';
+  (process.env.SMARTDOCS_APP_URL || '').trim() || 'https://smart-document-evalutator.vercel.app';
 const SURVEY_URL =
   (process.env.SMARTDOCS_SURVEY_URL || '').trim() ||
   'https://docs.google.com/forms/d/e/1FAIpQLSeZGz5bD6sf-XMKk3tjachS03eZOsLmDYb3Sd1GgtnB2o_qlA/viewform';

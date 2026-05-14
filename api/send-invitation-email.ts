@@ -10,7 +10,7 @@
  *   - RESEND_API_KEY        (required) Resend API key. Get one for free at https://resend.com.
  *   - SMARTDOCS_FROM_EMAIL  (optional) Defaults to `Smart Docs Validator <onboarding@resend.dev>`.
  *                            Override once you verify a custom domain in Resend.
- *   - SMARTDOCS_APP_URL     (optional) Defaults to `https://smartformevaluator.com`.
+ *   - SMARTDOCS_APP_URL     (optional) Defaults to `https://smart-document-evalutator.vercel.app`.
  *   - SMARTDOCS_SURVEY_URL  (optional) Defaults to the IT332 Software Usability survey form.
  *
  * Local development:
@@ -90,8 +90,8 @@ const ALLOWED = new Set(INVITED_STUDENT_GMAILS.map((e) => e.toLowerCase()));
 const FROM_EMAIL =
   (process.env.SMARTDOCS_FROM_EMAIL || '').trim() ||
   'Smart Docs Validator <onboarding@resend.dev>';
-const APP_URL =
-  (process.env.SMARTDOCS_APP_URL || '').trim() || 'https://smartformevaluator.com';
+const APP_URL = (process.env.SMARTDOCS_APP_URL || '').trim() || 'https://smart-document-evalutator.vercel.app';
+const LOGIN_URL = `${APP_URL.replace(/\/$/, '')}/login`;
 const SURVEY_URL =
   (process.env.SMARTDOCS_SURVEY_URL || '').trim() ||
   'https://docs.google.com/forms/d/e/1FAIpQLSeZGz5bD6sf-XMKk3tjachS03eZOsLmDYb3Sd1GgtnB2o_qlA/viewform';
@@ -162,7 +162,7 @@ function buildInvitationHtml(name: string): string {
 
           <tr>
             <td align="center" style="padding:22px 32px 8px;">
-              <a href="${APP_URL}"
+              <a href="${LOGIN_URL}"
                  style="display:inline-block;background:#84001B;color:#ffffff;padding:14px 40px;border-radius:999px;text-decoration:none;font-weight:700;font-size:15px;letter-spacing:0.3px;box-shadow:0 4px 14px rgba(132,0,27,0.28);">
                 Open Smart Docs
               </a>
@@ -197,7 +197,7 @@ function buildInvitationHtml(name: string): string {
             <td style="padding:0 30px 26px;text-align:center;">
               <p style="margin:0;font-size:11.5px;color:#94a3b8;line-height:1.6;">
                 If the button doesn&rsquo;t work, copy and paste this link into your browser:<br>
-                <a href="${APP_URL}" style="color:#84001B;text-decoration:underline;">${APP_URL}</a>
+                <a href="${LOGIN_URL}" style="color:#84001B;text-decoration:underline;">${LOGIN_URL}</a>
               </p>
             </td>
           </tr>
@@ -223,7 +223,7 @@ function buildInvitationText(name: string): string {
     'document evaluator built for the IT332 / CS342 cohort. Sign in with this Gmail to',
     'upload your task, get a complete AI evaluation report, and tell us what to ship next.',
     '',
-    `Open Smart Docs:  ${APP_URL}`,
+    `Open Smart Docs:  ${LOGIN_URL}`,
     `Rate us now:      ${SURVEY_URL}`,
     '',
     'Note: You are receiving this email because you are part of the IT332 / CS342 cohort',
