@@ -144,6 +144,9 @@ export function formatGeminiEvaluationError(err: unknown): string {
     if (/HTTP 403|PERMISSION_DENIED|blocked/i.test(m)) {
       return 'Access was denied. Enable the Gemini / Generative Language API for this project and confirm the API key restrictions allow that API.';
     }
+    if (/GEMINI_API_KEY is not set on the server/i.test(m)) {
+      return 'Vercel is missing GEMINI_API_KEY. Open Vercel → this project → Settings → Environment Variables → add GEMINI_API_KEY (Google AI Studio key), enable Production, save, then redeploy.';
+    }
     if (/No Gemini model worked for this key/i.test(m)) {
       return 'No model ID worked with this API key. Use a key from Google AI Studio (usually starts with AIzaSy) or set VITE_GEMINI_MODEL to an id from https://ai.google.dev/gemini-api/docs/models — then restart npm run dev.';
     }

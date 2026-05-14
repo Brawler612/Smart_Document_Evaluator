@@ -30,7 +30,7 @@ export function resolveGeminiEvalRuntime(): GeminiEvalRuntime {
   return { evalUrl: null, apiKey: null, model: model || undefined };
 }
 
-/** True when the UI should treat live Gemini as available (not only the heuristic draft). */
+/** @deprecated Prefer probing GET /api/gemini-evaluate + `geminiEvalReady` in ReviewQueue — production needs GEMINI_API_KEY on Vercel. */
 export function isGeminiLiveConfiguredForClient(): boolean {
   return Boolean(
     (import.meta.env.VITE_GEMINI_EVAL_URL as string | undefined)?.trim() ||

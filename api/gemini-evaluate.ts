@@ -1,5 +1,6 @@
 /**
- * POST /api/gemini-evaluate
+ * POST /api/gemini-evaluate — runs Gemini with `GEMINI_API_KEY` (server secret).
+ * GET /api/gemini-evaluate — `{ ok, serverKeyConfigured }` for grading UI (no secrets).
  *
  * Server-side Gemini proxy for production. Uses the same **Node (req, res)**
  * default export as `send-invitation-email.ts`. The Web `{ fetch }` export can
@@ -141,19 +142,30 @@ function serverGeminiApiKey(): string {
 
 export default async function handler(req: RequestLike, res: ResponseLike): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
   }
+
+  const origin = originOrFromReferrer(req);
+
+  if (req.method === 'GET') {
+    if (!isAllowedOrigin(origin)) {
+      res.status(403).json({ ok: false, error: 'Forbidden: invalid Origin.' });
+      return;
+    }
+    res.status(200).json({ ok: true, serverKeyConfigured: Boolean(serverGeminiApiKey()) });
+    return;
+  }
+
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'Method not allowed' });
     return;
   }
 
-  const origin = originOrFromReferrer(req);
   if (!isAllowedOrigin(origin)) {
     res.status(403).json({
       ok: false,
