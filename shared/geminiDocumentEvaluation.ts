@@ -15,10 +15,10 @@
  *   which uses `GEMINI_API_KEY` on the server (Vercel env) — stable on custom domains and avoids referrer blocks.
  */
 
-import type { GeminiInlineAttachment } from './geminiAttachments';
+import type { GeminiInlineAttachment } from './geminiInlineTypes';
 import { clampInlineAttachmentsForVercelProxy } from './geminiProxyPayload';
 
-export type { GeminiInlineAttachment } from './geminiAttachments';
+export type { GeminiInlineAttachment } from './geminiInlineTypes';
 
 export type RubricCriterionRow = { name: string; score: number; max: number; comment: string };
 

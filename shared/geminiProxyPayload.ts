@@ -1,4 +1,4 @@
-import type { GeminiInlineAttachment } from './geminiAttachments';
+import type { GeminiInlineAttachment } from './geminiInlineTypes';
 
 /**
  * Vercel serverless HTTP request bodies are capped (~4.5 MiB). JSON adds
