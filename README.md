@@ -1,9 +1,21 @@
 # Smart Document Evaluator
 
-**Smart Document Evaluator** (branded in the UI as **Smart Docs Validator**) is a private academic web application built for the **IT332 / CS342** course. Students sign in with Google, upload submissions to **Supabase Storage**, and view a structured **AI evaluation report** (rubric scores, executive summary, per-page Before → After fixes, visual & diagram review). Teachers use the **grading / review queue**, class roster tools, analytics, and the optional **Google Gemini** evaluator. Invited students also receive a branded invitation email via **Resend** when they're added to the class list.
+**Smart Document Evaluator** (branded in the UI as **Smart Docs Validator**) is a private academic web application for **IT332 / CS342**. Students sign in with **Google**, upload work to **Supabase Storage**, and use **Submit Work**, **Submission Status**, **Tasks** (with optional deadline reminders), **Boards**, **Calendar**, **Drive**, **Sheets**, and **Analytics**. Teachers use **Grades** (review queue), **Class List**, **Course Tasks** (publish tasks, optional handouts, due dates, delete/bulk-delete), **Student Submissions**, **Documents**, **Analytics**, **Reports**, and **Instructions/Inbox**. Optional **Google Gemini** grading runs via same-origin **`POST /api/gemini-evaluate`** (server key). Invited students may receive a branded **Resend** email on first sign-in.
 
-> **Production:** [`https://www.smartformevaluator.com`](https://www.smartformevaluator.com) (custom domain on Vercel)
+> **Production:** [`https://www.smartformevaluator.com`](https://www.smartformevaluator.com) (custom domain on Vercel)  
 > **Vercel default URL:** [`https://smart-document-evalutator.vercel.app`](https://smart-document-evalutator.vercel.app)
+
+---
+
+## Submission-ready README (final deliverables)
+
+| Requirement | Where to find it in this file |
+|-------------|------------------------------|
+| **Complete tech stack** with **version / release numbers** | [Complete tech stack (with version numbers)](#complete-tech-stack-with-version-numbers) |
+| **Deployment** — **frontend** (Vercel) and **backend** (Supabase + APIs + email + Gemini) | [Deployment instructions](#deployment-instructions) → [Frontend (Vercel)](#frontend-vercel) · [Backend (Supabase + Resend + Gemini)](#backend-supabase--resend--gemini) |
+| **Sample / dummy usernames and passwords** for **all user types** on the **live server** | [Test accounts / sample credentials](#test-accounts--sample-credentials) · [Dummy evaluator accounts (documentation)](#dummy-evaluator-accounts-documentation) |
+
+**Related docs (Markdown):** `docs/SRS-Smart-Document-Evaluator-v3.md`, `docs/SDD-Smart-Document-Evaluator-v3.md`, `docs/SPMP-Smart-Document-Evaluator-v3.md`, `docs/STD-Smart-Document-Evaluator-v3.md`, `docs/PRESENTATION-READINESS-AND-DELIVERABLES.md`, `docs/ERD-Smart-Document-Evaluator.md`. **PDF export:** `npm run docs:pdf:deliverables`.
 
 ---
 
@@ -70,7 +82,7 @@
 | **Supabase Postgres** | **15.x** (managed) | App database (Row-Level-Security) |
 | **Supabase Auth** | Current (Gotrue v2) | Google OAuth (PKCE) |
 | **Supabase Storage** | Current | Student upload bucket |
-| **Vercel Functions** | Node runtime (latest) | Serverless `api/send-invitation-email.ts` |
+| **Vercel Functions** | Node runtime (latest) | Serverless `api/send-invitation-email.ts`, `api/gemini-evaluate.ts` (see `vercel.json`) |
 | **Resend** | API v1 | Transactional email (DKIM-signed) |
 | **nodemailer** | **8.0.7** | Gmail SMTP fallback (`invite:gmail`) |
 | **Google Gemini** | `gemini-2.5-flash` (configurable) | Optional AI evaluator |
@@ -82,6 +94,7 @@
 |---------|---------|---------|
 | **pg** | **8.20.0** | Postgres client for `npm run db:apply` |
 | **sharp** | **0.34.5** | Mascot PNG matte removal (`npm run mascot:strip-bg`) |
+| **md-to-pdf** | **5.2.4** | Markdown → PDF (`npm run docs:pdf`, `npm run docs:pdf:deliverables`) |
 
 ### Hosting / DNS
 
@@ -108,6 +121,7 @@ flowchart LR
   subgraph vercel [Vercel]
     SPA[Static SPA]
     Fn["/api/send-invitation-email"]
+    Gn["/api/gemini-evaluate"]
   end
   subgraph supa [Supabase]
     PG[(Postgres + RLS)]
@@ -126,8 +140,10 @@ flowchart LR
   UI --> Store
   UI --> AI
   UI --> Notifier
+  UI --> Gn
   Notifier --> Fn
   Fn --> RS
+  Gn --> GEM
   Auth --> SA
   Store --> PG
   Store --> ST
@@ -139,7 +155,7 @@ flowchart LR
 
 - **Single-page app (SPA)** — all routes render inside `Layout` after sign-in; role (`student` | `teacher` | `admin`) gates which routes exist.
 - **Access gate** — student sign-in is restricted to the gmails in `src/data/invitedStudentEmails.ts`. Teachers / admins are whitelisted via env vars.
-- **`VITE_*`** values are inlined at **build time**; **server-only** values (`RESEND_API_KEY`, `SMARTDOCS_FROM_EMAIL`, …) are read at request time by the Vercel serverless function only.
+- **`VITE_*`** values are inlined at **build time**; **server-only** values (`GEMINI_API_KEY`, `RESEND_API_KEY`, `SMARTDOCS_FROM_EMAIL`, …) are read at request time inside **`/api/*`** only.
 
 ---
 
@@ -150,9 +166,9 @@ flowchart LR
 | **Authentication** | Supabase Auth with **Google OAuth** (PKCE). |
 | **Roles** | `student`, `teacher`, `admin`. `VITE_ADMIN_EMAILS` / `VITE_TEACHER_EMAILS` elevate by email; everything else is a student. |
 | **Class-list access gate** | Students whose Gmail isn't on the official roster are signed out immediately with a friendly message — the app shell is never mounted for unauthorized accounts. |
-| **Students** | Dashboard, Submit work, My Submissions, Tasks, Boards, Calendar, Drive, Sheets, Analytics, **TEAM 14**, Settings. |
-| **Student UX** | Floating **Rate us** button + **Eva** anime onboarding tour. |
-| **Teachers** | Dashboard, **Grading** (review queue), Student Submissions, Documents, Analytics, Class list, Instructions/Inbox, Settings. |
+| **Students** | Dashboard, **Submit Work**, **Submission Status**, **Tasks** (deadline reminders), **Boards**, **Calendar**, **Drive**, **Sheets**, **Analytics**, **TEAM 14**, **Settings**. |
+| **Student UX** | Floating **Rate us** button + **Eva** anime onboarding tour; **General Submission** bucket exists for quick uploads but is hidden from Tasks/workspace lists. |
+| **Teachers** | Dashboard, **Grades** (review queue), **Course Tasks**, **Student Submissions**, **Documents**, **Analytics**, **Class List**, **Instructions/Inbox**, **Reports**, **Settings**, **Team 14**. |
 | **AI grading (optional)** | **Run AI Evaluator** — heuristic fallback when Gemini is unavailable; otherwise structured rubric + executive summary + per-page Before/After + diagram review + multimodal (PDF / image / audio / video) attachments. |
 | **Invitation emails** | Branded HTML email sent **once per user** when an invited student signs in for the first time; also bulk-sendable via CLI. |
 | **Bulk actions** | Multi-select + "Delete selected" controls on class list, student submissions, grading, and submission-status pages. |
@@ -186,6 +202,18 @@ VITE_TEACHER_EMAILS=bob.teacher@gmail.com,carol.teacher@gmail.com
 ```
 
 Any Gmail not in those lists, but listed in `src/data/invitedStudentEmails.ts`, signs in as a **student**.
+
+### Dummy evaluator accounts (documentation)
+
+There is **no username/password login** in the app — **Google OAuth only**. For a written “dummy” row in your binder, use **placeholders** and create matching **Google test users** yourself (or use real roster accounts):
+
+| Role | Dummy email (example) | Password (who sets it) | How to enable on production |
+|------|------------------------|-------------------------|-------------------------------|
+| **Admin** | `admin.evaluator@gmail.com` | The password **you** set on that Google account | Add the exact address to **`VITE_ADMIN_EMAILS`** in Vercel → redeploy. |
+| **Teacher** | `teacher.evaluator@gmail.com` | Same | Add to **`VITE_TEACHER_EMAILS`**. |
+| **Student** | `student.evaluator@gmail.com` | Same | Add the Gmail to **`src/data/invitedStudentEmails.ts`** + mirror in **`api/send-invitation-email.ts`** allow-list → deploy. |
+
+**Blocked / negative test:** use any Gmail **not** on the lists above — the app should refuse access after OAuth.
 
 ### Convenience: how to add a temporary evaluator account
 
@@ -270,6 +298,7 @@ The system is deployed in two halves:
    | `VITE_SUBMISSION_STORAGE_BUCKET` | `student-submissions` |
    | `VITE_GEMINI_API_KEY` *(optional, dev only)* | `AIza…` |
    | `VITE_GEMINI_MODEL` *(optional)* | `gemini-2.5-flash` |
+   | `GEMINI_API_KEY` | `…` *(server secret for `/api/gemini-evaluate`; never `VITE_`)* |
    | `RESEND_API_KEY` | `re_…` |
    | `SMARTDOCS_FROM_EMAIL` | `Smart Docs <noreply@send.smartformevaluator.com>` |
    | `SMARTDOCS_APP_URL` | `https://www.smartformevaluator.com` |
@@ -320,7 +349,8 @@ The system is deployed in two halves:
      https://<your-vercel-project>.vercel.app/**
      http://localhost:5173/**
      ```
-4. **Database → SQL Editor** → run [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) (creates `public.users`, assignments, submissions, RLS policies). If your fresh project has a stricter `auth.users` trigger, also run [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) and [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql).
+4. **Database → SQL Editor** → run [`docs/supabase-setup-all-in-one.sql`](docs/supabase-setup-all-in-one.sql) (creates `public.users`, assignments, submissions, RLS policies). If your fresh project has a stricter `auth.users` trigger, also run [`docs/supabase-bootstrap-public-users.sql`](docs/supabase-bootstrap-public-users.sql) and [`docs/supabase-fix-users-rls-recursion.sql`](docs/supabase-fix-users-rls-recursion.sql).  
+   **Optional (Course Tasks):** after assignments exist, run [`docs/supabase-assignments-handout.sql`](docs/supabase-assignments-handout.sql) and [`docs/supabase-assignments-document-type-add-std.sql`](docs/supabase-assignments-document-type-add-std.sql) if you need handout columns and **STD** on tasks.
 5. **Storage → Create bucket** → `student-submissions` (private). Then in the SQL editor run [`docs/supabase-storage-student-submissions.sql`](docs/supabase-storage-student-submissions.sql).
 6. **Project Settings → API** → copy the **Project URL** into `VITE_SUPABASE_URL` and the **anon public key** into `VITE_SUPABASE_ANON_KEY` (back in Vercel env vars).
 
@@ -450,6 +480,8 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 | `npm run invite:test` | Send one test invitation email via Resend |
 | `npm run invite:send-all` | Bulk-send invitation emails via Resend to the entire class list |
 | `npm run invite:gmail` | Bulk-send via Gmail SMTP fallback (Nodemailer) |
+| `npm run docs:pdf` | Merge `README.md` + `DEPLOY.md` + all `docs/*.md` → `docs/pdf/Smart-Docs-Validator-Documentation-Bundle.pdf` |
+| `npm run docs:pdf:deliverables` | SRS / SDD / SPMP / STD / presentation checklist → separate PDFs in `docs/pdf/` |
 
 ---
 
@@ -458,7 +490,8 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 ```
 .
 ├── api/
-│   └── send-invitation-email.ts        ← Vercel serverless: Resend transactional email
+│   ├── send-invitation-email.ts        ← Vercel serverless: Resend transactional email
+│   └── gemini-evaluate.ts              ← Vercel serverless: Gemini proxy (production AI key)
 ├── db-dumps/                           ← Generated SQL dumps (gitignored)
 │   └── README.md                       ← How to dump / restore
 ├── docs/                               ← SQL bootstrap, RLS, storage policies, SRS, setup guides
@@ -470,6 +503,8 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 │   ├── send-invitation-email-gmail.mjs ← npm run invite:gmail (Nodemailer + Gmail SMTP)
 │   ├── dump-supabase-database.mjs      ← npm run db:dump
 │   ├── apply-supabase-schema.mjs       ← npm run db:apply
+│   ├── build-docs-pdf.mjs              ← npm run docs:pdf
+│   ├── build-deliverable-pdfs.mjs      ← npm run docs:pdf:deliverables
 │   ├── check-env.mjs                   ← npm run verify:env
 │   ├── test-gemini.mjs                 ← npm run verify:gemini
 │   ├── remove-mascot-white-matte.mjs   ← npm run mascot:strip-bg
@@ -485,6 +520,7 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 │   │   ├── student/
 │   │   │   ├── StudentRateUsButton.tsx
 │   │   │   ├── StudentOnboardingTour.tsx
+│   │   │   ├── StudentDeadlineReminders.tsx
 │   │   │   └── InvitedStudentEmailNotifier.tsx   ← headless: triggers /api/send-invitation-email
 │   │   └── teacher/
 │   │       ├── TeacherWorkspaceChrome.tsx
@@ -502,11 +538,12 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 │   │   ├── sendInvitationEmail.ts      ← client → /api/send-invitation-email (once per user)
 │   │   ├── classRosterCache.ts
 │   │   ├── studentEmailPolicy.ts
+│   │   ├── studentWorkspaceData.ts
 │   │   └── teacherSubmissionLoad.ts
 │   ├── pages/
 │   │   ├── Login.tsx
 │   │   ├── student/                    ← Dashboard, Assignments, Submissions, Tasks, Team14, …
-│   │   └── teacher/                    ← Dashboard, ReviewQueue, StudentSubmissions, Team14, …
+│   │   └── teacher/                    ← Dashboard, ReviewQueue, TeacherCourseAssignments, Team14, …
 │   └── types/index.ts
 ├── vercel.json                         ← /api/* passthrough + SPA rewrite
 ├── DEPLOY.md                           ← Long-form deployment walkthrough
