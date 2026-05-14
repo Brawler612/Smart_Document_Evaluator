@@ -1313,7 +1313,7 @@ export default function ReviewQueue() {
       if (import.meta.env.PROD && geminiServerKeyOk === false) {
         setInspectionNotice({
           kind: 'err',
-          text: 'Vercel is missing GEMINI_API_KEY. Open Vercel → this project → Settings → Environment Variables → add GEMINI_API_KEY (your Google AI Studio key, same as local), enable it for Production, save, then redeploy.',
+          text: `This URL (${typeof window !== 'undefined' ? window.location.host : 'production'}) needs a Gemini key on its Vercel project: Settings → Environment Variables → add GEMINI_API_KEY (best) or VITE_GEMINI_API_KEY for Production → Redeploy. A key on a different Vercel project will not work.`,
         });
         return;
       }
@@ -2469,7 +2469,7 @@ export default function ReviewQueue() {
                             ? 'Local dev: add VITE_GEMINI_API_KEY in .env (or run vercel dev with GEMINI_API_KEY) to enable the live Gemini evaluator.'
                             : import.meta.env.PROD && geminiServerKeyOk === null
                               ? 'Checking whether GEMINI_API_KEY is set on the server…'
-                              : 'Production: add GEMINI_API_KEY in Vercel → Settings → Environment Variables (server secret, not VITE_) for Production, save, then redeploy — the app calls /api/gemini-evaluate automatically.'}
+                              : `Production: open the Vercel project that deploys ${typeof window !== 'undefined' ? window.location.host : 'this site'} → Settings → Environment Variables → add GEMINI_API_KEY (recommended) or ensure VITE_GEMINI_API_KEY is set for Production, save, then redeploy. Variables on a different Vercel project will not apply here.`}
                         {gradeMode === 'ai'
                           ? ' The draft total is what you can publish to the student.'
                           : ' Use as a draft — your teacher grade in the next step wins on publish.'}

@@ -153,10 +153,11 @@ export default async function handler(req: RequestLike, res: ResponseLike): Prom
   const origin = originOrFromReferrer(req);
 
   if (req.method === 'GET') {
-    if (!isAllowedOrigin(origin)) {
-      res.status(403).json({ ok: false, error: 'Forbidden: invalid Origin.' });
-      return;
-    }
+    /**
+     * Health probe for the grading UI — response is non-secret. Do not require
+     * `Origin` (some browsers omit it on same-origin GET), which previously
+     * caused false "GEMINI_API_KEY missing" when the key was actually set.
+     */
     res.status(200).json({ ok: true, serverKeyConfigured: Boolean(serverGeminiApiKey()) });
     return;
   }
@@ -180,7 +181,7 @@ export default async function handler(req: RequestLike, res: ResponseLike): Prom
     res.status(503).json({
       ok: false,
       error:
-        'GEMINI_API_KEY is not set on the server. In Vercel → Settings → Environment Variables add GEMINI_API_KEY (your AI Studio key), then redeploy.',
+        'No Gemini API key on the server. In the Vercel project that deploys THIS site → Settings → Environment Variables add GEMINI_API_KEY (recommended, server-only) or VITE_GEMINI_API_KEY (alias), scope Production, save, then redeploy. If you use multiple Vercel projects, variables must be on the project linked to this URL.',
     });
     return;
   }

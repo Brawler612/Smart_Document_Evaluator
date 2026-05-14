@@ -20,12 +20,16 @@ export function resolveGeminiEvalRuntime(): GeminiEvalRuntime {
   if (explicit) {
     return { evalUrl: explicit, apiKey: null, model: model || undefined };
   }
-  if (browserKey) {
-    return { evalUrl: null, apiKey: browserKey, model: model || undefined };
-  }
-  /** Production: same-origin Vercel function — key stays in `GEMINI_API_KEY` (server env). */
+  /**
+   * Production: always use the same-origin proxy first so the key can live in
+   * `GEMINI_API_KEY` (server-only). If we checked `browserKey` before this,
+   * an empty client bundle key would skip the proxy even when the server has a key.
+   */
   if (import.meta.env.PROD) {
     return { evalUrl: '/api/gemini-evaluate', apiKey: null, model: model || undefined };
+  }
+  if (browserKey) {
+    return { evalUrl: null, apiKey: browserKey, model: model || undefined };
   }
   return { evalUrl: null, apiKey: null, model: model || undefined };
 }
