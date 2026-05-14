@@ -1,0 +1,40 @@
+/**
+ * Resolves how the grading UI should reach Gemini: explicit proxy URL,
+ * browser-exposed API key (local dev), or same-origin `/api/gemini-evaluate`
+ * on production builds (Vercel holds `GEMINI_API_KEY` server-side).
+ */
+
+export type GeminiEvalRuntime = {
+  /** POST target for `runGeminiBackedEvaluation` (or null to use direct browser key). */
+  evalUrl: string | null;
+  /** Only set for local/dev when `VITE_GEMINI_API_KEY` is in the bundle. */
+  apiKey: string | null;
+  model: string | undefined;
+};
+
+export function resolveGeminiEvalRuntime(): GeminiEvalRuntime {
+  const explicit = (import.meta.env.VITE_GEMINI_EVAL_URL as string | undefined)?.trim();
+  const browserKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim();
+  const model = (import.meta.env.VITE_GEMINI_MODEL as string | undefined)?.trim();
+
+  if (explicit) {
+    return { evalUrl: explicit, apiKey: null, model: model || undefined };
+  }
+  if (browserKey) {
+    return { evalUrl: null, apiKey: browserKey, model: model || undefined };
+  }
+  /** Production: same-origin Vercel function — key stays in `GEMINI_API_KEY` (server env). */
+  if (import.meta.env.PROD) {
+    return { evalUrl: '/api/gemini-evaluate', apiKey: null, model: model || undefined };
+  }
+  return { evalUrl: null, apiKey: null, model: model || undefined };
+}
+
+/** True when the UI should treat live Gemini as available (not only the heuristic draft). */
+export function isGeminiLiveConfiguredForClient(): boolean {
+  return Boolean(
+    (import.meta.env.VITE_GEMINI_EVAL_URL as string | undefined)?.trim() ||
+      (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim() ||
+      import.meta.env.PROD
+  );
+}

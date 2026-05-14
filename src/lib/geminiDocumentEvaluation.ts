@@ -9,8 +9,10 @@
  * of relying only on text we extracted client-side.
  *
  * Configure either:
- * - VITE_GEMINI_EVAL_URL — POST JSON, server holds the API key (recommended for production).
- * - VITE_GEMINI_API_KEY — calls Google directly from the browser (key is public in the bundle; dev/prototype only).
+ * - VITE_GEMINI_EVAL_URL — POST JSON, any HTTPS proxy that returns the same JSON shape as Gemini.
+ * - VITE_GEMINI_API_KEY — calls Google directly from the browser (dev only; key is public in the bundle).
+ * - Production (Vite `import.meta.env.PROD`): the grading UI POSTs to same-origin `/api/gemini-evaluate`,
+ *   which uses `GEMINI_API_KEY` on the server (Vercel env) — stable on custom domains and avoids referrer blocks.
  */
 
 import type { GeminiInlineAttachment } from './geminiAttachments';
@@ -963,6 +965,7 @@ async function callEvalProxy(
     content: string;
     template: RubricCriterionRow[];
     attachments?: GeminiInlineAttachment[];
+    model?: string | null;
   }
 ): Promise<ParsedPayload | null> {
   const res = await fetch(evalUrl, {
@@ -1034,7 +1037,7 @@ export async function runGeminiBackedEvaluation(options: {
    */
   try {
     if (evalUrl) {
-      parsed = await callEvalProxy(evalUrl, { docType, content, template, attachments });
+      parsed = await callEvalProxy(evalUrl, { docType, content, template, attachments, model });
     } else if (apiKey) {
       parsed = await callGeminiRest(apiKey, model, prompt, attachments);
     } else {

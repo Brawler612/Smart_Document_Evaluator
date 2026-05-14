@@ -345,10 +345,11 @@ Two options:
 
 | Option | When | How |
 |--------|------|-----|
-| **Direct REST (dev only)** | Local development | Get a key at <https://aistudio.google.com/app/apikey>; set `VITE_GEMINI_API_KEY` + `VITE_GEMINI_MODEL` in `.env`. |
-| **Server proxy (production)** | Production | Build a tiny HTTPS endpoint anywhere (Vercel Edge / Cloudflare Workers / Cloud Run) that accepts `POST { docType, content, template, attachments? }`, calls Gemini server-side, and returns the same JSON shape. Point `VITE_GEMINI_EVAL_URL` at it. The browser then never sees the key. |
+| **Direct REST (dev only)** | Local `npm run dev` | Get a key at <https://aistudio.google.com/app/apikey>; set `VITE_GEMINI_API_KEY` + optional `VITE_GEMINI_MODEL` in `.env`. |
+| **Built-in Vercel proxy (recommended)** | Production on Vercel | Add **`GEMINI_API_KEY`** (server secret, not `VITE_`) in Vercel → Environment Variables and redeploy. The built app calls same-origin **`POST /api/gemini-evaluate`** — the key never ships in the JS bundle and Google “HTTP referrer” restrictions cannot block your custom domain or `*.vercel.app`. |
+| **Custom proxy** | Any host | Set `VITE_GEMINI_EVAL_URL` to an HTTPS endpoint that accepts `POST { docType, content, template, attachments?, model? }` and returns the same JSON shape as Gemini. |
 
-Without either, the AI evaluator still works — it falls back to a heuristic rubric draft generated in the browser.
+Without a dev key or production `GEMINI_API_KEY`, the AI evaluator still loads — it falls back to a heuristic rubric draft generated in the browser (often ~2% on PDFs with no extracted text).
 
 #### 4. Google Forms (optional — Rate us survey)
 
@@ -403,14 +404,15 @@ Open <http://localhost:5173>. In Supabase **Authentication → URL Configuration
 | `VITE_STUDENT_EMAIL_DOMAINS` | No | Restrict which domains resolve as students |
 | `VITE_SUBMISSION_STORAGE_BUCKET` | No | Storage bucket for uploads (default `student-submissions`) |
 | `VITE_STUDENT_RATE_US_URL` | No | Override URL for the student **Rate us** button |
-| `VITE_GEMINI_EVAL_URL` | No | **Preferred in production** — POST proxy that returns the same JSON shape as Gemini |
-| `VITE_GEMINI_API_KEY` | No | **Dev only** — visible in the built JS bundle |
-| `VITE_GEMINI_MODEL` | No | Model id (e.g. `gemini-2.5-flash`) |
+| `VITE_GEMINI_EVAL_URL` | No | Optional custom POST proxy (same JSON contract as Gemini) — overrides the built-in `/api/gemini-evaluate` path |
+| `VITE_GEMINI_API_KEY` | No | **Local dev only** — calls Google from the browser; visible in the built JS bundle |
+| `VITE_GEMINI_MODEL` | No | Model id (e.g. `gemini-2.5-flash`) — sent to `/api/gemini-evaluate` and used for direct dev calls |
 
 ### Server-only (Vercel Function — **never** prefixed with `VITE_`)
 
 | Variable | Used by | Purpose |
 |----------|---------|---------|
+| `GEMINI_API_KEY` | `api/gemini-evaluate.ts` | Google AI Studio key for teacher **Run AI Evaluator** (production builds call this route; key never ships to the browser) |
 | `RESEND_API_KEY` | `api/send-invitation-email.ts` | Resend API key (`re_…`) |
 | `SMARTDOCS_FROM_EMAIL` | `api/send-invitation-email.ts` | Verified-domain From address |
 | `SMARTDOCS_APP_URL` | `api/send-invitation-email.ts` | URL the "Open Smart Docs" button in the email points to |
@@ -551,7 +553,7 @@ All three CLIs share the same HTML/text template (`scripts/lib/invitationEmailTe
 ## Security notes
 
 - **Anon key + RLS** — the Supabase anon key is safe in the browser only when **Row Level Security** is enabled on every table and storage policy. Never expose the **service role** key or `DATABASE_URL` in the client.
-- **Gemini** — for any public deployment, use **`VITE_GEMINI_EVAL_URL`** and keep API keys on a server you control. Browser `VITE_GEMINI_API_KEY` is for local development only.
+- **Gemini** — on Vercel, set **`GEMINI_API_KEY`** (server-only). The app calls **`/api/gemini-evaluate`** so the key is never in the client bundle and Google API key referrer rules cannot break production while localhost still works with `VITE_GEMINI_API_KEY`. Optionally set **`VITE_GEMINI_EVAL_URL`** to your own HTTPS proxy instead.
 - **Resend** — `RESEND_API_KEY` is a **server-only** variable. It lives in Vercel env vars (not prefixed with `VITE_`) and is read only inside `api/send-invitation-email.ts`.
 - **Gmail App Password** — never commit, never share, never paste in the browser. Only used on the developer's machine for the SMTP fallback.
 - **Student uploads** — use a dedicated bucket with policies scoped to the authenticated user (see storage SQL in `docs/`).

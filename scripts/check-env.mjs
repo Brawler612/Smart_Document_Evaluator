@@ -97,7 +97,11 @@ if (env.VITE_GEMINI_EVAL_URL?.trim()) {
   console.log('ℹ VITE_GEMINI_EVAL_URL is set — teacher “Run AI Inspection” will call your backend for Gemini.\n');
 } else if (env.VITE_GEMINI_API_KEY?.trim()) {
   console.warn(
-    '⚠ VITE_GEMINI_API_KEY is set — the key is baked into the browser bundle. Prefer VITE_GEMINI_EVAL_URL for production.\n'
+    '⚠ VITE_GEMINI_API_KEY is set — the key is baked into the browser bundle. Prefer GEMINI_API_KEY on Vercel + /api/gemini-evaluate for production.\n'
+  );
+} else if (env.GEMINI_API_KEY?.trim()) {
+  console.log(
+    'ℹ GEMINI_API_KEY is set locally — if you run `vercel dev`, teacher AI can use api/gemini-evaluate.ts. Plain `npm run dev` still needs VITE_GEMINI_API_KEY for direct browser calls.\n'
   );
 }
 
