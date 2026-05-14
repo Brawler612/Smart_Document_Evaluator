@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 import AIDocumentEvaluationReport from '../AIDocumentEvaluationReport';
-import { parsePersistedAiDraftSummary } from '../../lib/geminiDocumentEvaluation';
+import { parsePersistedAiDraftSummary } from '../../../shared/geminiDocumentEvaluation';
 import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import { submissionQueueTitle, type TeacherSubmission } from '../../lib/teacherSubmissionLoad';
 

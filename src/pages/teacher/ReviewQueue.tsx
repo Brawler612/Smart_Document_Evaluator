@@ -68,14 +68,14 @@ import {
   type LanguageCorrection,
   type PageOverviewScore,
   type PageRewrite,
-} from '../../lib/geminiDocumentEvaluation';
+} from '../../../shared/geminiDocumentEvaluation';
 import { resolveGeminiEvalRuntime, isGeminiLiveConfiguredForClient } from '../../lib/geminiEvalClient';
 import { extractTextFromDocxBuffer } from '../../lib/docxText';
 import {
   loadSubmissionAttachmentsForGemini,
   summarizeAttachmentsForNotice,
   type GeminiInlineAttachment,
-} from '../../lib/geminiAttachments';
+} from '../../../shared/geminiAttachments';
 
 type Submission = TeacherSubmission;
 

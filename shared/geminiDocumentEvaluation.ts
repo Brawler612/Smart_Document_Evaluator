@@ -277,7 +277,7 @@ function repairTruncatedJson(raw: string): string | null {
   }
 
   /** Try cut points walking backward; stop at the first one that parses. */
-  const valueEndChar = /[\]\}"0-9aAbBcCdDeEfFlLnNoOrRsStTuU]/;
+  const valueEndChar = /[\]}"0-9aAbBcCdDeEfFlLnNoOrRsStTuU]/;
   for (let i = s.length - 1; i >= 0; i--) {
     if (inStrAt[i]) continue;
     const c = s[i];

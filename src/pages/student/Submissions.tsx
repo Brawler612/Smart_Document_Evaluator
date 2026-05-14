@@ -24,7 +24,7 @@ import { normalizeSubStatus, submissionQueueTitle } from '../../lib/teacherSubmi
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
-import { parsePersistedAiDraftSummary } from '../../lib/geminiDocumentEvaluation';
+import { parsePersistedAiDraftSummary } from '../../../shared/geminiDocumentEvaluation';
 import { useSubmissionFileMeta } from '../../lib/submissionFileMeta';
 import { submissionHasPublishedScoreAndAiDraft, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import {

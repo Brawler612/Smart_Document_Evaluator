@@ -7,10 +7,9 @@
  * `*.vercel.app` / custom domains (a common reason localhost works but
  * production always falls back to the 2% heuristic).
  *
- * Uses Vercel’s **Web fetch** export (`export default { fetch }`) so the
- * function matches the current Node.js runtime contract. The legacy
- * `(req, res)` default export can fail at cold start with
- * `FUNCTION_INVOCATION_FAILED` on newer builders.
+ * Shared implementation lives in `../shared/geminiDocumentEvaluation.ts` (not under
+ * `src/`) so Vercel’s serverless bundle includes it — imports from `src/` alone are
+ * often omitted from the `/api` artifact and crash with FUNCTION_INVOCATION_FAILED.
  *
  * Vercel → Project → Environment Variables (Production + Preview as needed):
  *   - GEMINI_API_KEY   (required) Google AI Studio key (usually AIzaSy…).
@@ -28,7 +27,7 @@ import {
   runGeminiBackedEvaluation,
   type GeminiInlineAttachment,
   type RubricCriterionRow,
-} from '../src/lib/geminiDocumentEvaluation.ts';
+} from '../shared/geminiDocumentEvaluation.ts';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -95,6 +94,33 @@ function clampAttachmentsForServer(list: GeminiInlineAttachment[] | undefined): 
 }
 
 /**
+ * Optional comma-separated hostnames or full origins in Vercel env
+ * `GEMINI_PROXY_EXTRA_ORIGINS` (e.g. `eval.example.com,https://foo.com`) so
+ * staging / alternate production domains can call the proxy without 403.
+ */
+function parseExtraAllowedOrigins(): Set<string> {
+  const raw = (process.env.GEMINI_PROXY_EXTRA_ORIGINS || '').trim();
+  if (!raw) return new Set();
+  const out = new Set<string>();
+  for (const part of raw.split(',')) {
+    const s = part.trim();
+    if (!s) continue;
+    try {
+      if (s.includes('://')) {
+        out.add(new URL(s).origin.toLowerCase());
+      } else {
+        out.add(s.toLowerCase().replace(/^\.+/, ''));
+      }
+    } catch {
+      /* skip invalid token */
+    }
+  }
+  return out;
+}
+
+const EXTRA_ORIGINS = parseExtraAllowedOrigins();
+
+/**
  * Loose allow-list: same deployment family + localhost. Stops drive-by
  * abuse of your Gemini quota from random origins (the key is still server-only).
  */
@@ -104,6 +130,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     const u = new URL(origin);
     if (u.protocol !== 'https:' && !(u.protocol === 'http:' && u.hostname === 'localhost')) return false;
     const host = u.hostname.toLowerCase();
+    if (EXTRA_ORIGINS.has(origin.toLowerCase()) || EXTRA_ORIGINS.has(host)) return true;
     if (host === 'localhost' || host === '127.0.0.1') return true;
     if (host.endsWith('.vercel.app')) return true;
     if (host === 'smartformevaluator.com' || host === 'www.smartformevaluator.com') return true;
