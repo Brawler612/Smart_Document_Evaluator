@@ -10,6 +10,8 @@
  * Shared implementation lives in `../shared/geminiDocumentEvaluation.ts` (not under
  * `src/`) so Vercel’s serverless bundle includes it — imports from `src/` alone are
  * often omitted from the `/api` artifact and crash with FUNCTION_INVOCATION_FAILED.
+ * Large multimodal POSTs are clamped via `geminiProxyPayload.ts` so the request stays
+ * under Vercel’s ~4.5 MiB body limit (HTTP 413 FUNCTION_PAYLOAD_TOO_LARGE).
  *
  * Vercel → Project → Environment Variables (Production + Preview as needed):
  *   - GEMINI_API_KEY   (required) Google AI Studio key (usually AIzaSy…).
@@ -28,15 +30,13 @@ import {
   type GeminiInlineAttachment,
   type RubricCriterionRow,
 } from '../shared/geminiDocumentEvaluation.ts';
+import { clampInlineAttachmentsForVercelProxy } from '../shared/geminiProxyPayload.ts';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
-
-/** ~10 MiB decoded payload budget so JSON.parse + Gemini request stay under serverless RAM. */
-const MAX_ATTACHMENT_DECODED_BYTES = 10 * 1024 * 1024;
 
 function jsonResponse(data: unknown, status: number): Response {
   return Response.json(data, { status, headers: CORS_HEADERS });
@@ -74,23 +74,6 @@ function isAttachmentList(x: unknown): x is GeminiInlineAttachment[] {
     const o = a as Record<string, unknown>;
     return typeof o.mimeType === 'string' && typeof o.data === 'string' && o.data.length > 0;
   });
-}
-
-/**
- * Keeps multimodal calls stable on Vercel: huge base64 PDFs / many Word images
- * can OOM the isolate before Google is reached.
- */
-function clampAttachmentsForServer(list: GeminiInlineAttachment[] | undefined): GeminiInlineAttachment[] | undefined {
-  if (!list?.length) return undefined;
-  let total = 0;
-  const out: GeminiInlineAttachment[] = [];
-  for (const a of list) {
-    const estDecoded = Math.floor(a.data.length * 0.75);
-    if (total + estDecoded > MAX_ATTACHMENT_DECODED_BYTES) break;
-    total += estDecoded;
-    out.push(a);
-  }
-  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -205,8 +188,9 @@ export default {
       );
     }
     const template = templateRaw;
-    const rawAttachments = isAttachmentList(raw.attachments) ? raw.attachments : undefined;
-    const attachments = clampAttachmentsForServer(rawAttachments);
+    const rawList = isAttachmentList(raw.attachments) ? raw.attachments : [];
+    const attachments =
+      rawList.length > 0 ? clampInlineAttachmentsForVercelProxy(rawList) : undefined;
 
     const modelFromBody = typeof raw.model === 'string' ? raw.model.trim() : '';
     const model = modelFromBody || (process.env.VITE_GEMINI_MODEL || '').trim() || null;

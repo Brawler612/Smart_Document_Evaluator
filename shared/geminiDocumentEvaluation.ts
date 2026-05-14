@@ -16,6 +16,7 @@
  */
 
 import type { GeminiInlineAttachment } from './geminiAttachments';
+import { clampInlineAttachmentsForVercelProxy } from './geminiProxyPayload';
 
 export type { GeminiInlineAttachment } from './geminiAttachments';
 
@@ -142,6 +143,9 @@ export function formatGeminiEvaluationError(err: unknown): string {
     }
     if (/HTTP 404|NOT_FOUND/i.test(m)) {
       return 'That model was not found for your key (HTTP 404). The app tries several models automatically; set VITE_GEMINI_MODEL (e.g. gemini-2.5-flash) or use an AI Studio API key. List: https://ai.google.dev/gemini-api/docs/models';
+    }
+    if (/HTTP 413|PAYLOAD_TOO_LARGE|FUNCTION_PAYLOAD_TOO_LARGE/i.test(m)) {
+      return 'The evaluation request was too large for the hosting upload limit (common with big PDFs). The app trims attachments automatically; try a smaller or “print to PDF” copy, reduce embedded images in Word, or rely on extracted text when possible. For very large files, compress the PDF and run again.';
     }
     if (/HTTP 429|RESOURCE_EXHAUSTED|rate limit|Too many requests|quota exceeded|exceeded your current quota/i.test(m)) {
       const tail = m.replace(/^Gemini HTTP \d+:\s*/i, '').trim();
@@ -1019,10 +1023,11 @@ export async function runGeminiBackedEvaluation(options: {
   const { docType, content, template } = options;
   if (template.length === 0) return null;
 
-  const attachments = (options.attachments ?? []).filter(
+  const evalUrl = options.evalUrl?.trim() || null;
+  const rawAttachments = (options.attachments ?? []).filter(
     (a) => a && typeof a.mimeType === 'string' && typeof a.data === 'string' && a.data.length > 0
   );
-  const evalUrl = options.evalUrl?.trim() || null;
+  const attachments = evalUrl ? clampInlineAttachmentsForVercelProxy(rawAttachments) : rawAttachments;
   const apiKey = options.apiKey?.trim() || null;
   const model = normalizeGeminiModelId(options.model?.trim() || '') || 'gemini-2.5-flash';
 
