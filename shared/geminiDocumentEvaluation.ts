@@ -15,10 +15,10 @@
  *   which uses `GEMINI_API_KEY` on the server (Vercel env) — stable on custom domains and avoids referrer blocks.
  */
 
-import type { GeminiInlineAttachment } from './geminiInlineTypes';
-import { clampInlineAttachmentsForVercelProxy } from './geminiProxyPayload';
+import type { GeminiInlineAttachment } from './geminiInlineTypes.js';
+import { clampInlineAttachmentsForVercelProxy } from './geminiProxyPayload.js';
 
-export type { GeminiInlineAttachment } from './geminiInlineTypes';
+export type { GeminiInlineAttachment } from './geminiInlineTypes.js';
 
 export type RubricCriterionRow = { name: string; score: number; max: number; comment: string };
 
@@ -103,6 +103,12 @@ const MAX_BODY_CHARS = 24_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Vite sets `import.meta.env.DEV`; Node has no `env` — safe for Vercel API bundle typecheck. */
+function viteImportMetaDev(): boolean {
+  if (typeof import.meta === 'undefined') return false;
+  return Boolean((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV);
 }
 
 /** True when Google rejects the call until billing / credits are fixed (waiting won't help). */
@@ -904,7 +910,7 @@ async function callGeminiRestOnce(
   const parts = data.candidates?.[0]?.content?.parts ?? [];
   const text = parts.map((p) => (typeof p.text === 'string' ? p.text : '')).join('');
   const finishReason = data.candidates?.[0]?.finishReason;
-  if (finishReason && finishReason !== 'STOP' && typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+  if (finishReason && finishReason !== 'STOP' && viteImportMetaDev()) {
     console.warn('[gemini]', model, 'finishReason:', finishReason, '— if JSON is missing, response may be truncated; try again or use a smaller file.');
   }
   if (typeof text !== 'string' || !text.trim()) return null;
@@ -1050,7 +1056,7 @@ export async function runGeminiBackedEvaluation(options: {
     }
   } catch (err) {
     lastError = err;
-    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+    if (viteImportMetaDev()) {
       console.warn('[gemini] tier 1 (medium prompt) failed:', err);
     }
     if (isGeminiAccountOrBillingBlock(err)) throw err;
@@ -1074,7 +1080,7 @@ export async function runGeminiBackedEvaluation(options: {
       }
     } catch (err) {
       lastError = err;
-      if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      if (viteImportMetaDev()) {
         console.warn('[gemini] tier 2 (minimal prompt) failed:', err);
       }
       if (isGeminiAccountOrBillingBlock(err)) throw err;
@@ -1099,7 +1105,7 @@ export async function runGeminiBackedEvaluation(options: {
       }
     } catch (err) {
       lastError = err;
-      if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      if (viteImportMetaDev()) {
         console.warn('[gemini] tier 3 (ultra-minimal) failed:', err);
       }
       if (isGeminiAccountOrBillingBlock(err)) throw err;

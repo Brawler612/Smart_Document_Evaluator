@@ -17,8 +17,8 @@ import {
   runGeminiBackedEvaluation,
   type GeminiInlineAttachment,
   type RubricCriterionRow,
-} from '../shared/geminiDocumentEvaluation.ts';
-import { clampInlineAttachmentsForVercelProxy } from '../shared/geminiProxyPayload.ts';
+} from '../shared/geminiDocumentEvaluation.js';
+import { clampInlineAttachmentsForVercelProxy } from '../shared/geminiProxyPayload.js';
 
 type RequestLike = {
   method?: string;

@@ -24,9 +24,9 @@
  */
 
 import mammoth from 'mammoth';
-import type { GeminiInlineAttachment } from './geminiInlineTypes';
+import type { GeminiInlineAttachment } from './geminiInlineTypes.js';
 
-export type { GeminiInlineAttachment } from './geminiInlineTypes';
+export type { GeminiInlineAttachment } from './geminiInlineTypes.js';
 
 const SINGLE_ATTACHMENT_BYTE_LIMIT = 18 * 1024 * 1024;
 const TOTAL_ATTACHMENT_BYTE_LIMIT = 19 * 1024 * 1024;

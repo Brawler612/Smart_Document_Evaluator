@@ -12,7 +12,6 @@
   "functions": {
     "api/gemini-evaluate.ts": {
       "maxDuration": 60,
-      "memory": 1024,
       "includeFiles": "shared/**"
     }
   }
