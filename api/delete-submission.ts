@@ -10,7 +10,10 @@
  *   VITE_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+/** Untyped client — API routes are not wired to generated Database types. */
+type SupabaseAdmin = SupabaseClient;
 
 type RequestLike = {
   method?: string;
@@ -47,8 +50,8 @@ function readJsonBody(body: unknown): Record<string, unknown> {
 }
 
 async function deleteFromTable(
-  admin: ReturnType<typeof createClient>,
-  table: 'submissions' | 'submission',
+  admin: SupabaseAdmin,
+  table: string,
   submissionId: string,
   studentId: string
 ): Promise<boolean> {
