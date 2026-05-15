@@ -41,6 +41,13 @@ const QUICK_LINKS: { to: string; label: string; description: string; icon: typeo
     tint: 'bg-[#84001B] text-[#ffd21a]',
   },
   {
+    to: '/my-submissions',
+    label: 'Submission Status',
+    description: 'Scores, feedback, and remove uploads',
+    icon: FileText,
+    tint: 'bg-blue-50 text-blue-700',
+  },
+  {
     to: '/tasks',
     label: 'Tasks',
     description: 'A focused to-do view with due dates',

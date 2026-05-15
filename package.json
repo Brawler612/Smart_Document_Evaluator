@@ -14,13 +14,16 @@
     "verify:gemini": "node scripts/test-gemini.mjs",
     "db:apply": "node scripts/apply-supabase-schema.mjs",
     "db:fix-rls": "node scripts/apply-supabase-schema.mjs docs/supabase-fix-users-rls-recursion.sql",
+    "db:fix-student-delete": "node scripts/apply-supabase-schema.mjs docs/supabase-fn-delete-own-submission.sql",
     "db:dump": "node scripts/dump-supabase-database.mjs",
     "supabase:setup": "node scripts/prompt-supabase-setup.mjs",
     "supabase:fix-rls": "node scripts/prompt-supabase-fix-rls.mjs",
     "mascot:strip-bg": "node scripts/remove-mascot-white-matte.mjs",
     "invite:test": "node scripts/send-invitation-email-test.mjs",
     "invite:send-all": "node scripts/send-invitation-email-bulk.mjs",
-    "invite:gmail": "node scripts/send-invitation-email-gmail.mjs"
+    "invite:gmail": "node scripts/send-invitation-email-gmail.mjs",
+    "docs:pdf": "node scripts/build-docs-pdf.mjs",
+    "docs:pdf:deliverables": "node scripts/build-deliverable-pdfs.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -40,6 +43,7 @@
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.11",
     "globals": "^15.9.0",
+    "md-to-pdf": "^5.2.4",
     "nodemailer": "^8.0.7",
     "pg": "^8.20.0",
     "postcss": "^8.4.35",

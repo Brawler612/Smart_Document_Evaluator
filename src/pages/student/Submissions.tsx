@@ -14,7 +14,6 @@ import {
   Trash2,
   Trash,
   Loader2,
-  CheckCircle2,
   Sparkles,
   GraduationCap,
 } from 'lucide-react';
@@ -31,7 +30,6 @@ import {
   deleteStudentSubmission,
   getStudentHiddenSubmissionIds,
 } from '../../lib/studentDeleteSubmission';
-import { emitStudentSubmissionRemoved } from '../../lib/studentWorkspaceData';
 import type { SubStatus } from '../../types';
 
 interface Submission {
@@ -211,18 +209,10 @@ export default function MySubmissions() {
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const [removedToast, setRemovedToast] = useState<string | null>(null);
   /** Row-selection set for the bulk "Delete selected" toolbar above the list. */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** Disables the bulk action button while the network requests are in flight. */
   const [bulkRemoving, setBulkRemoving] = useState(false);
-
-  /** Auto-dismiss the success toast after a few seconds. */
-  useEffect(() => {
-    if (!removedToast) return;
-    const t = window.setTimeout(() => setRemovedToast(null), 3500);
-    return () => window.clearTimeout(t);
-  }, [removedToast]);
 
   async function handleRemoveSubmission(target: Submission) {
     if (!user?.id) return;
@@ -249,14 +239,6 @@ export default function MySubmissions() {
       setRemoveError(res.message);
       return;
     }
-
-    setRemovedToast(
-      res.hiddenLocally
-        ? `Removed ${target.file_name} from your view (kept on the instructor's queue).`
-        : `Removed ${target.file_name}${res.localOnly ? ' (browser copy)' : ''}.`
-    );
-    /** Tell every other workspace page (Dashboard / Tasks / Drive / etc.) to drop this row. */
-    emitStudentSubmissionRemoved(target.id);
   }
 
   function toggleSelected(id: string) {
@@ -288,7 +270,7 @@ export default function MySubmissions() {
     if (targets.length === 0) return;
     if (
       !window.confirm(
-        `Remove ${targets.length} selected submission${targets.length === 1 ? '' : 's'}? Teacher copies stay on their queue; your view drops them.`
+        `Remove ${targets.length} selected submission${targets.length === 1 ? '' : 's'} permanently? This also removes them from your instructor's queue.`
       )
     )
       return;
@@ -310,7 +292,6 @@ export default function MySubmissions() {
         fileUrl: target.file_url,
       });
       if (res.ok) {
-        emitStudentSubmissionRemoved(target.id);
         removedCount += 1;
       } else {
         failed.push(`${target.file_name}: ${res.message}`);
@@ -329,8 +310,6 @@ export default function MySubmissions() {
       );
       return;
     }
-
-    setRemovedToast(`Removed ${removedCount} submission${removedCount === 1 ? '' : 's'} from your view.`);
   }
 
   async function resolveSubmissionTable(): Promise<'submissions' | 'submission' | null> {
@@ -837,16 +816,6 @@ export default function MySubmissions() {
               <X className="w-4 h-4" />
             </button>
           </div>
-        </div>
-      )}
-
-      {removedToast && (
-        <div
-          role="status"
-          className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/95 px-4 py-3 text-sm text-emerald-900 shadow-xl backdrop-blur-sm"
-        >
-          <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden />
-          <span className="font-medium">{removedToast}</span>
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -48,6 +48,7 @@ import { SubStatus } from '../../types';
 import { formatStackedDateTime, rosterStatusChip, studentIdBadge, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import { useSubmissionsRealtimeRefresh } from '../../hooks/useSubmissionsRealtimeRefresh';
 import {
   TeacherAmberCue,
   TeacherPageHeader,
@@ -1017,18 +1018,22 @@ export default function ReviewQueue() {
     }
   }
 
-  async function load() {
-    setLoading(true);
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!options.silent) setLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
       setSubmissions(await fetchTeacherSubmissionRows());
     } catch (e) {
       console.error('[grading] Failed to load queue:', e);
-      setSubmissions([]);
+      if (!options.silent) setSubmissions([]);
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
-  }
+  }, []);
+
+  useSubmissionsRealtimeRefresh(() => {
+    void load({ silent: true });
+  });
 
   const stats = useMemo(() => {
     const all = submissions;
@@ -1073,7 +1078,7 @@ export default function ReviewQueue() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   /** Grade Teacher: keep rubric + applied score + feedback steady in this browser until publish, redo, or clear. */
   useEffect(() => {

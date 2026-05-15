@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { emitSubmissionRemoved } from './submissionSyncEvents';
 import { removeSubmissionStorageObjectIfPresent } from './submissionStorage';
 import {
   resolveSubmissionTableName,
@@ -135,5 +136,6 @@ export async function deleteTeacherSubmissionsByIds(
   pruneTeacherLocalSubmissionFallback(ids, dbOk, options?.purgeLocalDuplicatesOf);
 
   if (dbMessage) return { ok: false, message: dbMessage };
+  for (const id of ids) emitSubmissionRemoved(id);
   return { ok: true };
 }

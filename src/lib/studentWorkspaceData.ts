@@ -2,17 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from './supabase';
 import { syncLocalSubmissionsToSupabase } from './localSubmissionSync';
 import { getStudentHiddenSubmissionIds } from './studentDeleteSubmission';
+import {
+  SUBMISSION_REMOVED_EVENT,
+  emitSubmissionRemoved,
+  emitStudentSubmissionRemoved,
+} from './submissionSyncEvents';
 import { useAuth } from '../context/AuthContext';
 import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from './teacherSubmissionLoad';
 
-/**
- * Broadcast channel name fired by `studentDeleteSubmission` whenever a row is
- * soft- or hard-removed. Every page that consumes `useStudentWorkspace` listens
- * for this event and refreshes (or filters) immediately so the deleted row
- * vanishes from Dashboard / Tasks / Boards / Drive / Sheets / Analytics in the
- * same tick the Remove confirmation finishes.
- */
-export const STUDENT_SUBMISSION_REMOVED_EVENT = 'sde:student:submission-removed';
+export {
+  SUBMISSION_REMOVED_EVENT,
+  SUBMISSION_REMOVED_EVENT as STUDENT_SUBMISSION_REMOVED_EVENT,
+  emitSubmissionRemoved,
+  emitStudentSubmissionRemoved,
+};
 
 export type SubStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
 
@@ -216,20 +219,12 @@ export function useStudentWorkspace(): StudentWorkspaceData {
       /** Re-pull silently to catch any hard-delete that happened. */
       void refresh();
     }
-    window.addEventListener(STUDENT_SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
+    window.addEventListener(SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
     return () =>
-      window.removeEventListener(STUDENT_SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
+      window.removeEventListener(SUBMISSION_REMOVED_EVENT, handleRemoved as EventListener);
   }, [refresh]);
 
   return { loading, error, assignments, submissions, refresh };
-}
-
-/** Convenience emitter so pages don't need to know the event-name string. */
-export function emitStudentSubmissionRemoved(id: string): void {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(
-    new CustomEvent(STUDENT_SUBMISSION_REMOVED_EVENT, { detail: { id } })
-  );
 }
 
 /**

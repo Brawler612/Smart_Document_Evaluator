@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { emitSubmissionRemoved } from './submissionSyncEvents';
 import { removeSubmissionStorageObjectIfPresent } from './submissionStorage';
 import {
   resolveSubmissionTableName,
@@ -13,18 +14,17 @@ export type StudentDeleteSubmissionInput = {
 };
 
 export type StudentDeleteSubmissionResult =
-  | { ok: true; localOnly: boolean; hiddenLocally?: boolean }
+  | { ok: true; localOnly: boolean }
   | { ok: false; message: string };
 
 /**
- * Per-browser allow-list of Supabase submission ids the student has soft-removed.
- * Used when Row Level Security blocks `DELETE` so the Remove button still feels
- * working from the student's perspective; the row is still present in the DB and
- * remains visible to teachers / admins. Apply
- * `docs/supabase-rls-submissions-student-delete.sql` to make removal permanent
- * (and shared across browsers).
+ * Legacy per-browser hide list (older builds soft-removed when RLS blocked DELETE).
+ * Workspace queries still filter these ids so stale rows do not reappear for students.
  */
 const STUDENT_HIDDEN_SUBMISSIONS_KEY = 'sde:student:hiddenSubmissionIds:v1';
+
+const RLS_SETUP_HINT =
+  'Could not remove this submission. Ask your instructor to run docs/supabase-fn-delete-own-submission.sql in the Supabase SQL Editor, or add SUPABASE_SERVICE_ROLE_KEY on Vercel and redeploy.';
 
 export function getStudentHiddenSubmissionIds(): Set<string> {
   if (typeof localStorage === 'undefined') return new Set();
@@ -37,22 +37,6 @@ export function getStudentHiddenSubmissionIds(): Set<string> {
   } catch {
     return new Set();
   }
-}
-
-function persistHiddenIds(ids: Set<string>): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(STUDENT_HIDDEN_SUBMISSIONS_KEY, JSON.stringify(Array.from(ids)));
-  } catch {
-    /* quota / private mode — soft-fail */
-  }
-}
-
-function hideSubmissionLocally(id: string): void {
-  const ids = getStudentHiddenSubmissionIds();
-  if (ids.has(id)) return;
-  ids.add(id);
-  persistHiddenIds(ids);
 }
 
 /** Removes a single row (matched by id) from the browser fallback list. */
@@ -70,13 +54,82 @@ function pruneLocalFallbackRow(id: string): void {
   }
 }
 
+function isMissingRpcError(message: string): boolean {
+  return /function.*does not exist|could not find the function|PGRST202|42883/i.test(message);
+}
+
+/** Preferred path: SECURITY DEFINER RPC (works when RLS DELETE policy is missing). */
+async function tryRpcDelete(submissionId: string): Promise<'deleted' | 'not_found' | 'missing' | 'error'> {
+  const { data, error } = await supabase.rpc('delete_own_submission', {
+    p_submission_id: submissionId,
+  });
+  if (error) {
+    if (isMissingRpcError(error.message ?? '')) return 'missing';
+    return 'error';
+  }
+  if (data === true) return 'deleted';
+  return 'not_found';
+}
+
+async function tryDirectTableDelete(
+  table: string,
+  submissionId: string,
+  studentId: string
+): Promise<'deleted' | 'blocked' | 'error'> {
+  const { error } = await supabase.from(table).delete().eq('id', submissionId).eq('student_id', studentId);
+  if (error) return 'error';
+
+  const { data: remaining, error: verifyErr } = await supabase
+    .from(table)
+    .select('id')
+    .eq('id', submissionId)
+    .limit(1);
+  if (!verifyErr && remaining && remaining.length > 0) return 'blocked';
+  return 'deleted';
+}
+
+/** Server route using service role — works on production when env is set. */
+async function tryServerDelete(submissionId: string): Promise<'deleted' | 'not_configured' | 'failed'> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) return 'failed';
+
+  try {
+    const res = await fetch('/api/delete-submission', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ submissionId }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (res.status === 503) return 'not_configured';
+    if (res.ok && json.ok) return 'deleted';
+    return 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
+async function finalizeDelete(
+  id: string,
+  fileUrl: string | null | undefined,
+  localOnly: boolean
+): Promise<StudentDeleteSubmissionResult> {
+  if (fileUrl) {
+    await removeSubmissionStorageObjectIfPresent(fileUrl);
+  }
+  pruneLocalFallbackRow(id);
+  emitSubmissionRemoved(id);
+  return { ok: true, localOnly };
+}
+
 /**
- * Deletes a student's own submission row. Handles three sources:
- *  - `local_*` ids: pruned from `localStorage` only.
- *  - Supabase rows: deleted with `student_id` guard, verified, then Storage object purged.
- *
- * Returns a structured result so the UI can surface a clear setup hint when
- * Row Level Security blocks the delete (i.e. before the docs SQL is applied).
+ * Deletes a student's own submission row. Tries, in order:
+ *  1. `delete_own_submission` RPC (SECURITY DEFINER)
+ *  2. Direct table DELETE (when RLS policy exists)
+ *  3. POST `/api/delete-submission` (service role on Vercel)
  */
 export async function deleteStudentSubmission(
   input: StudentDeleteSubmissionInput
@@ -86,55 +139,31 @@ export async function deleteStudentSubmission(
   if (!id) return { ok: false, message: 'No submission id provided.' };
 
   if (id.startsWith('local_')) {
-    pruneLocalFallbackRow(id);
-    return { ok: true, localOnly: true };
+    return finalizeDelete(id, input.fileUrl, true);
   }
 
   const table = await resolveSubmissionTableName();
+
+  const rpc = await tryRpcDelete(id);
+  if (rpc === 'deleted') {
+    return finalizeDelete(id, input.fileUrl, false);
+  }
+
+  if (table) {
+    const direct = await tryDirectTableDelete(table, id, studentId);
+    if (direct === 'deleted') {
+      return finalizeDelete(id, input.fileUrl, false);
+    }
+  }
+
+  const server = await tryServerDelete(id);
+  if (server === 'deleted') {
+    return finalizeDelete(id, input.fileUrl, false);
+  }
+
   if (!table) {
-    /** DB unavailable — just clear the local mirror so the row stops appearing. */
-    pruneLocalFallbackRow(id);
-    return { ok: true, localOnly: true };
+    return finalizeDelete(id, input.fileUrl, true);
   }
 
-  /** Defense in depth: the `student_id` filter ensures a misconfigured policy can't delete someone else's row. */
-  const { error } = await supabase
-    .from(table)
-    .delete()
-    .eq('id', id)
-    .eq('student_id', studentId);
-  if (error) {
-    /** Hard SQL/network/permission errors: still hide locally so the UI feels working. */
-    hideSubmissionLocally(id);
-    pruneLocalFallbackRow(id);
-    return { ok: true, localOnly: true, hiddenLocally: true };
-  }
-
-  /** RLS will silently 0-row a delete that the student isn't allowed to do, so verify it actually went. */
-  const { data: remaining, error: verifyErr } = await supabase
-    .from(table)
-    .select('id')
-    .eq('id', id)
-    .limit(1);
-  if (!verifyErr && remaining && remaining.length > 0) {
-    /**
-     * Delete was blocked by RLS. Fall back to a per-browser hide so the student's view
-     * stops showing this row immediately. The DB row is still present and visible to
-     * teachers — apply `docs/supabase-rls-submissions-student-delete.sql` to make the
-     * removal permanent and cross-device.
-     */
-    hideSubmissionLocally(id);
-    pruneLocalFallbackRow(id);
-    return { ok: true, localOnly: true, hiddenLocally: true };
-  }
-
-  /** Best-effort Storage cleanup — only attempted after the DB row is gone, so we never orphan the row. */
-  if (input.fileUrl) {
-    await removeSubmissionStorageObjectIfPresent(input.fileUrl);
-  }
-
-  /** Drop any lingering local mirror (e.g. a row that started life as `local_*` and was later synced). */
-  pruneLocalFallbackRow(id);
-
-  return { ok: true, localOnly: false };
+  return { ok: false, message: RLS_SETUP_HINT };
 }

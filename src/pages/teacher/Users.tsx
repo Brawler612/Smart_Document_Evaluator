@@ -34,6 +34,7 @@ import {
 } from '../../lib/teacherSubmissionLoad';
 import { performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import { useSubmissionsRealtimeRefresh } from '../../hooks/useSubmissionsRealtimeRefresh';
 import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import TeacherSubmissionRosterTable from '../../components/teacher/TeacherSubmissionRosterTable';
 import UserAvatar from '../../components/UserAvatar';
@@ -202,6 +203,12 @@ export default function UserManagement() {
       lastFetchedAtRef.current = Date.now();
     }
   }, []);
+
+  const silentRefreshSubmissions = useCallback(() => {
+    void refreshSubmissions({ silent: true });
+  }, [refreshSubmissions]);
+
+  useSubmissionsRealtimeRefresh(silentRefreshSubmissions);
 
   const refreshAll = useCallback(
     async (options: { silent?: boolean } = {}) => {

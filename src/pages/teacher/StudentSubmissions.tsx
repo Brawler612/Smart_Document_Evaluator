@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   RefreshCw,
@@ -32,6 +32,7 @@ import { gradingLinkForSubmission, isPlausibleSubmissionId } from '../../lib/gra
 import { submissionDisplayStatusForRoster, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import type { SubStatus } from '../../types';
 import TeacherViewScoreModal from '../../components/teacher/TeacherViewScoreModal';
+import { useSubmissionsRealtimeRefresh } from '../../hooks/useSubmissionsRealtimeRefresh';
 
 const STATUS_CHIP: Record<SubStatus, string> = {
   submitted: 'border-l-[#84001B] bg-rose-50/80',
@@ -98,7 +99,7 @@ export default function StudentSubmissions() {
    * `silent` keeps the existing rows visible while we re-fetch, so deletes and visibility refreshes
    * don't trigger the full-table skeleton (which scrolls the user back to the top).
    */
-  async function load(options: { silent?: boolean } = {}) {
+  const load = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!options.silent) setLoading(true);
     try {
       await syncAllLocalSubmissionsToSupabase();
@@ -119,7 +120,13 @@ export default function StudentSubmissions() {
       if (!options.silent) setLoading(false);
       lastFetchedAtRef.current = Date.now();
     }
-  }
+  }, []);
+
+  const silentRefresh = useCallback(() => {
+    void load({ silent: true });
+  }, [load]);
+
+  useSubmissionsRealtimeRefresh(silentRefresh);
 
   useEffect(() => {
     void load();
@@ -131,8 +138,7 @@ export default function StudentSubmissions() {
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-     
-  }, []);
+  }, [load]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();

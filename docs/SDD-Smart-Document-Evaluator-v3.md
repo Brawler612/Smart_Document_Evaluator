@@ -15,7 +15,7 @@ Jushua Peter Te
 Ryan Bebiro  
 
 **Date:** May 14, 2026  
-**Version:** 3.0 — revised to match the deployed system (supersedes SDD v2.0 / PDF *SDD_SMARTDOCUMENTGRADER*)
+**Version:** 3.0.1 — revised to match the deployed system (supersedes SDD v2.0 / PDF *SDD_SMARTDOCUMENTGRADER*)
 
 ---
 
@@ -26,7 +26,8 @@ Ryan Bebiro
 | 0.1 | Dec 17, 2025 | Initial SDD draft (legacy stack narrative) | Alexandrei Nash Dinapo |
 | 1.0 | Dec 18, 2025 | First complete SDD | Alexandrei Nash Dinapo |
 | 2.0 | Feb 21, 2026 | SDD update (still referenced Express / MySQL in places) | Alexandrei Nash Dinapo |
-| **3.0** | **May 14, 2026** | **Full revision:** Replaced obsolete Node/Express/Sequelize/MySQL design with the **actual** Vite + React + TypeScript SPA, **Supabase** (Postgres + Auth + Storage), **Vercel** serverless (`/api/*`), **Resend** + SMTP invitation pipeline, **same-origin Gemini proxy**, multimodal grading (`shared/*`), teacher review (`ReviewQueue`), student quick submit hardening, and deployment on `vercel.app` + custom domain. Aligns with **SRS-Smart-Document-Evaluator-v3**. | Project team |
+| **3.0** | **May 14, 2026** | **Full revision:** Replaced obsolete Node/Express/Sequelize/MySQL design with the **actual** Vite + React + TypeScript SPA, **Supabase** (Postgres + Auth + Storage), **Vercel** serverless (`/api/*`), **Resend** + SMTP invitation pipeline, **same-origin Gemini proxy**, multimodal grading (`shared/*`), teacher review (`ReviewQueue`), student quick submit hardening, and deployment on `vercel.app` + custom domain. Aligns with **SRS v2 baseline** and follow-on **SRS v3.1** (`docs/SRS-Smart-Document-Evaluator-v3.md`). | Project team |
+| **3.0.1** | **May 14, 2026** | **Course Tasks subsystem:** `TeacherCourseAssignments` route, handout upload (`uploadAssignmentHandout`), optional `handout_url` / `handout_file_name` columns, student `openTask` query on Submit Work, `StudentDeadlineReminders`, workspace filter for General Submission title, bulk/single delete. See §3.8. | Project team |
 
 ---
 
@@ -51,6 +52,7 @@ Ryan Bebiro
    3.5 [Student Grade and Report Views](#35-student-grade-and-report-views)  
    3.6 [Invitation Email Pipeline](#36-invitation-email-pipeline)  
    3.7 [Analytics, Export, and Supporting Utilities](#37-analytics-export-and-supporting-utilities)  
+   3.8 [Course Tasks (Teacher Publishing)](#38-course-tasks-teacher-publishing)  
 4. [Data Design](#4-data-design)  
 5. [Interface and Integration Design](#5-interface-and-integration-design)  
 6. [Security and Privacy Design](#6-security-and-privacy-design)  
@@ -63,7 +65,7 @@ Ryan Bebiro
 
 ### 1.1 Purpose
 
-This Software Design Description (SDD) specifies **how** the **Smart Document Evaluator** (UI brand: **Smart Docs Validator**) is structured and implemented so that it satisfies the requirements in **SRS-Smart-Document-Evaluator-v3** (`docs/SRS-Smart-Document-Evaluator-v2.md`, version 3.0).
+This Software Design Description (SDD) specifies **how** the **Smart Document Evaluator** (UI brand: **Smart Docs Validator**) is structured and implemented so that it satisfies the requirements in **`docs/SRS-Smart-Document-Evaluator-v3.md`** (v3.1 amendments) and the detailed baseline in **`docs/SRS-Smart-Document-Evaluator-v2.md`**.
 
 It replaces outdated material in earlier SDD revisions (including the legacy **Express + Sequelize + MySQL** narrative and duplicated “Smart Form Validator” boilerplate found in the PDF export *SDD_SMARTDOCUMENTGRADER.pdf*) with the **as-built** architecture: a **Vite + React** SPA, **Supabase** backend, **Vercel** hosting and serverless functions, and **Google Gemini** accessed via a **server-side proxy** in production.
 
@@ -97,7 +99,7 @@ This SDD covers:
 
 ### 1.4 References
 
-- **SRS (requirements):** `docs/SRS-Smart-Document-Evaluator-v2.md` (v3.0 content).
+- **SRS (requirements):** `docs/SRS-Smart-Document-Evaluator-v3.md` (v3.1 amendments) and `docs/SRS-Smart-Document-Evaluator-v2.md` (detailed FR baseline).
 - **Repository:** `README.md`, `.env.example`, `docs/INVITATION_EMAIL_SETUP.md`, `docs/supabase-setup-all-in-one.sql` (and related SQL under `docs/`).
 - **Prior SDD (superseded technical stack):** `SDD_SMARTDOCUMENTGRADER.pdf` (v2.0) — retained for change history only.
 - **External:** [Gemini API](https://ai.google.dev/gemini-api/docs), [Supabase Docs](https://supabase.com/docs), [Vercel Docs](https://vercel.com/docs), [Resend Docs](https://resend.com/docs).
@@ -325,6 +327,26 @@ sequenceDiagram
 - **Teacher analytics:** `src/pages/teacher/Analytics.tsx` — aggregates from Supabase queries.
 - **CSV export:** Implemented in teacher flows per SRS (see `ReviewQueue` / export helpers in repo).
 - **Local fallback:** `localSubmissionSync` and local storage keys for offline-first dev scenarios (see code for exact behavior).
+
+### 3.8 Course Tasks (Teacher Publishing)
+
+**Purpose:** Teachers publish cohort-visible tasks (assignments) with optional due date and optional handout file; students consume them on **Tasks** and deep-link into **Submit Work**.
+
+**Key modules:**
+
+- `src/pages/teacher/TeacherCourseAssignments.tsx` — list teacher-owned rows from `assignments` (or `assignment`); create modal; close/re-open; single and bulk delete; handout file picker with clear control; custom due-date popover (date + time + OK).
+- `src/lib/submissionStorage.ts` — `uploadAssignmentHandout(file, teacherId)` writes to the submissions bucket under `handouts/{teacherId}/…`.
+- `src/App.tsx` — route `/course-tasks` (teacher-only).
+- `src/components/Sidebar.tsx` — nav label **Course Tasks**.
+
+**Student integration:**
+
+- `src/lib/studentWorkspaceData.ts` — `safeFetchAssignments` selects extended columns when present; filters out **General Submission** title before exposing assignments to `useStudentWorkspace`.
+- `src/pages/student/Tasks.tsx` — Turn in links to `/assignments?openTask={id}`; handout link when URL present.
+- `src/pages/student/Assignments.tsx` — reads `openTask` search param, opens turn-in modal, strips param after consume.
+- `src/components/student/StudentDeadlineReminders.tsx` — in-app alerts + optional `Notification` API.
+
+**Data:** SQL migrations `docs/supabase-assignments-handout.sql`, `docs/supabase-assignments-document-type-add-std.sql`; core table definitions in `docs/supabase-assignments-submissions-core.sql` (includes `assignments_delete_own` RLS).
 
 ---
 
