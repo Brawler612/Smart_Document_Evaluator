@@ -602,3 +602,4 @@ All three CLIs share the same HTML/text template (`scripts/lib/invitationEmailTe
 ## License
 
 Private / unlicensed unless you add a `LICENSE` file. Update this section when you publish the project publicly.
+-
