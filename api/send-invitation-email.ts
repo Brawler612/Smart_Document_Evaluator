@@ -45,7 +45,6 @@ const INVITED_STUDENT_GMAILS: ReadonlyArray<string> = [
   'banicojosephjames@gmail.com',
   'binagatanalexander2005@gmail.com',
   'bramwellicer@gmail.com',
-  'brawler612@gmail.com',
   'bryekanesy@gmail.com',
   'charlesdarwinhudar@gmail.com',
   'chrisdanielcabatana@gmail.com',

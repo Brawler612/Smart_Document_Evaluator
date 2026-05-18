@@ -15,7 +15,7 @@ import {
   type It332PlannedMember,
 } from './it332Sem2ClassRoster';
 
-/** Static, alphabetised by gmail handle. 45 entries — one per invited student. */
+/** Static, alphabetised by gmail handle. 44 entries — one per invited student. */
 export const INVITED_STUDENT_GMAILS = [
   'allysonsharaine@gmail.com',
   'anaclaireellen@gmail.com',
@@ -24,7 +24,6 @@ export const INVITED_STUDENT_GMAILS = [
   'banicojosephjames@gmail.com',
   'binagatanalexander2005@gmail.com',
   'bramwellicer@gmail.com',
-  'brawler612@gmail.com',
   'bryekanesy@gmail.com',
   'charlesdarwinhudar@gmail.com',
   'chrisdanielcabatana@gmail.com',
