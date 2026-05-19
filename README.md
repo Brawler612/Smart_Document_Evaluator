@@ -3,7 +3,7 @@
 **Smart Document Evaluator** (branded in the UI as **Smart Docs Validator**) is a private academic web application for **IT332 / CS342**. Students sign in with **Google**, upload work to **Supabase Storage**, and use **Submit Work**, **Submission Status**, **Tasks** (with optional deadline reminders), **Boards**, **Calendar**, **Drive**, **Sheets**, and **Analytics**. Teachers use **Grades** (review queue), **Class List**, **Course Tasks** (publish tasks, optional handouts, due dates, delete/bulk-delete), **Student Submissions**, **Documents**, **Analytics**, **Reports**, and **Instructions/Inbox**. Optional **Google Gemini** grading runs via same-origin **`POST /api/gemini-evaluate`** (server key). Invited students may receive a branded **Resend** email on first sign-in.
 
 > **Production (live now):** [`https://smart-document-evalutator.vercel.app`](https://smart-document-evalutator.vercel.app)  
-> **Custom domain:** [`https://www.smartformevaluator.com`](https://www.smartformevaluator.com) — requires GoDaddy nameservers → Vercel (`ns1.vercel-dns.com`, `ns2.vercel-dns.com`). If you see `ERR_SSL_UNRECOGNIZED_NAME_ALERT`, see [`docs/FIX-CUSTOM-DOMAIN-SSL.md`](docs/FIX-CUSTOM-DOMAIN-SSL.md).
+> **Custom domain:** [`https://www.smartformevaluator.com`](https://www.smartformevaluator.com) — requires GoDaddy nameservers → Vercel (`ns1.vercel-dns.com`, `ns2.vercel-dns.com`). If you see `ERR_SSL_UNRECOGNIZED_NAME_ALERT`, see [`docs/FIX-CUSTOM-DOMAIN-SSL.md`](docs/FIX-CUSTOM-DOMAIN-SSL.md). To appear on Google, see [`docs/GOOGLE-SEARCH-AND-DOMAIN.md`](docs/GOOGLE-SEARCH-AND-DOMAIN.md).
 
 ---
 

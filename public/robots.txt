@@ -1,0 +1,6 @@
+# Smart Form Evaluator — allow search engines on public pages
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://www.smartformevaluator.com/sitemap.xml

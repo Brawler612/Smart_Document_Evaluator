@@ -1,5 +1,7 @@
 # Fix `ERR_SSL_UNRECOGNIZED_NAME_ALERT` on smartformevaluator.com
 
+> **Google can’t find your site** until this DNS fix is done. After the domain works, follow [`GOOGLE-SEARCH-AND-DOMAIN.md`](GOOGLE-SEARCH-AND-DOMAIN.md) for Search Console and sitemap.
+
 ## What’s wrong
 
 `https://www.smartformevaluator.com` does **not** reach your Vercel app today.
