@@ -79,6 +79,10 @@ export type GoogleSheetsSetupStatus = {
   hint: string | null;
 };
 
+function envSetupHint(localDev: string, vercel: string): string {
+  return import.meta.env.PROD ? vercel : localDev;
+}
+
 /** What is missing before sync can run. */
 export function getGoogleSheetsSetupStatus(): GoogleSheetsSetupStatus {
   const cfg = getGoogleSheetsConfig();
@@ -89,7 +93,10 @@ export function getGoogleSheetsSetupStatus(): GoogleSheetsSetupStatus {
       hasSheet: false,
       hasClientId,
       ready: false,
-      hint: 'Add VITE_GOOGLE_SHEET_ID (or your sheet URL) in .env, then restart npm run dev.',
+      hint: envSetupHint(
+        'Add VITE_GOOGLE_SHEET_ID (or VITE_GOOGLE_SHEETS_URL) in .env, then restart npm run dev. Or click Sync to Google Sheets and paste your sheet link once.',
+        'Vercel → Project → Settings → Environment Variables: add VITE_GOOGLE_SHEET_ID (spreadsheet ID from the sheet URL) and redeploy. Or click Sync to Google Sheets and paste your sheet link (saved in this browser only).'
+      ),
     };
   }
   if (!hasClientId) {
@@ -97,7 +104,10 @@ export function getGoogleSheetsSetupStatus(): GoogleSheetsSetupStatus {
       hasSheet: true,
       hasClientId: false,
       ready: true,
-      hint: 'Add VITE_GOOGLE_OAUTH_CLIENT_ID in .env (same Web client as Supabase Google), restart npm run dev, then click Sync to Google Sheets and approve spreadsheet access when prompted.',
+      hint: envSetupHint(
+        'Add VITE_GOOGLE_OAUTH_CLIENT_ID in .env (same Web client as Supabase Google), restart npm run dev, then click Sync and approve spreadsheet access.',
+        'Vercel → Environment Variables: add VITE_GOOGLE_OAUTH_CLIENT_ID (Google Cloud Web client ID), redeploy, then click Sync to Google Sheets and approve access.'
+      ),
     };
   }
   return { hasSheet: true, hasClientId: true, ready: true, hint: null };

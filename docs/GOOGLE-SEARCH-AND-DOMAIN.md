@@ -4,22 +4,18 @@ Google cannot index your site until the domain serves your **Vercel** app (not G
 
 ## Step 1 — Point DNS to Vercel (required)
 
-1. **Vercel** → your project → **Settings** → **Domains** → add:
-   - `smartformevaluator.com`
-   - `www.smartformevaluator.com`
-2. Copy the two nameservers Vercel shows (usually `ns1.vercel-dns.com` and `ns2.vercel-dns.com`).
-3. **GoDaddy** → **smartformevaluator.com** → **DNS** → **Nameservers** → **Change** → **I'll use my own nameservers** → paste Vercel’s two nameservers → **Save**.
-4. Wait 15–60 minutes (up to 24h). Verify:
+At **GoDaddy → DNS Records** (while nameservers stay on GoDaddy):
 
-   ```powershell
-   nslookup -type=NS smartformevaluator.com
-   ```
+| Type | Name | Value |
+|------|------|--------|
+| A | `@` | `76.76.21.21` |
+| CNAME | `www` | `cname.vercel-dns.com` |
 
-   You should see `vercel-dns.com`, **not** `domaincontrol.com`.
+Remove old **A** records for `@` pointing to GoDaddy parking IPs and any **domain forwarding**.
 
-5. Open **https://www.smartformevaluator.com** — it should load your login page with a valid padlock (no SSL error).
+Then **Vercel → Domains → Refresh** until both hostnames show **Valid Configuration**.
 
-See also: [`FIX-CUSTOM-DOMAIN-SSL.md`](FIX-CUSTOM-DOMAIN-SSL.md).
+Full steps: [`FIX-CUSTOM-DOMAIN-SSL.md`](FIX-CUSTOM-DOMAIN-SSL.md).
 
 Until DNS works, use **https://smart-document-evalutator.vercel.app** (you can still add this URL in Search Console).
 

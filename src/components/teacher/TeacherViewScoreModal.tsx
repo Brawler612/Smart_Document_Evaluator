@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 import AIDocumentEvaluationReport from '../AIDocumentEvaluationReport';
+import SppProposalEvaluationReport from '../SppProposalEvaluationReport';
+import { alignCriteriaToSppRubric } from '../../../shared/sppProposalRubric';
 import {
   parsePersistedAiDraftSummary,
   stripLegacyHeuristicAutomatedSummary,
@@ -56,43 +58,35 @@ export default function TeacherViewScoreModal({
         scoreSectionFocus="teacher"
       />
     ) : focus === 'ai' ? (
-      <AIDocumentEvaluationReport
-        criteria={[]}
-        aiScorePercent={row.ai_draft_score}
-        teacherScorePercent={null}
-        summaryText={aiDraftParsed.visibleSummary || undefined}
-        documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
-        languageCorrections={aiDraftParsed.languageCorrections}
-        correctHighlights={aiDraftParsed.correctHighlights}
-        pageRewrites={aiDraftParsed.pageRewrites}
-        documentOverviewScores={aiDraftParsed.documentOverviewScores}
-        diagramEvaluations={aiDraftParsed.diagramEvaluations}
-        heading="AI score"
-        detailEvaluation="narrative"
-        density="comfortable"
-        showAiGrade
-        showTeacherGrade={false}
-        scoreSectionFocus="ai"
+      <SppProposalEvaluationReport
+        criteria={alignCriteriaToSppRubric(aiDraftParsed.sppCriteria)}
+        scorePercent={row.ai_draft_score}
+        summaryText={aiDraftParsed.visibleSummary || null}
       />
     ) : (
-      <AIDocumentEvaluationReport
-        criteria={[]}
-        aiScorePercent={row.ai_draft_score}
-        teacherScorePercent={row.score}
-        summaryText={aiDraftParsed.visibleSummary || undefined}
-        documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
-        languageCorrections={aiDraftParsed.languageCorrections}
-        correctHighlights={aiDraftParsed.correctHighlights}
-        pageRewrites={aiDraftParsed.pageRewrites}
-        documentOverviewScores={aiDraftParsed.documentOverviewScores}
-        diagramEvaluations={aiDraftParsed.diagramEvaluations}
-        heading="AI and Teacher score"
-        detailEvaluation="narrative"
-        density="comfortable"
-        showAiGrade
-        showTeacherGrade
-        scoreSectionFocus={null}
-      />
+      <div className="space-y-6">
+        <SppProposalEvaluationReport
+          criteria={alignCriteriaToSppRubric(aiDraftParsed.sppCriteria)}
+          scorePercent={row.ai_draft_score}
+          summaryText={aiDraftParsed.visibleSummary || null}
+        />
+        <AIDocumentEvaluationReport
+          criteria={[]}
+          aiScorePercent={null}
+          teacherScorePercent={row.score}
+          summaryText={feedbackBody || 'No instructor written feedback yet.'}
+          documentQualityNotes={null}
+          languageCorrections={[]}
+          correctHighlights={[]}
+          heading="Teacher score"
+          executiveSummaryHeading="Instructor feedback"
+          detailEvaluation="narrative"
+          density="comfortable"
+          showAiGrade={false}
+          showTeacherGrade
+          scoreSectionFocus="teacher"
+        />
+      </div>
     );
 
   return createPortal(

@@ -17,6 +17,7 @@
 
 import type { GeminiInlineAttachment } from './geminiInlineTypes.js';
 import { clampInlineAttachmentsForVercelProxy } from './geminiProxyPayload.js';
+import { SPP_GEMINI_EVALUATOR_BRIEF } from './sppProposalRubric.js';
 
 export type { GeminiInlineAttachment } from './geminiInlineTypes.js';
 
@@ -615,6 +616,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
   pageRewrites: PageRewrite[];
   documentOverviewScores: PageOverviewScore[];
   diagramEvaluations: DiagramEvaluation[];
+  sppCriteria: RubricCriterionRow[];
 } {
   const s = stored ?? '';
   const idx = s.lastIndexOf(AI_DRAFT_LANG_START);
@@ -627,6 +629,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
       pageRewrites: [],
       documentOverviewScores: [],
       diagramEvaluations: [],
+      sppCriteria: [],
     };
   }
   const head = s.slice(0, idx).trimEnd();
@@ -641,6 +644,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
       pageRewrites?: unknown;
       documentOverviewScores?: unknown;
       diagramEvaluations?: unknown;
+      sppCriteria?: unknown;
     };
     const documentQualityNotes =
       typeof j.documentQualityNotes === 'string'
@@ -654,6 +658,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
       pageRewrites: normalizePageRewrites(j.pageRewrites),
       documentOverviewScores: normalizePageOverviewScores(j.documentOverviewScores),
       diagramEvaluations: normalizeDiagramEvaluations(j.diagramEvaluations),
+      sppCriteria: normalizePersistedSppCriteria(j.sppCriteria),
     };
   } catch {
     return {
@@ -664,6 +669,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
       pageRewrites: [],
       documentOverviewScores: [],
       diagramEvaluations: [],
+      sppCriteria: [],
     };
   }
 }
@@ -675,7 +681,26 @@ export type PersistedAiEvalExtras = {
   pageRewrites?: PageRewrite[];
   documentOverviewScores?: PageOverviewScore[];
   diagramEvaluations?: DiagramEvaluation[];
+  /** SPP 20-criterion rubric rows (persisted for student / roster score views). */
+  sppCriteria?: RubricCriterionRow[];
 };
+
+function normalizePersistedSppCriteria(raw: unknown): RubricCriterionRow[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RubricCriterionRow[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as { name?: unknown; score?: unknown; max?: unknown; comment?: unknown };
+    const name = typeof r.name === 'string' ? r.name.trim() : '';
+    if (!name) continue;
+    const max = typeof r.max === 'number' && Number.isFinite(r.max) ? Math.max(0, Math.round(r.max)) : 5;
+    const scoreRaw = typeof r.score === 'number' && Number.isFinite(r.score) ? r.score : 0;
+    const score = Math.min(max, Math.max(0, Math.round(scoreRaw)));
+    const comment = typeof r.comment === 'string' ? r.comment.trim().slice(0, 4000) : '';
+    out.push({ name, score, max, comment });
+  }
+  return out;
+}
 
 /** Appends a parseable JSON tail on `ai_draft_summary` for structured AI extras (fixes, verified-correct excerpts, per-page rewrites). */
 export function appendPersistedAiEvalExtras(summary: string, extras: PersistedAiEvalExtras): string {
@@ -685,7 +710,16 @@ export function appendPersistedAiEvalExtras(summary: string, extras: PersistedAi
   const pr = extras.pageRewrites ?? [];
   const ov = extras.documentOverviewScores ?? [];
   const dg = extras.diagramEvaluations ?? [];
-  if (cor.length === 0 && !notes && ch.length === 0 && pr.length === 0 && ov.length === 0 && dg.length === 0)
+  const spp = extras.sppCriteria ?? [];
+  if (
+    cor.length === 0 &&
+    !notes &&
+    ch.length === 0 &&
+    pr.length === 0 &&
+    ov.length === 0 &&
+    dg.length === 0 &&
+    spp.length === 0
+  )
     return summary;
   const payload = JSON.stringify({
     ...(notes ? { documentQualityNotes: notes } : {}),
@@ -693,6 +727,7 @@ export function appendPersistedAiEvalExtras(summary: string, extras: PersistedAi
     ...(pr.length > 0 ? { pageRewrites: pr } : {}),
     ...(ov.length > 0 ? { documentOverviewScores: ov } : {}),
     ...(dg.length > 0 ? { diagramEvaluations: dg } : {}),
+    ...(spp.length > 0 ? { sppCriteria: spp } : {}),
     languageCorrections: cor,
   });
   return `${summary}${AI_DRAFT_LANG_START}${payload}${AI_DRAFT_LANG_END}`;
@@ -742,8 +777,7 @@ function buildMultimodalGuidance(attachments: GeminiInlineAttachment[]): string 
   return `\n\nMultimodal grading rules (the submission includes binary attachments):\n- ${bullets.join('\n- ')}\n`;
 }
 
-function buildPrompt(
-  docType: string,
+function buildSppOnlyPrompt(
   content: string,
   template: RubricCriterionRow[],
   attachments: GeminiInlineAttachment[] = []
@@ -754,13 +788,53 @@ function buildPrompt(
   const hasTextBody = content.trim().length > 0;
   const submissionLabel = attachments.length > 0
     ? hasTextBody
+      ? 'Submission text (combine with attached media):'
+      : 'No text body — judge attached media as the full submission:'
+    : 'Submission text:';
+
+  return `You are grading a Software Project Proposal (SPP) for IT332 / CIT-U CCS using ONLY the 20-criterion checklist below.
+
+${SPP_GEMINI_EVALUATOR_BRIEF}${attachmentManifest}${multimodalGuidance}
+
+Rubric (5 points each, 100 total) — score every name exactly once, 0..max inclusive:
+${JSON.stringify(rubric, null, 0)}
+
+${submissionLabel}
+---
+${hasTextBody ? truncateBody(content) : '(no text — use attached media)'}
+---
+
+Return ONLY valid JSON (no markdown). Do NOT fill page rewrites, grammar tables, or highlights — leave those arrays empty.
+
+{"executiveSummary":"2 short paragraphs (max ~120 words) ending with lines:\\nStrengths: a, b, c\\nNeeds improvement: x, y, z","documentQualityNotes":"","criteria":[{"name":"exact rubric name","score":number,"comment":"1-2 sentences with evidence"}],"languageCorrections":[],"correctHighlights":[],"pageRewrites":[],"documentOverviewScores":[],"diagramEvaluations":[]}
+
+Criterion 20 comment must list numbered peer-review action items for deficiencies. Other rules: match rubric names character-for-character; never skip a criterion.`;
+}
+
+function buildPrompt(
+  docType: string,
+  content: string,
+  template: RubricCriterionRow[],
+  attachments: GeminiInlineAttachment[] = []
+): string {
+  if (docType === 'SPP') {
+    return buildSppOnlyPrompt(content, template, attachments);
+  }
+  const rubric = template.map((c) => ({ name: c.name, max: c.max }));
+  const attachmentManifest = buildAttachmentManifest(attachments);
+  const multimodalGuidance = buildMultimodalGuidance(attachments);
+  const hasTextBody = content.trim().length > 0;
+  const submissionLabel = attachments.length > 0
+    ? hasTextBody
       ? 'Submission text (extracted from the file; combine it with the attached media below):'
       : 'No text was extracted from the file — judge the attached media below as the full submission:'
     : 'Submission text (this is all you may evaluate):';
 
+  const sppBrief = docType === 'SPP' ? `\n\n${SPP_GEMINI_EVALUATOR_BRIEF}\n` : '';
+
   return `You are Gemini, the AI document evaluator for this screen. Judge ONLY from the submission below (text body AND any attached binary parts) — no outside sources. Give a MEDIUM-length, instructor-ready review: concrete and grounded, but compact. Don't pad with generic praise; cite short evidence (quotes, paraphrases, page/section references, brief image descriptions) so each comment reads like a real reviewer's note. Stay strictly truthful — never invent details that are not in the submission.
 
-Document type label: ${docType}${attachmentManifest}${multimodalGuidance}
+Document type label: ${docType}${sppBrief}${attachmentManifest}${multimodalGuidance}
 
 Rubric (${rubric.length} criteria) — return one JSON object per rubric name. Each score is an integer from 0 through max inclusive. Justify the score with what is actually correct or incorrect in the submission. Use the FULL 0..max range: high scores only when the submission clearly earns them on that criterion; low scores when requirements are missing, wrong, or weak. Each rubric comment is 2–4 sentences and must reference something specific in the submission. IMPORTANT: this is the only field that drives the student's grade — always include every rubric name with a real score, even if you have to skip optional sections to save space.
 
@@ -812,9 +886,10 @@ function buildMinimalPrompt(
       ? 'Submission text (combined with attached media):'
       : 'No text body — judge attached media:'
     : 'Submission text:';
+  const sppBrief = docType === 'SPP' ? `\n${SPP_GEMINI_EVALUATOR_BRIEF}\n` : '';
   return `You are Gemini grading a student submission. Return ONLY a small JSON object with rubric scores and a brief executive summary. No markdown, no prose outside JSON.
 
-Document type: ${docType}
+Document type: ${docType}${sppBrief}
 ${buildAttachmentManifest(attachments)}
 
 Rubric (use full 0..max range; score every name exactly once):
@@ -843,7 +918,8 @@ function buildUltraMinimalPrompt(
   attachments: GeminiInlineAttachment[] = []
 ): string {
   const rubric = template.map((c) => ({ name: c.name, max: c.max }));
-  return `Grade the submission below as ${docType}. Return ONLY a tiny JSON object. No prose, no markdown.
+  const sppBrief = docType === 'SPP' ? `\n${SPP_GEMINI_EVALUATOR_BRIEF}\n` : '';
+  return `Grade the submission below as ${docType}. Return ONLY a tiny JSON object. No prose, no markdown.${sppBrief}
 
 Rubric (score each, 0..max inclusive):
 ${JSON.stringify(rubric, null, 0)}

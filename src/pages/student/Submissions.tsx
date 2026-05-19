@@ -23,6 +23,8 @@ import { normalizeSubStatus, submissionQueueTitle } from '../../lib/teacherSubmi
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { SubmissionOpenLink, submissionHasOpenableFileUrl } from '../../components/SubmissionOpenLink';
 import AIDocumentEvaluationReport from '../../components/AIDocumentEvaluationReport';
+import SppProposalEvaluationReport from '../../components/SppProposalEvaluationReport';
+import { alignCriteriaToSppRubric } from '../../../shared/sppProposalRubric';
 import { parsePersistedAiDraftSummary } from '../../../shared/geminiDocumentEvaluation';
 import { useSubmissionFileMeta } from '../../lib/submissionFileMeta';
 import { submissionHasPublishedScoreAndAiDraft, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
@@ -934,24 +936,14 @@ function SubmissionDetailsDialog({
                       Automated (AI) grading
                     </p>
                     <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">
-                      Preliminary AI rubric and model-written notes. Your instructor’s official grade (if any) is separate.
+                      Project Proposal Guide (Parts 1–7). Your instructor’s official grade (if any) is separate.
                     </p>
                   </div>
                 </div>
-                <AIDocumentEvaluationReport
-                  criteria={[]}
-                  aiScorePercent={selected.ai_draft_score}
-                  teacherScorePercent={null}
-                  summaryText={aiDraftParsed.visibleSummary || undefined}
-                  documentQualityNotes={aiDraftParsed.documentQualityNotes || null}
-                  languageCorrections={aiDraftParsed.languageCorrections}
-                  correctHighlights={aiDraftParsed.correctHighlights}
-                  pageRewrites={aiDraftParsed.pageRewrites}
-                  documentOverviewScores={aiDraftParsed.documentOverviewScores}
-                  diagramEvaluations={aiDraftParsed.diagramEvaluations}
-                  heading="AI score"
-                  showTeacherGrade={false}
-                  scoreSectionFocus="ai"
+                <SppProposalEvaluationReport
+                  criteria={alignCriteriaToSppRubric(aiDraftParsed.sppCriteria)}
+                  scorePercent={selected.ai_draft_score}
+                  summaryText={aiDraftParsed.visibleSummary || null}
                 />
               </div>
             )}

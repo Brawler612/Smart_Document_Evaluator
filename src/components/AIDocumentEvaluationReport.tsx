@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
   BadgeCheck,
   BookOpen,
   CheckCircle,
+  ClipboardList,
   GraduationCap,
   Image as ImageIcon,
   Languages,
@@ -12,6 +13,12 @@ import {
   Sparkles,
   Table2,
 } from 'lucide-react';
+import {
+  buildSppActionItemsMarkdown,
+  getSppCategoryForCriterion,
+  isSppProposalRubric,
+  type SppRubricCategory,
+} from '../../shared/sppProposalRubric';
 
 export interface AIEvaluationCriterion {
   name: string;
@@ -93,6 +100,8 @@ export type AIDocumentEvaluationReportProps = {
   detailEvaluation?: 'rubric' | 'narrative';
   /** Scroll / emphasize the AI or Teacher score tile when opening from a split “View AI / Teacher score” control. */
   scoreSectionFocus?: 'ai' | 'teacher' | null;
+  /** Group rubric by SPP category and show checklist export when `spp`. */
+  rubricVariant?: 'default' | 'spp';
 };
 
 function criterionPercent(c: AIEvaluationCriterion): number {
@@ -149,9 +158,11 @@ export default function AIDocumentEvaluationReport({
   density = 'default',
   detailEvaluation = 'rubric',
   scoreSectionFocus = null,
+  rubricVariant = 'default',
 }: AIDocumentEvaluationReportProps) {
   const aiScoreTileRef = useRef<HTMLDivElement>(null);
   const teacherScoreTileRef = useRef<HTMLDivElement>(null);
+  const [checklistCopied, setChecklistCopied] = useState(false);
   const comfy = density === 'comfortable';
   const executive = (summaryText ?? '').trim();
   const qualityNotes = (documentQualityNotes ?? '').trim();
@@ -162,6 +173,81 @@ export default function AIDocumentEvaluationReport({
   const diagramRows = (diagramEvaluations ?? []).filter((r) => r && r.diagram?.trim() && r.evaluation?.trim());
   const pct = aiScorePercent != null && Number.isFinite(aiScorePercent) ? Math.max(0, Math.min(100, aiScorePercent)) : null;
   const showRubricRows = criteria.length > 0 && detailEvaluation !== 'narrative';
+  const sppChecklist =
+    rubricVariant === 'spp' || (criteria.length > 0 && isSppProposalRubric(criteria));
+  const sppCategories: SppRubricCategory[] = [
+    'Compliance & structure',
+    'Proposal content',
+    'Planning & traceability',
+    'Integrity & references',
+    'Review deliverables',
+  ];
+
+  async function copyActionItemsChecklist() {
+    const md = buildSppActionItemsMarkdown(criteria);
+    try {
+      await navigator.clipboard.writeText(md);
+      setChecklistCopied(true);
+      window.setTimeout(() => setChecklistCopied(false), 2500);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function renderRubricRow(c: AIEvaluationCriterion, idx: number) {
+    const secPct = criterionPercent(c);
+    const sppCat = sppChecklist ? getSppCategoryForCriterion(c.name) : null;
+    return (
+      <div
+        key={`${c.name}-${idx}`}
+        className={`flex flex-col rounded-2xl border border-slate-200/90 bg-white shadow-sm sm:flex-row sm:items-stretch sm:justify-between ${
+          comfy ? 'gap-5 p-5 sm:gap-8' : 'gap-4 p-4 sm:gap-6'
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          {sppCat ? (
+            <p className={`font-bold uppercase tracking-wide text-emerald-800/80 ${comfy ? 'text-[10px]' : 'text-[9px]'}`}>
+              {sppCat}
+            </p>
+          ) : null}
+          <p className={`font-bold text-slate-400 tabular-nums ${comfy ? 'text-sm' : 'text-xs'}`}>{idx + 1}</p>
+          <h4 className={`font-bold text-slate-900 ${comfy ? 'text-lg' : 'text-base'}`}>{c.name}</h4>
+          <p className={`mt-2 leading-relaxed text-slate-700 whitespace-pre-wrap ${comfy ? 'text-[15px]' : 'text-sm'}`}>
+            {c.comment}
+          </p>
+        </div>
+        <div
+          className={`flex w-full shrink-0 flex-col items-center justify-center rounded-xl border border-slate-100 bg-slate-50/90 px-4 py-3 ${
+            comfy ? 'sm:w-36' : 'sm:w-28'
+          }`}
+        >
+          {sppChecklist ? (
+            <>
+              <span className={`font-extrabold tabular-nums text-[#84001B] ${comfy ? 'text-3xl' : 'text-2xl'}`}>
+                {c.score}
+              </span>
+              <span
+                className={`mt-1 font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[11px]' : 'text-[10px]'}`}
+              >
+                / {c.max} pts
+              </span>
+            </>
+          ) : (
+            <>
+              <span className={`font-extrabold tabular-nums text-[#84001B] ${comfy ? 'text-3xl' : 'text-2xl'}`}>
+                {secPct}
+              </span>
+              <span
+                className={`mt-1 font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[11px]' : 'text-[10px]'}`}
+              >
+                Score / 100
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
   const fallbackExecutive =
     !executive && pct != null && (criteria.length === 0 || detailEvaluation === 'narrative')
       ? `Indicative automated score: ${pct} out of 100. Your instructor may adjust this after review — see teacher feedback below.`
@@ -724,45 +810,35 @@ export default function AIDocumentEvaluationReport({
         <p
           className={`mb-3 font-bold uppercase tracking-[0.12em] text-slate-500 ${comfy ? 'text-xs' : 'text-[11px]'}`}
         >
-          Detailed evaluation
+          {sppChecklist ? 'SPP checklist (20 criteria)' : 'Detailed evaluation'}
         </p>
+        {sppChecklist && criteria.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => void copyActionItemsChecklist()}
+            className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-900 hover:bg-emerald-100"
+          >
+            <ClipboardList className="h-3.5 w-3.5" aria-hidden />
+            {checklistCopied ? 'Copied!' : 'Copy peer-review action items'}
+          </button>
+        ) : null}
         <div className={comfy ? 'space-y-5' : 'space-y-4'}>
           {showRubricRows ? (
-            criteria.map((c, idx) => {
-              const secPct = criterionPercent(c);
-              return (
-                <div
-                  key={`${c.name}-${idx}`}
-                  className={`flex flex-col rounded-2xl border border-slate-200/90 bg-white shadow-sm sm:flex-row sm:items-stretch sm:justify-between ${
-                    comfy ? 'gap-5 p-5 sm:gap-8' : 'gap-4 p-4 sm:gap-6'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className={`font-bold text-slate-400 tabular-nums ${comfy ? 'text-sm' : 'text-xs'}`}>{idx + 1}</p>
-                    <h4 className={`font-bold text-slate-900 ${comfy ? 'text-lg' : 'text-base'}`}>{c.name}</h4>
+            sppChecklist
+              ? sppCategories.flatMap((cat) => {
+                  const rows = criteria.filter((c) => getSppCategoryForCriterion(c.name) === cat);
+                  if (rows.length === 0) return [];
+                  return [
                     <p
-                      className={`mt-2 leading-relaxed text-slate-700 ${comfy ? 'text-[15px]' : 'text-sm'}`}
+                      key={`cat-${cat}`}
+                      className={`font-bold uppercase tracking-wide text-[#84001B]/90 ${comfy ? 'text-xs' : 'text-[10px]'}`}
                     >
-                      {c.comment}
-                    </p>
-                  </div>
-                  <div
-                    className={`flex w-full shrink-0 flex-col items-center justify-center rounded-xl border border-slate-100 bg-slate-50/90 px-4 py-3 ${
-                      comfy ? 'sm:w-36' : 'sm:w-28'
-                    }`}
-                  >
-                    <span className={`font-extrabold tabular-nums text-[#84001B] ${comfy ? 'text-3xl' : 'text-2xl'}`}>
-                      {secPct}
-                    </span>
-                    <span
-                      className={`mt-1 font-bold uppercase tracking-wide text-slate-400 ${comfy ? 'text-[11px]' : 'text-[10px]'}`}
-                    >
-                      Score / 100
-                    </span>
-                  </div>
-                </div>
-              );
-            })
+                      {cat}
+                    </p>,
+                    ...rows.map((c) => renderRubricRow(c, criteria.indexOf(c))),
+                  ];
+                })
+              : criteria.map((c, idx) => renderRubricRow(c, idx))
           ) : executiveDisplay ? (
             <div className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm ${comfy ? 'p-5' : 'p-4'}`}>
               <h4 className={`font-bold text-slate-900 ${comfy ? 'text-lg' : 'text-base'}`}>Automated summary</h4>
