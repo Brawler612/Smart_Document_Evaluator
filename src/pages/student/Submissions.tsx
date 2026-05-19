@@ -988,22 +988,6 @@ function SubmissionDetailsDialog({
               </span>
             </div>
           )}
-          {isScoreView && view !== 'score_teacher' && (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-                Teacher feedback
-              </p>
-              {selected.feedback ? (
-                <div className="bg-slate-50 rounded-xl p-4 text-sm font-bold text-slate-800 leading-relaxed border border-slate-100">
-                  {selected.feedback}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400 text-center py-4 border border-dashed border-slate-200 rounded-xl">
-                  No written comments yet.
-                </p>
-              )}
-            </div>
-          )}
           {selPv.normalized === 'resubmit' && (
             <Link
               to={resubmitAssignmentsHref(selected)}
