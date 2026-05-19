@@ -8,6 +8,16 @@
   "trailingSlash": false,
   "redirects": [
     {
+      "source": "/lander",
+      "destination": "/login",
+      "permanent": true
+    },
+    {
+      "source": "/lander/:path*",
+      "destination": "/login",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "smartformevaluator.com" }],
       "destination": "https://www.smartformevaluator.com/:path*",
