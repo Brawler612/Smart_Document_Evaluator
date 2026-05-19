@@ -65,7 +65,7 @@ const URL_KIND_LABEL: Record<SubmissionUrlKind, string> = {
   data: 'Embedded data',
   blob: 'Local blob',
   http: 'Cloud link',
-  unknown: 'Other',
+  unknown: 'SPP',
   none: 'No file URL',
 };
 

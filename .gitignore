@@ -38,3 +38,5 @@ db-dumps/*.sql
 db-dumps/*.dump
 db-dumps/*.tar
 db-dumps/*.gz
+.vercel
+.env*.local

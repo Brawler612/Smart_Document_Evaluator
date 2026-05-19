@@ -254,7 +254,7 @@ export default function TeacherSubmissionRosterTable({
         <table className="w-full min-w-[1200px] text-sm border-collapse">
           <thead>
             <tr className={teacherMaroonTheadClasses}>
-              <th className="px-3 py-3 text-left min-w-[96px]">Title</th>
+              <th className="px-3 py-3 text-left min-w-[96px]">Document type</th>
               <th className="px-3 py-3 text-left min-w-[140px]">File name</th>
               <th className="px-3 py-3 text-left min-w-[120px]">Student ID</th>
               <th className="px-3 py-3 text-left min-w-[140px]">Student name</th>

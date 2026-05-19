@@ -15,6 +15,12 @@ import {
   type It332PlannedMember,
 } from './it332Sem2ClassRoster';
 
+/** Always allowed on the student portal (even if roster lists change). */
+export const GUARANTEED_STUDENT_GMAILS = [
+  'trafalgardreii@gmail.com',
+  'tragalgardreii@gmail.com',
+] as const;
+
 /** Static, alphabetised by gmail handle. 44 entries — one per invited student. */
 export const INVITED_STUDENT_GMAILS = [
   'allysonsharaine@gmail.com',
@@ -65,7 +71,7 @@ export const INVITED_STUDENT_GMAILS = [
 
 /** Lower-cased lookup set so checks are case-insensitive without re-allocating per call. */
 const NORMALIZED_INVITED_GMAILS = new Set<string>(
-  INVITED_STUDENT_GMAILS.map((e) => e.toLowerCase())
+  [...INVITED_STUDENT_GMAILS, ...GUARANTEED_STUDENT_GMAILS].map((e) => e.toLowerCase())
 );
 
 /** Returns true when the given email matches one of the invited students. */

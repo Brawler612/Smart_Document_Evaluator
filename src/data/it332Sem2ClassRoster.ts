@@ -27,6 +27,9 @@ export const IT332_SEM2_SCHOOL_YEAR = '2025–2026';
 /** Course + term for roster columns (“course & year” in semester sense). */
 export const IT332_SEM2_COURSE_DISPLAY = 'IT332 · Sem 2';
 
+/** Program year level shown on class list (same for every student in this cohort). */
+export const IT332_CLASS_COURSE_AND_YEAR = 'BSIT-3';
+
 /** @deprecated use IT332_COHORT_DESCRIPTOR */
 export const IT332_SEM2_COURSE_LABEL = IT332_COHORT_DESCRIPTOR;
 
@@ -2574,5 +2577,13 @@ export const IT332_SEM2_PLANNED_ROSTER: It332PlannedMember[] = [
     lastName: 'Cortes',
     firstName: 'Raven Fatima',
     citEmail: 'ravenfatima.cortes@cit.edu',
+  },
+  {
+    teamCode: '2526-sem2-it332-eval',
+    memberNumber: 1,
+    studentSchoolId: '22-0000-001',
+    lastName: 'Drei',
+    firstName: 'Trafalgar',
+    citEmail: 'trafalgardreii@gmail.com',
   },
 ];

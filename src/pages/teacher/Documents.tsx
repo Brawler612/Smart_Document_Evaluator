@@ -3,6 +3,7 @@ import { Plus, Search, FolderOpen, Download, Trash2, FileText, X, ChevronDown, C
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { DocType } from '../../types';
+import { DEFAULT_DOC_TYPE, DOC_TYPE_COLORS, DOCUMENT_TYPES } from '../../lib/documentTypes';
 import Modal from '../../components/Modal';
 interface Document {
   id: string;
@@ -16,12 +17,7 @@ interface Document {
   uploader: { full_name: string } | null;
 }
 
-const DOC_COLORS: Record<string, string> = {
-  SRS: 'bg-blue-100 text-blue-700',
-  SDD: 'bg-emerald-100 text-emerald-700',
-  SPMP: 'bg-orange-100 text-orange-700',
-  Other: 'bg-gray-100 text-gray-600',
-};
+const DOC_COLORS: Record<string, string> = { ...DOC_TYPE_COLORS };
 
 const PAGE_SIZE = 9;
 
@@ -34,7 +30,7 @@ export default function TeacherDocuments() {
   const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', document_type: 'SRS' as DocType });
+  const [form, setForm] = useState({ title: '', description: '', document_type: DEFAULT_DOC_TYPE });
 
   async function load() {
     const { data } = await supabase
@@ -53,7 +49,7 @@ export default function TeacherDocuments() {
     await supabase.from('documents').insert({ ...form, uploader_id: user!.id, file_name: form.title });
     setSaving(false);
     setShowModal(false);
-    setForm({ title: '', description: '', document_type: 'SRS' });
+    setForm({ title: '', description: '', document_type: DEFAULT_DOC_TYPE });
     load();
   }
 
@@ -93,7 +89,7 @@ export default function TeacherDocuments() {
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]" />
         </div>
         <div className="flex gap-2">
-          {(['all', 'SRS', 'SDD', 'SPMP', 'Other'] as const).map(t => (
+          {(['all', ...DOCUMENT_TYPES] as const).map(t => (
             <button key={t} onClick={() => handleFilterChange(t)}
               className={`px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${typeFilter === t ? 'bg-[#84001B] text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               {t}
@@ -206,7 +202,7 @@ export default function TeacherDocuments() {
                 <div className="relative">
                   <select value={form.document_type} onChange={e => setForm(f => ({ ...f, document_type: e.target.value as DocType }))}
                     className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] appearance-none">
-                    {['SRS', 'SDD', 'SPMP', 'Other'].map(t => <option key={t}>{t}</option>)}
+                    {DOCUMENT_TYPES.map(t => <option key={t}>{t}</option>)}
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                 </div>

@@ -112,7 +112,7 @@ export default function StudentSheets() {
       submissions.map((s) => ({
         s,
         title: s.assignment_title || s.file_name,
-        documentType: s.submission_doc_type || s.assignment_doc_type || 'Other',
+        documentType: s.submission_doc_type || s.assignment_doc_type || 'SPP',
       })),
     [submissions]
   );

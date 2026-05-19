@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
 import AIDocumentEvaluationReport from '../AIDocumentEvaluationReport';
-import { parsePersistedAiDraftSummary } from '../../../shared/geminiDocumentEvaluation';
+import {
+  parsePersistedAiDraftSummary,
+  stripLegacyHeuristicAutomatedSummary,
+} from '../../../shared/geminiDocumentEvaluation';
 import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import { submissionQueueTitle, type TeacherSubmission } from '../../lib/teacherSubmissionLoad';
 
@@ -32,7 +35,7 @@ export default function TeacherViewScoreModal({
 
   const taskTitle = submissionQueueTitle(row);
 
-  const feedbackBody = (row.feedback ?? '').trim();
+  const feedbackBody = stripLegacyHeuristicAutomatedSummary(row.feedback ?? '');
 
   const report =
     focus === 'teacher' ? (

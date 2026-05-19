@@ -16,10 +16,11 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { uploadAssignmentHandout } from '../../lib/submissionStorage';
 import { describeDueRelative, formatShortDate } from '../../lib/studentWorkspaceData';
+import { DEFAULT_DOC_TYPE, DOCUMENT_TYPES } from '../../lib/documentTypes';
 
 type AssignmentTable = 'assignments' | 'assignment';
 
-const DOC_TYPES = ['SRS', 'SDD', 'SPMP', 'STD', 'Other'] as const;
+const DOC_TYPES = DOCUMENT_TYPES;
 
 type Row = {
   id: string;
@@ -59,7 +60,7 @@ export default function TeacherCourseAssignments() {
   const [form, setForm] = useState({
     title: '',
     description: '',
-    document_type: 'SRS' as (typeof DOC_TYPES)[number],
+    document_type: DEFAULT_DOC_TYPE,
     due_date: '',
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -242,7 +243,7 @@ export default function TeacherCourseAssignments() {
   }
 
   function resetForm() {
-    setForm({ title: '', description: '', document_type: 'SRS', due_date: '' });
+    setForm({ title: '', description: '', document_type: DEFAULT_DOC_TYPE, due_date: '' });
     setSelectedFile(null);
     setDuePickerOpen(false);
     if (fileRef.current) fileRef.current.value = '';

@@ -19,7 +19,8 @@ export interface AppUser {
   /** Profile picture URL synced from the OAuth provider (Google `picture` claim) on each sign-in. */
   avatar_url?: string | null;
 }
-export type DocType = 'SRS' | 'SDD' | 'SPMP' | 'STD' | 'Other';
+export type { DocType } from '../lib/documentTypes';
+export { DOCUMENT_TYPES, DEFAULT_DOC_TYPE, normalizeDocType, DOC_TYPE_COLORS } from '../lib/documentTypes';
 export type AStatus = 'active' | 'closed' | 'draft';
 export type SubStatus = 'submitted' | 'under_review' | 'reviewed' | 'resubmit';
 export interface Assignment { id: string; title: string; description: string; document_type: DocType; teacher_id: string; group_id: string | null; due_date: string | null; max_score: number; status: AStatus; created_at: string; updated_at: string; }

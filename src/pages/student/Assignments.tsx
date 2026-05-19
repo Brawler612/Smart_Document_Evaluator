@@ -27,7 +27,10 @@ import { resolveStudentSubmissionFileUrl } from '../../lib/submissionStorage';
 import { syncLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import { ensureAppUserProfile } from '../../lib/userProfilePersistence';
 import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from '../../lib/teacherSubmissionLoad';
+import { SOLE_STAFF_EMAIL } from '../../lib/staffAccess';
+import { DEFAULT_DOC_TYPE, DOC_TYPE_COLORS, DOCUMENT_TYPES } from '../../lib/documentTypes';
 import { useAuth } from '../../context/AuthContext';
+
 interface Assignment {
   id: string;
   title: string;
@@ -40,42 +43,23 @@ interface Assignment {
   handout_file_name?: string | null;
 }
 
-const DOC_COLORS: Record<string, string> = {
-  SRS: 'bg-[#84001B]/12 text-[#84001B]',
-  SDD: 'bg-[#ffd21a]/35 text-[#5c0014]',
-  SPMP: 'bg-red-50 text-red-800',
-  STD: 'bg-violet-100 text-violet-900',
-  Other: 'bg-slate-100 text-slate-600',
-};
+const DOC_COLORS: Record<string, string> = { ...DOC_TYPE_COLORS };
 
-const QUICK_DOC_TYPES = ['SRS', 'SDD', 'SPMP', 'STD', 'Other'] as const;
+const QUICK_DOC_TYPES = DOCUMENT_TYPES;
 
 function isMissingSubmissionDocTypeColumn(message: string | undefined): boolean {
   return /submission_doc_type|could not find|column|pgrst204|schema cache/i.test(message ?? '');
 }
 
-function submissionDocTypeFromAssignment(dt: string): string {
-  const x = dt.trim();
-  if (x === 'SRS' || x === 'SDD' || x === 'SPMP' || x === 'STD' || x === 'Other') return x;
-  return 'Other';
+function submissionDocTypeFromAssignment(_dt: string): string {
+  return DEFAULT_DOC_TYPE;
 }
 
-/** Quick submit: empty = no submission_doc_type (DB allows SRS/SDD/SPMP/STD/Other only). */
-function submissionDocTypeFromQuickPick(code: string): string | undefined {
+function submissionDocTypeFromQuickPick(code: string): string {
   const t = code.trim();
-  if (!t) return undefined;
-  return t;
+  return t === 'SPP' ? 'SPP' : DEFAULT_DOC_TYPE;
 }
 
-function parseEmailList(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-const ADMIN_EMAILS = parseEmailList(import.meta.env.VITE_ADMIN_EMAILS);
-const TEACHER_EMAILS = parseEmailList(import.meta.env.VITE_TEACHER_EMAILS);
 const LOCAL_SUBMISSION_KEY = 'local_submission_fallback_v1';
 
 /** Shared fields for Quick submit & Turn in modals—aligned with grading + Submission status flows. */
@@ -138,7 +122,6 @@ function SubmitUploadFields({
               quickDocType ? 'border-slate-200 text-slate-800' : 'border-[#84001B]/40 text-slate-500'
             }`}
           >
-            <option value="" disabled>Select a document type…</option>
             {QUICK_DOC_TYPES.map((opt) => (
               <option key={opt} value={opt}>
                 {opt}
@@ -236,7 +219,7 @@ function SubmitUploadFields({
             id={`su-name-${variant}`}
             value={fileName}
             onChange={(e) => setFileName(e.target.value)}
-            placeholder={variant === 'quick' ? 'e.g. My_SRS_draft.pdf (or leave blank when you attach a file)' : 'e.g. SRS_final_Group3.pdf'}
+            placeholder={variant === 'quick' ? 'e.g. My_SPP_draft.pdf (or leave blank when you attach a file)' : 'e.g. SPP_final_Group3.pdf'}
             className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B] bg-white"
           />
         </div>
@@ -301,7 +284,7 @@ export default function StudentAssignments() {
   const [fileName, setFileName] = useState('');
   const [submissionText, setSubmissionText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [quickDocType, setQuickDocType] = useState<string>('');
+  const [quickDocType, setQuickDocType] = useState<string>(DEFAULT_DOC_TYPE);
   const [saving, setSaving] = useState(false);
   const [assignmentTable, setAssignmentTable] = useState<'assignments' | 'assignment' | null>(null);
   const [submissionTable, setSubmissionTable] = useState<'submissions' | 'submission' | null>(null);
@@ -469,7 +452,7 @@ export default function StudentAssignments() {
     const byConfiguredEmail = await supabase
       .from('users')
       .select('id')
-      .in('email', [...ADMIN_EMAILS, ...TEACHER_EMAILS])
+      .in('email', [SOLE_STAFF_EMAIL])
       .limit(1)
       .maybeSingle();
     if (byConfiguredEmail.data?.id) teacherId = byConfiguredEmail.data.id;
@@ -502,7 +485,7 @@ export default function StudentAssignments() {
       .insert({
         title,
         description: 'Auto-generated bucket for general student uploads.',
-        document_type: 'Other',
+        document_type: DEFAULT_DOC_TYPE,
         teacher_id: teacherId,
         status: 'active',
         max_score: 100,
@@ -621,7 +604,7 @@ export default function StudentAssignments() {
     if ((!fileName.trim() && !selectedFile) || !user?.id) return;
     if (submissionSchemaMissing) return;
     if (!quickDocType.trim()) {
-      alert('Please choose a document type (SRS, SDD, SPMP, STD, or Other) before sending.');
+      alert('Please choose a document type (SPP) before sending.');
       return;
     }
     submitInFlightRef.current = true;
@@ -647,7 +630,7 @@ export default function StudentAssignments() {
       setFileName('');
       setSubmissionText('');
       setSelectedFile(null);
-      setQuickDocType('');
+      setQuickDocType(DEFAULT_DOC_TYPE);
       await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Submit failed.');
@@ -684,7 +667,7 @@ export default function StudentAssignments() {
 
   function openQuickSubmitModal() {
     setQuickSubmitOpen(true);
-    setQuickDocType('');
+    setQuickDocType(DEFAULT_DOC_TYPE);
     setFileName('');
     setSubmissionText('');
     setSelectedFile(null);
@@ -856,7 +839,7 @@ export default function StudentAssignments() {
                   Quick submit — fastest path
                 </h2>
                 <p className="text-sm text-slate-500 mt-1 leading-snug">
-                  Defaults to no document type — add SRS / SDD / SPMP / STD if you want that label in the grading queue.
+                  Submissions are labeled SPP in the grading queue.
                   Attach one file and send.
                 </p>
               </div>
@@ -1049,7 +1032,7 @@ export default function StudentAssignments() {
                                 <h3 className="font-bold text-slate-900 truncate">{a.title}</h3>
                                 <span
                                   className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${
-                                    DOC_COLORS[a.document_type] ?? DOC_COLORS.Other
+                                    DOC_COLORS[a.document_type] ?? DOC_COLORS[DEFAULT_DOC_TYPE]
                                   }`}
                                 >
                                   {a.document_type}
@@ -1304,7 +1287,7 @@ export default function StudentAssignments() {
                   )}
                   {!quickDocType && (
                     <>
-                      <span className="font-semibold">Document type is required</span> — pick one of SRS, SDD, SPMP, STD, or Other to enable upload.
+                      <span className="font-semibold">Document type is required</span> — SPP must be selected to enable upload.
                     </>
                   )}
                 </p>

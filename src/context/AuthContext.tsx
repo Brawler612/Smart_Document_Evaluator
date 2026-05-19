@@ -11,6 +11,7 @@ import {
   STUDENT_EMAIL_REJECT_STORAGE_KEY,
 } from '../lib/studentEmailPolicy';
 import { isInvitedStudent, getInvitedStudentRosterEntry } from '../data/invitedStudentEmails';
+import { resolveAppRole } from '../lib/staffAccess';
 import { AppUser, UserRole } from '../types';
 
 interface Ctx {
@@ -26,35 +27,10 @@ const AuthContext = createContext<Ctx>({
   signOut: async () => {},
 });
 
-function parseEmailList(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map(v => v.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
-const ADMIN_EMAILS = parseEmailList(import.meta.env.VITE_ADMIN_EMAILS);
-const TEACHER_EMAILS = parseEmailList(import.meta.env.VITE_TEACHER_EMAILS);
-
 async function fetchProfile(id: string): Promise<{ data: AppUser | null; error: string | null }> {
   const { data, error } = await supabase.from('users').select('*').eq('id', id).maybeSingle();
   if (error) return { data: null, error: error.message };
   return { data, error: null };
-}
-
-function normalizeRole(value: unknown): UserRole {
-  if (value === 'teacher' || value === 'admin') return value;
-  return 'student';
-}
-
-function resolveRole(email: string, metaRole: unknown, existingRole?: UserRole): UserRole {
-  const lowered = email.toLowerCase();
-  if (ADMIN_EMAILS.has(lowered)) return 'admin';
-  if (TEACHER_EMAILS.has(lowered)) return 'teacher';
-  if (existingRole === 'teacher' || existingRole === 'admin') return existingRole;
-  return normalizeRole(metaRole);
 }
 
 /** Pull the most likely profile-picture URL out of any OAuth metadata blob (deep keys + identities). */
@@ -117,7 +93,7 @@ function fallbackProfile(authUser: User): AppUser {
     (typeof meta.name === 'string' && meta.name) ||
     email.split('@')[0] ||
     'User';
-  const role = resolveRole(email, meta.role);
+  const role = resolveAppRole(email);
   const avatar_url = extractAvatarUrl(...gatherAvatarSources(authUser));
   if (import.meta.env.DEV && !avatar_url) {
     console.warn('[auth] No profile picture found in OAuth metadata for', email, '— user_metadata keys:', Object.keys(meta));
@@ -140,7 +116,7 @@ async function ensureUserProfile(authUser: User): Promise<AppUser | null> {
   const meta = authUser.user_metadata ?? {};
 
   const { data: existing, error: loadErr } = await fetchProfile(authUser.id);
-  const roleFromConfig = resolveRole(email, meta.role, existing?.role);
+  const roleFromConfig = resolveAppRole(email);
   if (loadErr && import.meta.env.DEV) {
     console.warn(
       '[auth] public.users load failed (often RLS/policy). Run docs/supabase-fix-users-rls-recursion.sql —',
@@ -276,7 +252,7 @@ function rejectStudentIfWrongCampusEmail(profile: AppUser): boolean {
 /**
  * Student sign-in is limited to IT332 / CS342 students whose Gmail appears on the
  * official course class list (`INVITED_STUDENT_GMAILS`). Teachers and admins
- * (whitelisted via VITE_TEACHER_EMAILS / VITE_ADMIN_EMAILS) are always allowed.
+ * Staff (sole instructor Gmail) are always allowed; everyone else must be on the class list.
  */
 function rejectIfNotInvitedStudent(profile: AppUser): boolean {
   if (profile.role !== 'student') return false;
@@ -291,10 +267,9 @@ function rejectIfNotInvitedStudent(profile: AppUser): boolean {
 }
 
 const SESSION_BOOT_MS = 8_000;
-/** Longer window when Google returns ?code= — PKCE exchange must finish before we treat boot as idle. */
-const SESSION_BOOT_OAUTH_CALLBACK_MS = 52_000;
-/** Caps a hung PKCE/token round-trip so Edge never spins forever on the login shell. */
-const OAUTH_PKCE_HARD_CAP_MS = 48_000;
+/** OAuth return: unlock login UI if PKCE/profile boot stalls. */
+const SESSION_BOOT_OAUTH_CALLBACK_MS = 16_000;
+const OAUTH_PKCE_HARD_CAP_MS = 12_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -353,26 +328,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         /** Do not set `user` until campus + class-list gates pass — avoids flashing the app shell to unauthorized accounts. */
         setUser(null);
         setLoading(true);
-        void ensureUserProfileOrFallback(next.user).then(async (profile) => {
-          if (!alive) return;
-          if (gen !== profileLoadGen.current) return;
-          if (rejectStudentIfWrongCampusEmail(profile)) {
-            hydratedAuthUserIdRef.current = null;
-            await supabase.auth.signOut({ scope: 'global' });
-            if (alive) setLoading(false);
-            return;
-          }
-          if (rejectIfNotInvitedStudent(profile)) {
-            hydratedAuthUserIdRef.current = null;
-            await supabase.auth.signOut({ scope: 'global' });
-            if (alive) setLoading(false);
-            return;
-          }
-          mergeProfileIntoClassRosterCache(profile);
-          hydratedAuthUserIdRef.current = profile.id;
-          setUser(profile);
-          setLoading(false);
-        });
+        void ensureUserProfileOrFallback(next.user)
+          .then(async (profile) => {
+            if (!alive) return;
+            if (gen !== profileLoadGen.current) return;
+            if (rejectStudentIfWrongCampusEmail(profile)) {
+              hydratedAuthUserIdRef.current = null;
+              await supabase.auth.signOut({ scope: 'global' });
+              return;
+            }
+            if (rejectIfNotInvitedStudent(profile)) {
+              hydratedAuthUserIdRef.current = null;
+              await supabase.auth.signOut({ scope: 'global' });
+              return;
+            }
+            mergeProfileIntoClassRosterCache(profile);
+            hydratedAuthUserIdRef.current = profile.id;
+            setUser(profile);
+          })
+          .catch((e) => {
+            if (import.meta.env.DEV) console.warn('[auth] profile gate failed:', e);
+            if (!alive || gen !== profileLoadGen.current) return;
+            const fallback = fallbackProfile(next.user);
+            hydratedAuthUserIdRef.current = fallback.id;
+            setUser(fallback);
+          })
+          .finally(() => {
+            if (alive && gen === profileLoadGen.current) setLoading(false);
+          });
       } else {
         profileLoadGen.current += 1;
         hydratedAuthUserIdRef.current = null;
@@ -384,8 +367,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const { data: subData } = supabase.auth.onAuthStateChange((event, next) => {
         if (event === 'INITIAL_SESSION') {
-          /** Don’t flip to “logged out” while `/login?code=` is pending — avoids Edge stuck spinner. */
-          if (!oauthLanding) apply(next ?? null);
+          /** If Supabase already has a session (e.g. after PKCE), apply it even on `/login?code=`. */
+          if (!oauthLanding || next?.user) apply(next ?? null);
           return;
         }
         if (event === 'SIGNED_OUT') {
@@ -424,11 +407,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const stored = await getSessionAfterOAuthWithRetries();
 
       if (oauthLanding && !stored?.user) {
-        const hint = `${getOAuthRedirectTo()} must be listed under Supabase → Authentication → URL Configuration → Redirect URLs (exact match); Site URL should be ${typeof window !== 'undefined' ? window.location.origin : 'your origin'}. Enable Authentication → Providers → Google.`;
+        const redirect = getOAuthRedirectTo();
+        const portNote =
+          import.meta.env.DEV &&
+          typeof window !== 'undefined' &&
+          window.location.port &&
+          window.location.port !== '5173'
+            ? ' Use http://localhost:5173/login (stop extra dev servers on 5174/5175).'
+            : '';
         try {
           sessionStorage.setItem(
             OAUTH_CALLBACK_ERROR_STORAGE_KEY,
-            `Sign-in did not finish after Google returned (${hint})`
+            `Sign-in did not finish after Google returned.${portNote} Add Redirect URL exactly: ${redirect} in Supabase → Authentication → URL Configuration. Enable Google provider. Add your Gmail under Google Cloud → Audience → Test users.`
           );
         } catch {
           /* ignore */

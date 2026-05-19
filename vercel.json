@@ -13,6 +13,10 @@
     "api/gemini-evaluate.ts": {
       "maxDuration": 60,
       "includeFiles": "shared/**"
+    },
+    "api/sync-grades.ts": {
+      "maxDuration": 60,
+      "includeFiles": "shared/**"
     }
   }
 }

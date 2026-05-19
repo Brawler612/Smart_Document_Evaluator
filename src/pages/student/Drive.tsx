@@ -92,7 +92,7 @@ export default function StudentDrive() {
           name: s.file_name,
           type: classifyExt(ext),
           ext,
-          documentType: s.submission_doc_type || s.assignment_doc_type || 'Other',
+          documentType: s.submission_doc_type || s.assignment_doc_type || 'SPP',
           status: s.status,
           score: s.score ?? null,
           submittedAt: s.submitted_at,

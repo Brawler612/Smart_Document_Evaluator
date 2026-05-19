@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   RefreshCw,
-  Download,
   ExternalLink,
   GraduationCap,
   Sparkles,
@@ -10,6 +9,7 @@ import {
   ChevronRight,
   ClipboardList,
   Trash2,
+  Loader2,
 } from 'lucide-react';
 import { syncAllLocalSubmissionsToSupabase } from '../../lib/localSubmissionSync';
 import {
@@ -33,6 +33,14 @@ import { submissionDisplayStatusForRoster, submissionHasViewableAiScore, submiss
 import type { SubStatus } from '../../types';
 import TeacherViewScoreModal from '../../components/teacher/TeacherViewScoreModal';
 import { useSubmissionsRealtimeRefresh } from '../../hooks/useSubmissionsRealtimeRefresh';
+import {
+  onAutoSubmissionRosterSheetSync,
+  scheduleAutoSyncSubmissionRosterToSheet,
+  setSubmissionRosterSheetLoader,
+} from '../../lib/autoSyncSubmissionRosterToSheet';
+import { isAutoSheetSyncEnabled } from '../../lib/autoSyncGradesToSheet';
+import { getGoogleSheetsConfig, getGoogleSheetsSetupStatus, isGoogleSheetTargetConfigured } from '../../lib/googleSheetsConfig';
+import { syncSubmissionRosterToGoogleSheet } from '../../lib/syncSubmissionRosterToSheet';
 
 const STATUS_CHIP: Record<SubStatus, string> = {
   submitted: 'border-l-[#84001B] bg-rose-50/80',
@@ -84,6 +92,17 @@ export default function StudentSubmissions() {
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   /** Manual Sync spinner. Independent from `loading` so we never flash the table skeleton on a refresh. */
   const [syncing, setSyncing] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
+  const [sheetSyncNotice, setSheetSyncNotice] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+    url?: string;
+  } | null>(null);
+  const googleSheetViewUrl = useMemo(
+    () => getGoogleSheetsConfig()?.viewUrl ?? (import.meta.env.VITE_GOOGLE_SHEETS_URL || '').trim(),
+    [sheetSyncNotice, syncingSheet]
+  );
+  const sheetSetupStatus = useMemo(() => getGoogleSheetsSetupStatus(), [sheetSyncNotice, syncingSheet]);
   /** Brief highlight after deep-link from Inbox (Review). */
   const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
   const [viewScoreOpen, setViewScoreOpen] = useState<{ row: TeacherSubmission; focus: 'ai' | 'teacher' } | null>(null);
@@ -94,6 +113,8 @@ export default function StudentSubmissions() {
   /** Last successful fetch; gates the visibilitychange refetch to stop Alt-Tab flicker. */
   const lastFetchedAtRef = useRef(0);
   const rowsSignatureRef = useRef('');
+  const rosterRowsRef = useRef<TeacherSubmission[]>([]);
+  rosterRowsRef.current = rows;
 
   /**
    * `silent` keeps the existing rows visible while we re-fetch, so deletes and visibility refreshes
@@ -127,6 +148,33 @@ export default function StudentSubmissions() {
   }, [load]);
 
   useSubmissionsRealtimeRefresh(silentRefresh);
+
+  useEffect(() => {
+    setSubmissionRosterSheetLoader(async () => rosterRowsRef.current);
+    return () => setSubmissionRosterSheetLoader(null);
+  }, []);
+
+  useEffect(() => {
+    return onAutoSubmissionRosterSheetSync((result) => {
+      if (result.ok) {
+        setSheetSyncNotice({
+          kind: 'ok',
+          text: `Submission roster auto-synced — ${result.rowsWritten} row${result.rowsWritten === 1 ? '' : 's'} on tab “${result.sheetName}”.`,
+          url: result.spreadsheetUrl,
+        });
+      } else if (getGoogleSheetsConfig() && !result.message.includes('Auto-sync skipped')) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+      }
+    });
+  }, []);
+
+  const rosterSheetSyncSig = useMemo(() => submissionsSignature(rows), [rows]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!isGoogleSheetTargetConfigured() || !isAutoSheetSyncEnabled()) return;
+    scheduleAutoSyncSubmissionRosterToSheet('roster-ready');
+  }, [loading, rosterSheetSyncSig]);
 
   useEffect(() => {
     void load();
@@ -345,28 +393,28 @@ export default function StudentSubmissions() {
     return entries;
   }, [filtered]);
 
-  function exportCsv() {
-    if (filtered.length === 0) return;
-    const headers = ['Student', 'Email', 'Submission', 'Doc type', 'File', 'Status', 'Score', 'Submitted'];
-    const body = filtered.map((s) => [
-      s.users?.full_name ?? '',
-      s.users?.email ?? '',
-      s.assignments?.title ?? '',
-      s.assignments?.document_type ?? '',
-      s.file_name,
-      s.status,
-      s.score != null ? String(s.score) : '',
-      new Date(s.submitted_at).toLocaleString(),
-    ]);
-    const csv = [headers, ...body]
-      .map((line) => line.map((v) => `"${(v || '').replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `submissions-roster-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+  async function syncToGoogleSheet() {
+    if (syncingSheet) return;
+    setSheetSyncNotice(null);
+    setSyncingSheet(true);
+    try {
+      const result = await syncSubmissionRosterToGoogleSheet(
+        async () => rosterRowsRef.current,
+        { interactiveSetup: true }
+      );
+      if (!result.ok) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+        return;
+      }
+      setSheetSyncNotice({
+        kind: 'ok',
+        text: `Synced ${result.rowsWritten} submission row${result.rowsWritten === 1 ? '' : 's'} to tab “${result.sheetName}”.`,
+        url: result.spreadsheetUrl,
+      });
+      window.open(result.spreadsheetUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setSyncingSheet(false);
+    }
   }
 
   return (
@@ -376,18 +424,25 @@ export default function StudentSubmissions() {
         title="Submission roster"
         icon={FileText}
         description={
-          <>
-            Same maroon-brand spreadsheet tooling as{' '}
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Student submissions</span>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
             <Link className="font-semibold text-[#84001B] hover:underline" to="/class-list">
               Class list
-            </Link>{' '}
-            and{' '}
-            <Link className="font-semibold text-[#84001B] hover:underline" to="/grading">
-              Grading workspace
             </Link>
-            . Desktop shows the full roster table; phones use grouped cards with Open file, Delete, and the learner name
-            link to the grading workspace.
-          </>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
+            <Link className="font-semibold text-[#84001B] hover:underline" to="/grading">
+              Grades
+            </Link>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
+            <span className="text-slate-500">Google Sheets auto-sync</span>
+          </p>
         }
         actions={
           <>
@@ -398,6 +453,7 @@ export default function StudentSubmissions() {
                 setSyncing(true);
                 try {
                   await load({ silent: true });
+                  scheduleAutoSyncSubmissionRosterToSheet('refresh');
                 } finally {
                   setSyncing(false);
                 }
@@ -406,15 +462,32 @@ export default function StudentSubmissions() {
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} aria-hidden />
-              Sync roster
+              Refresh
             </button>
+            {googleSheetViewUrl ? (
+              <a
+                href={googleSheetViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                Open Google Sheet
+              </a>
+            ) : null}
             <button
               type="button"
-              onClick={exportCsv}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              onClick={() => void syncToGoogleSheet()}
+              disabled={syncingSheet}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/25 bg-[#84001B] px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#6b0014] disabled:opacity-60"
+              title="Push all submissions (document type, status, scores) to the Submission Roster tab"
             >
-              <Download className="w-3.5 h-3.5" aria-hidden />
-              CSV export
+              {syncingSheet ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+              ) : (
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+              )}
+              {syncingSheet ? 'Syncing…' : 'Sync to Google Sheets'}
             </button>
             <Link
               to="/class-list"
@@ -433,6 +506,47 @@ export default function StudentSubmissions() {
           </>
         }
       />
+
+      {sheetSetupStatus.hint && !sheetSyncNotice && (
+        <div
+          role="status"
+          className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+        >
+          <p className="leading-snug">{sheetSetupStatus.hint}</p>
+        </div>
+      )}
+
+      {sheetSyncNotice && (
+        <div
+          role="status"
+          className={`mb-4 rounded-2xl border px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-3 ${
+            sheetSyncNotice.kind === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+              : 'border-red-200 bg-red-50 text-red-950'
+          }`}
+        >
+          <p className="min-w-0 flex-1 leading-snug">{sheetSyncNotice.text}</p>
+          <div className="flex items-center gap-2 shrink-0">
+            {sheetSyncNotice.url ? (
+              <a
+                href={sheetSyncNotice.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold underline hover:no-underline"
+              >
+                Open sheet
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setSheetSyncNotice(null)}
+              className="text-xs font-semibold opacity-70 hover:opacity-100"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {!loading && (
         <section className="mb-8">
@@ -597,7 +711,7 @@ export default function StudentSubmissions() {
                                 </p>
                                 <div className="mt-2 flex flex-wrap gap-2 items-center">
                                   <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                                    {s.assignments?.document_type ?? 'Other'} ·{' '}
+                                    {s.assignments?.document_type ?? 'SPP'} ·{' '}
                                     <time dateTime={s.submitted_at}>{relativeTime(s.submitted_at)}</time>
                                   </span>
                                   {s.score != null && (

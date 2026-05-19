@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Search, FolderOpen, Download, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { DocType } from '../../types';
+import { DOC_TYPE_COLORS, DOCUMENT_TYPES } from '../../lib/documentTypes';
 interface Document {
   id: string;
   title: string;
@@ -12,12 +13,7 @@ interface Document {
   uploader: { full_name: string } | null;
 }
 
-const DOC_COLORS: Record<string, string> = {
-  SRS: 'bg-blue-100 text-blue-700',
-  SDD: 'bg-emerald-100 text-emerald-700',
-  SPMP: 'bg-orange-100 text-orange-700',
-  Other: 'bg-gray-100 text-gray-600',
-};
+const DOC_COLORS: Record<string, string> = { ...DOC_TYPE_COLORS };
 
 export default function StudentDocuments() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -52,7 +48,7 @@ export default function StudentDocuments() {
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#84001B]/20 focus:border-[#84001B]" />
         </div>
         <div className="flex gap-2 flex-wrap">
-          {(['all', 'SRS', 'SDD', 'SPMP', 'Other'] as const).map(t => (
+          {(['all', ...DOCUMENT_TYPES] as const).map(t => (
             <button key={t} onClick={() => setTypeFilter(t)}
               className={`px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${typeFilter === t ? 'bg-[#84001B] text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               {t}

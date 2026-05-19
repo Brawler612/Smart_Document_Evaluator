@@ -149,7 +149,7 @@ function pickAssignmentJoin(rel: unknown): { title: string; document_type: strin
   const r = obj as Record<string, unknown>;
   return {
     title: String(r.title ?? ''),
-    document_type: String(r.document_type ?? 'Other'),
+    document_type: String(r.document_type ?? 'SPP'),
   };
 }
 
@@ -375,7 +375,7 @@ export default function MySubmissions() {
             ai_draft_score: row.ai_draft_score ?? null,
             ai_draft_summary: row.ai_draft_summary ?? null,
             submission_doc_type: row.submission_doc_type ?? null,
-            assignments: { title: 'General Submission', document_type: 'Other' },
+            assignments: { title: 'General Submission', document_type: 'SPP' },
           }));
       } catch {
         localMapped = [];

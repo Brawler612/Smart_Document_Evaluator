@@ -11,9 +11,10 @@ import {
   ClipboardList,
   FileText,
   UserMinus,
-  Download,
   Printer,
   Trash,
+  ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import {
   isStudentHiddenFromTeacherDirectory,
@@ -39,7 +40,16 @@ import { gradingLinkForSubmission } from '../../lib/gradingRoutes';
 import TeacherSubmissionRosterTable from '../../components/teacher/TeacherSubmissionRosterTable';
 import UserAvatar from '../../components/UserAvatar';
 import { mergeIt332Sem2RosterWithDatabase } from '../../lib/mergeIt332Sem2Roster';
-import { IT332_COHORT_DESCRIPTOR } from '../../data/it332Sem2ClassRoster';
+import { IT332_CLASS_COURSE_AND_YEAR, IT332_COHORT_DESCRIPTOR } from '../../data/it332Sem2ClassRoster';
+import { buildClassListSheetValues } from '../../lib/classListSheetRows';
+import {
+  onAutoClassListSheetSync,
+  scheduleAutoSyncClassListToSheet,
+  setClassListSheetRowProvider,
+} from '../../lib/autoSyncClassListToSheet';
+import { isAutoSheetSyncEnabled } from '../../lib/autoSyncGradesToSheet';
+import { getGoogleSheetsConfig, getGoogleSheetsSetupStatus, isGoogleSheetTargetConfigured } from '../../lib/googleSheetsConfig';
+import { syncClassListToGoogleSheet } from '../../lib/syncClassListToSheet';
 import type { AppUser, SubStatus } from '../../types';
 
 function looksLikeUuid(id: string): boolean {
@@ -61,23 +71,6 @@ function formatClassListDateTime(iso: string | null | undefined): string {
   } catch {
     return d.toLocaleString();
   }
-}
-
-function csvCell(v: string | number | null | undefined): string {
-  const s = v == null ? '' : String(v);
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-function downloadTextFile(filename: string, body: string, mime: string) {
-  const blob = new Blob([body], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 /** Min ms between background refreshes — stops a fresh refetch every time the tab regains focus. */
@@ -119,6 +112,17 @@ export default function UserManagement() {
   const [removeBusyId, setRemoveBusyId] = useState<string | null>(null);
   /** Tracks the manual Sync button without flashing the table skeleton. */
   const [syncing, setSyncing] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
+  const [sheetSyncNotice, setSheetSyncNotice] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+    url?: string;
+  } | null>(null);
+  const googleSheetViewUrl = useMemo(
+    () => getGoogleSheetsConfig()?.viewUrl ?? (import.meta.env.VITE_GOOGLE_SHEETS_URL || '').trim(),
+    [sheetSyncNotice, syncingSheet]
+  );
+  const sheetSetupStatus = useMemo(() => getGoogleSheetsSetupStatus(), [sheetSyncNotice, syncingSheet]);
   /** Bulk-delete selection for the directory (Remove these students from your class). */
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [bulkRemovingStudents, setBulkRemovingStudents] = useState(false);
@@ -129,6 +133,10 @@ export default function UserManagement() {
   const lastFetchedAtRef = useRef(0);
   const studentsSignatureRef = useRef('');
   const subRowsSignatureRef = useRef('');
+  const classListSyncPayloadRef = useRef({
+    students: [] as AppUser[],
+    latestByStudentId: new Map<string, TeacherSubmission>(),
+  });
 
   const studentsVisibleInDirectory = useMemo(
     () => students.filter((u) => !isStudentHiddenFromTeacherDirectory(u, removedLedger)),
@@ -300,6 +308,45 @@ export default function UserManagement() {
     }
     return m;
   }, [subRowsNotLedgerHidden]);
+
+  classListSyncPayloadRef.current = {
+    students: studentsVisibleInDirectory,
+    latestByStudentId: latestSubmissionByStudentId,
+  };
+
+  const classListSheetSyncSig = useMemo(
+    () =>
+      `${signatureForStudents(studentsVisibleInDirectory)}|${signatureForSubmissions(subRowsNotLedgerHidden)}`,
+    [studentsVisibleInDirectory, subRowsNotLedgerHidden]
+  );
+
+  useEffect(() => {
+    setClassListSheetRowProvider(async () => {
+      const { students, latestByStudentId } = classListSyncPayloadRef.current;
+      return buildClassListSheetValues(students, latestByStudentId);
+    });
+    return () => setClassListSheetRowProvider(null);
+  }, []);
+
+  useEffect(() => {
+    return onAutoClassListSheetSync((result) => {
+      if (result.ok) {
+        setSheetSyncNotice({
+          kind: 'ok',
+          text: `Class list auto-synced — ${result.rowsWritten} student row${result.rowsWritten === 1 ? '' : 's'} on tab “${result.sheetName}”.`,
+          url: result.spreadsheetUrl,
+        });
+      } else if (getGoogleSheetsConfig() && !result.message.includes('Auto-sync skipped')) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (loading || subLoading) return;
+    if (!isGoogleSheetTargetConfigured() || !isAutoSheetSyncEnabled()) return;
+    scheduleAutoSyncClassListToSheet('class-list-ready');
+  }, [loading, subLoading, classListSheetSyncSig]);
 
   async function requestResubmitFromClassList(s: TeacherSubmission) {
     const msg = `Request resubmission for “${s.file_name}”?\n\nStudents get an alert to upload a revised file (e.g. empty or incomplete work).`;
@@ -532,46 +579,29 @@ export default function UserManagement() {
     return latestSubmissionByStudentId.get(u.id) ?? null;
   }
 
-  function exportDirectoryCsv() {
-    const statusFor = (u: AppUser, latest: TeacherSubmission | null) => {
-      if (u.roster_pending) return 'Awaiting sign-in';
-      if (latest) return DIRECTORY_STATUS_LABEL[latest.status];
-      return 'Awaiting upload';
-    };
-    const headers = [
-      'No.',
-      'Student name',
-      'Student ID',
-      'Team code',
-      'Course',
-      'School year',
-      'Email',
-      'Live status',
-      'Latest file',
-      'Submitted',
-    ];
-    const lines = filtered.map((u, idx) => {
-      const latest = latestSubmissionByStudentId.get(u.id) ?? null;
-      return [
-        csvCell(String(idx + 1)),
-        csvCell(u.full_name),
-        csvCell(u.student_number ?? ''),
-        csvCell(u.team_code ?? ''),
-        csvCell(u.course_year ?? ''),
-        csvCell(u.school_year ?? ''),
-        csvCell(u.email ?? ''),
-        csvCell(statusFor(u, latest)),
-        csvCell(latest?.file_name ?? ''),
-        csvCell(latest ? formatClassListDateTime(latest.submitted_at) : ''),
-      ].join(',');
-    });
-    const stamp = new Date().toISOString().slice(0, 10);
-    const bom = '\uFEFF';
-    downloadTextFile(
-      `class-list-${stamp}.csv`,
-      `${bom}${headers.join(',')}\n${lines.join('\n')}`,
-      'text/csv;charset=utf-8;'
-    );
+  async function syncToGoogleSheet() {
+    if (syncingSheet) return;
+    setSheetSyncNotice(null);
+    setSyncingSheet(true);
+    try {
+      const { students, latestByStudentId } = classListSyncPayloadRef.current;
+      const result = await syncClassListToGoogleSheet(
+        async () => buildClassListSheetValues(students, latestByStudentId),
+        { interactiveSetup: true }
+      );
+      if (!result.ok) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+        return;
+      }
+      setSheetSyncNotice({
+        kind: 'ok',
+        text: `Synced ${result.rowsWritten} student row${result.rowsWritten === 1 ? '' : 's'} to tab “${result.sheetName}”.`,
+        url: result.spreadsheetUrl,
+      });
+      window.open(result.spreadsheetUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setSyncingSheet(false);
+    }
   }
 
   return (
@@ -587,14 +617,28 @@ export default function UserManagement() {
                 </span>
                 Class list
               </h1>
-              <p className="text-slate-600 text-sm mt-2 max-w-2xl leading-relaxed">
-                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span> first, then everyone else.
-                <span className="font-medium text-slate-800"> Awaiting sign-in</span> — roster only until Google matches email or ID.
-                <span className="font-medium text-slate-800"> Uploaded files</span> — grade, resubmit, or delete like grading. Groups:{' '}
+              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+                <span className="font-medium text-slate-800">{IT332_COHORT_DESCRIPTOR}</span>
+                <span className="text-slate-300" aria-hidden>
+                  ·
+                </span>
+                <span className="font-semibold text-slate-800">Class list</span>
+                <span className="text-slate-300" aria-hidden>
+                  ·
+                </span>
                 <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
-                  Student Submissions
+                  Student submissions
                 </Link>
-                .
+                <span className="text-slate-300" aria-hidden>
+                  ·
+                </span>
+                <Link className="font-semibold text-[#84001B] hover:underline" to="/grading">
+                  Grades
+                </Link>
+                <span className="text-slate-300" aria-hidden>
+                  ·
+                </span>
+                <span className="text-slate-500">Google Sheets auto-sync</span>
               </p>
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
@@ -605,6 +649,7 @@ export default function UserManagement() {
                   setSyncing(true);
                   try {
                     await refreshAll({ silent: true });
+                    scheduleAutoSyncClassListToSheet('refresh');
                   } finally {
                     setSyncing(false);
                   }
@@ -616,17 +661,32 @@ export default function UserManagement() {
                   className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`}
                   aria-hidden
                 />
-                Sync
+                Refresh
               </button>
+              {googleSheetViewUrl ? (
+                <a
+                  href={googleSheetViewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                  Open Google Sheet
+                </a>
+              ) : null}
               <button
                 type="button"
-                onClick={exportDirectoryCsv}
-                disabled={loading || filtered.length === 0}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-                title="Download the current filtered directory as CSV"
+                onClick={() => void syncToGoogleSheet()}
+                disabled={syncingSheet}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/25 bg-[#84001B] px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#6b0014] disabled:opacity-60"
+                title="Push the full class directory to the Class List tab in your Google Sheet"
               >
-                <Download className="w-3.5 h-3.5" aria-hidden />
-                Export
+                {syncingSheet ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                )}
+                {syncingSheet ? 'Syncing…' : 'Sync to Google Sheets'}
               </button>
               <button
                 type="button"
@@ -655,6 +715,47 @@ export default function UserManagement() {
             </div>
           </div>
         </header>
+
+        {sheetSetupStatus.hint && !sheetSyncNotice && (
+          <div
+            role="status"
+            className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+          >
+            <p className="leading-snug">{sheetSetupStatus.hint}</p>
+          </div>
+        )}
+
+        {sheetSyncNotice && (
+          <div
+            role="status"
+            className={`mb-6 rounded-2xl border px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-3 ${
+              sheetSyncNotice.kind === 'ok'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                : 'border-red-200 bg-red-50 text-red-950'
+            }`}
+          >
+            <p className="min-w-0 flex-1 leading-snug">{sheetSyncNotice.text}</p>
+            <div className="flex items-center gap-2 shrink-0">
+              {sheetSyncNotice.url ? (
+                <a
+                  href={sheetSyncNotice.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold underline hover:no-underline"
+                >
+                  Open sheet
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setSheetSyncNotice(null)}
+                className="text-xs font-semibold opacity-70 hover:opacity-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
 
         {usersTableMissing && students.length > 0 && (
           <div
@@ -699,7 +800,7 @@ export default function UserManagement() {
                   on PostgREST v14+).
                 </li>
                 <li>
-                  Wait ~10 seconds, then click <span className="font-medium">Sync</span> here. If it still errors, run only:{' '}
+                  Wait ~10 seconds, then click <span className="font-medium">Refresh</span> here. If it still errors, run only:{' '}
                   <code className="rounded bg-amber-100/80 px-1">notify pgrst, &apos;reload schema&apos;;</code>
                 </li>
                 <li>
@@ -804,7 +905,7 @@ export default function UserManagement() {
                   When someone signs in with Google, the app saves their Gmail and name to{' '}
                   <code className="text-xs bg-slate-100 px-1 rounded">public.users</code> as role{' '}
                   <span className="font-medium text-slate-700">student</span> (unless they are listed as a teacher in your
-                  env). They appear here after that—use <span className="font-medium text-slate-700">Sync</span> or return to
+                  env). They appear here after that—use <span className="font-medium text-slate-700">Refresh</span> or return to
                   this tab to refresh.
                 </>
               )}
@@ -849,13 +950,18 @@ export default function UserManagement() {
           </div>
         ) : (
           <div className="rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
-            <p className="px-4 py-2.5 md:px-5 text-[12px] text-slate-800 bg-amber-50/80 border-b border-amber-100/90 leading-relaxed">
-              <span className="font-semibold text-amber-950">Directory</span>: name and team/group tags on the left; columns
-              to the right — ID, team code, course, school year, email,{' '}
-              <span className="font-semibold">date submitted</span> (from their latest file), live status, and actions (
-              <span className="font-semibold">Remove</span> on every row;{' '}
-              <span className="font-semibold">Delete</span> on the latest upload when present — use Grading workspace or
-              Submission roster to score or request redo. Scroll sideways on small screens.
+            <p className="px-4 py-2 md:px-5 text-[11px] text-slate-600 bg-amber-50/80 border-b border-amber-100/90 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="font-semibold text-amber-950">Roster</span>
+              <span className="text-slate-300">·</span>
+              <span>ID · team · course · {IT332_CLASS_COURSE_AND_YEAR} · status</span>
+              <span className="text-slate-300">·</span>
+              <Link className="font-semibold text-[#84001B] hover:underline" to="/grading">
+                Grades
+              </Link>
+              <span className="text-slate-300">·</span>
+              <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
+                Submissions
+              </Link>
             </p>
             <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-2 md:px-5 border-b border-slate-200/90 bg-slate-50/95">
               <label className="inline-flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
@@ -899,7 +1005,7 @@ export default function UserManagement() {
               })()}
             </div>
             <div className="max-h-[min(720px,78vh)] overflow-auto">
-              <table className="w-full min-w-[1180px] border-collapse text-left antialiased text-[13px] leading-snug">
+              <table className="w-full min-w-[1280px] border-collapse text-left antialiased text-[13px] leading-snug">
                 <thead>
                   <tr className="border-b border-[#5c0013] bg-[#84001B] text-[11px] font-semibold uppercase tracking-[0.06em] text-white shadow-sm">
                     <th className="px-3 py-3 align-bottom text-center font-semibold tabular-nums w-[3.25rem]">No.</th>
@@ -907,6 +1013,7 @@ export default function UserManagement() {
                     <th className="px-2.5 py-3 align-bottom whitespace-nowrap text-center font-semibold">Student ID</th>
                     <th className="px-2.5 py-3 align-bottom min-w-[8.5rem] font-semibold">Team code</th>
                     <th className="px-2.5 py-3 align-bottom min-w-[7rem] font-semibold">Course / term</th>
+                    <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">Course &amp; year</th>
                     <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold">School yr</th>
                     <th className="px-3 py-3 align-bottom min-w-[11rem] font-semibold">Email</th>
                     <th className="px-2.5 py-3 align-bottom whitespace-nowrap font-semibold tabular-nums">
@@ -974,6 +1081,9 @@ export default function UserManagement() {
                           <span className="line-clamp-2" title={u.course_year ?? ''}>
                             {u.course_year?.trim() || '—'}
                           </span>
+                        </td>
+                        <td className="px-2 py-3 text-[12.5px] font-semibold text-slate-900 whitespace-nowrap">
+                          {IT332_CLASS_COURSE_AND_YEAR}
                         </td>
                         <td className="px-2 py-3 text-[12.5px] font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                           {u.school_year?.trim() || '—'}
@@ -1139,7 +1249,7 @@ export default function UserManagement() {
               <p className="text-lg font-semibold text-slate-800">No files match</p>
               <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
                 {subRows.length === 0
-                  ? 'When learners submit work, each upload appears here with actions — try Sync after new uploads.'
+                  ? 'When learners submit work, each upload appears here with actions — try Refresh after new uploads.'
                   : 'Try another status filter or clear the search box.'}
               </p>
             </div>

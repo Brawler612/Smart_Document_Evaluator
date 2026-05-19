@@ -585,6 +585,27 @@ export function normalizeLanguageCorrections(raw: unknown): LanguageCorrection[]
   return out;
 }
 
+/** Detects the old built-in heuristic wall-of-text (pre-Gemini fallback), not real model prose. */
+export function isLegacyHeuristicAutomatedSummary(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const low = t.toLowerCase();
+  if (low.includes('extended automated summary')) return true;
+  if (low.includes('rubric-aligned draft scores')) return true;
+  if (low.includes('treat every claim as provisional')) return true;
+  if (low.includes('please read each rubric cell in the modal')) return true;
+  if (/this criterion is scoring in a strong band/i.test(t)) return true;
+  if (/this criterion is mixed — room to tighten/i.test(t)) return true;
+  if (/this criterion is weak relative to its weight/i.test(t)) return true;
+  const criterionLines = t.match(/\([^)]*\d+\s*\/\s*\d+[^)]*\):\s*this criterion is/gi);
+  if (criterionLines && criterionLines.length >= 2) return true;
+  return false;
+}
+
+export function stripLegacyHeuristicAutomatedSummary(text: string): string {
+  return isLegacyHeuristicAutomatedSummary(text) ? '' : text.trim();
+}
+
 /** Strips machine-readable language-fix payload from stored `ai_draft_summary` for display. */
 export function parsePersistedAiDraftSummary(stored: string): {
   visibleSummary: string;
@@ -599,7 +620,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
   const idx = s.lastIndexOf(AI_DRAFT_LANG_START);
   if (idx === -1) {
     return {
-      visibleSummary: s.trim(),
+      visibleSummary: stripLegacyHeuristicAutomatedSummary(s),
       languageCorrections: [],
       documentQualityNotes: '',
       correctHighlights: [],
@@ -626,7 +647,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
         ? j.documentQualityNotes.trim().slice(0, DOC_QUALITY_NOTES_MAX_CHARS)
         : '';
     return {
-      visibleSummary: head,
+      visibleSummary: stripLegacyHeuristicAutomatedSummary(head),
       languageCorrections: normalizeLanguageCorrections(j.languageCorrections),
       documentQualityNotes,
       correctHighlights: normalizeCorrectHighlights(j.correctHighlights),
@@ -636,7 +657,7 @@ export function parsePersistedAiDraftSummary(stored: string): {
     };
   } catch {
     return {
-      visibleSummary: s.trim(),
+      visibleSummary: stripLegacyHeuristicAutomatedSummary(s),
       languageCorrections: [],
       documentQualityNotes: '',
       correctHighlights: [],

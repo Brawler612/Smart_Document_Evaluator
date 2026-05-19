@@ -310,7 +310,7 @@ export default function StudentCalendar() {
                     <div className="flex items-center gap-2 mb-1">
                       <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" aria-hidden />
                       <span className="text-[10px] font-bold uppercase tracking-wide text-slate-600">
-                        Submitted · {e.submission.submission_doc_type || e.submission.assignment_doc_type || 'Other'}
+                        Submitted · {e.submission.submission_doc_type || e.submission.assignment_doc_type || 'SPP'}
                       </span>
                     </div>
                     <p className="text-sm font-bold text-slate-900 leading-snug truncate">

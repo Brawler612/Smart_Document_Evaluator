@@ -1,0 +1,51 @@
+# Paste these into Google Cloud → Google Auth Platform → Audience → Test users → Add users
+# (One email per line — Google’s UI may accept comma-separated paste in some browsers.)
+#
+# Required for sign-in while the app is in "Testing" mode. Without this list, Google shows:
+#   "Access blocked … has not completed the Google verification process" (403 access_denied)
+
+dinaponash26@gmail.com
+trafalgardreii@gmail.com
+allysonsharaine@gmail.com
+anaclaireellen@gmail.com
+andresalonga.cit@gmail.com
+arnnon.pangan123@gmail.com
+banicojosephjames@gmail.com
+binagatanalexander2005@gmail.com
+bramwellicer@gmail.com
+bryekanesy@gmail.com
+charlesdarwinhudar@gmail.com
+chrisdanielcabatana@gmail.com
+christianaire18@gmail.com
+davidrysia12@gmail.com
+destinegalo29@gmail.com
+drakathrosalina@gmail.com
+earlgeraldesparcia@gmail.com
+geraldezjunjie@gmail.com
+gyraldmigelbelen4604@gmail.com
+homerfernandez213@gmail.com
+jgcjgc123123@gmail.com
+jhecyleightolibasmando@gmail.com
+joshuaphillipanggamer@gmail.com
+justinrey312@gmail.com
+karylleamad1@gmail.com
+kirstenshaneb@gmail.com
+kylenearong127@gmail.com
+lanticsev@gmail.com
+marklorenzbarangan@gmail.com
+markantoncamoro@gmail.com
+monicanajarro111@gmail.com
+morrelukerz@gmail.com
+obejerochad@gmail.com
+polarsystem09@gmail.com
+rodayban@gmail.com
+rodgabriellecanete2002@gmail.com
+rubyxmanalo@gmail.com
+sheshtyz@gmail.com
+sonephoenix46@gmail.com
+tedbennarsico04@gmail.com
+trixieann750@gmail.com
+valmera27@gmail.com
+villadareznn@gmail.com
+zlyhansonbatucan@gmail.com
+zyrrahkayelacida@gmail.com

@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { emitSubmissionRemoved } from './submissionSyncEvents';
 import { removeSubmissionStorageObjectIfPresent } from './submissionStorage';
+import { isStaffEmail, resolveAppRole } from './staffAccess';
 import {
   resolveSubmissionTableName,
   TEACHER_LOCAL_SUBMISSION_KEY,
@@ -13,33 +14,14 @@ export type SubmissionDeletePurgeHint = {
   file_url: string | null;
 };
 
-/** Aligns `public.users.role` with env + OAuth metadata — RLS helpers like `app_user_is_staff()` only read Postgres, not `VITE_TEACHER_EMAILS`. */
-function parseEmailSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map((v) => v.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
+/** Aligns `public.users.role` with staff rule — RLS reads Postgres, not the client env list. */
 async function reconcilePublicUsersStaffRole(): Promise<void> {
   const { data: sess } = await supabase.auth.getUser();
   const user = sess?.user;
   if (!user?.id || !user.email?.trim()) return;
+  if (!isStaffEmail(user.email)) return;
 
-  const email = user.email.trim().toLowerCase();
-  let target: 'admin' | 'teacher' | null = null;
-  const adminEnv = parseEmailSet(import.meta.env.VITE_ADMIN_EMAILS);
-  const teacherEnv = parseEmailSet(import.meta.env.VITE_TEACHER_EMAILS);
-  if (adminEnv.has(email)) target = 'admin';
-  else if (teacherEnv.has(email)) target = 'teacher';
-  else {
-    const mr = user.user_metadata?.role;
-    if (mr === 'admin' || mr === 'teacher') target = mr;
-  }
-  if (!target) return;
-
+  const target = resolveAppRole(user.email);
   const { error } = await supabase.from('users').update({ role: target }).eq('id', user.id);
   if (error && import.meta.env.DEV) console.warn('[teacherDelete] reconcile public.users.role:', error.message);
 }

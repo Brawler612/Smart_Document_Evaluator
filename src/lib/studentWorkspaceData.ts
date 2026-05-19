@@ -58,7 +58,7 @@ function mapAssignmentRow(row: Record<string, unknown>): StudentAssignmentRow {
     id: String(row.id ?? ''),
     title: String(row.title ?? ''),
     description: row.description != null ? String(row.description) : null,
-    document_type: String(row.document_type ?? 'Other'),
+    document_type: String(row.document_type ?? 'SPP'),
     due_date: row.due_date != null ? String(row.due_date) : null,
     max_score: typeof row.max_score === 'number' ? row.max_score : row.max_score != null ? Number(row.max_score) : null,
     status: String(row.status ?? 'active'),

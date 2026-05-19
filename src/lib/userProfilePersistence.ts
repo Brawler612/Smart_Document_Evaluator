@@ -1,30 +1,6 @@
 import { supabase } from './supabase';
-import type { AppUser, UserRole } from '../types';
-
-function parseEmailList(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map((v) => v.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
-const ADMIN_EMAILS = parseEmailList(import.meta.env.VITE_ADMIN_EMAILS);
-const TEACHER_EMAILS = parseEmailList(import.meta.env.VITE_TEACHER_EMAILS);
-
-function normalizeRole(value: unknown): UserRole {
-  if (value === 'teacher' || value === 'admin') return value;
-  return 'student';
-}
-
-function resolveRole(email: string, metaRole: unknown, existingRole?: UserRole): UserRole {
-  const lowered = email.toLowerCase();
-  if (ADMIN_EMAILS.has(lowered)) return 'admin';
-  if (TEACHER_EMAILS.has(lowered)) return 'teacher';
-  if (existingRole) return existingRole;
-  return normalizeRole(metaRole);
-}
+import { resolveAppRole } from './staffAccess';
+import type { AppUser } from '../types';
 
 function profileSetupError(message: string): Error {
   return new Error(
@@ -44,7 +20,7 @@ export async function ensureAppUserProfile(user: Pick<AppUser, 'id' | 'email' | 
       id: user.id,
       email,
       full_name: user.full_name.trim() || email.split('@')[0] || 'User',
-      role: resolveRole(email, user.role, user.role),
+      role: resolveAppRole(email),
     },
     { onConflict: 'id' }
   );
@@ -76,7 +52,7 @@ export async function ensureCurrentAuthUserProfile(expectedUserId?: string): Pro
       id: authUser.id,
       email,
       full_name: fullName,
-      role: resolveRole(email, meta.role),
+      role: resolveAppRole(email),
     },
     { onConflict: 'id' }
   );

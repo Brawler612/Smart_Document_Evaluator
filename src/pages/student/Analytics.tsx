@@ -64,7 +64,7 @@ export default function StudentAnalytics() {
   const byDocType = useMemo(() => {
     const map = new Map<string, { count: number; reviewed: number; sumScore: number; scoredCount: number }>();
     submissions.forEach((s) => {
-      const t = s.submission_doc_type || s.assignment_doc_type || 'Other';
+      const t = s.submission_doc_type || s.assignment_doc_type || 'SPP';
       const cur = map.get(t) ?? { count: 0, reviewed: 0, sumScore: 0, scoredCount: 0 };
       cur.count += 1;
       if (s.status === 'reviewed') cur.reviewed += 1;

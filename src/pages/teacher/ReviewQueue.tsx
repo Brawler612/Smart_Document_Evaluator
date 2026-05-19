@@ -8,7 +8,6 @@ import {
   Star,
   ChevronDown,
   Calendar,
-  Download,
   ClipboardList,
   Inbox,
   ArrowRight,
@@ -24,6 +23,8 @@ import {
   Eye,
   GraduationCap,
   Info,
+  Table2,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -48,6 +49,17 @@ import { SubStatus } from '../../types';
 import { formatStackedDateTime, rosterStatusChip, studentIdBadge, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import { syncGradesToGoogleSheet } from '../../lib/syncGradesToSheet';
+import {
+  getGoogleSheetsConfig,
+  getGoogleSheetsSetupStatus,
+  isGoogleSheetTargetConfigured,
+} from '../../lib/googleSheetsConfig';
+import {
+  isAutoSheetSyncEnabled,
+  onAutoSheetSync,
+  scheduleAutoSyncGradesToSheet,
+} from '../../lib/autoSyncGradesToSheet';
 import { useSubmissionsRealtimeRefresh } from '../../hooks/useSubmissionsRealtimeRefresh';
 import {
   TeacherAmberCue,
@@ -64,6 +76,7 @@ import {
   executiveSummaryHasUiTail,
   formatGeminiTeacherNotice,
   runGeminiBackedEvaluation,
+  stripLegacyHeuristicAutomatedSummary,
   type CorrectHighlight,
   type DiagramEvaluation,
   type LanguageCorrection,
@@ -135,7 +148,46 @@ function readAllAiOnlyEvalLocks(): Record<string, AiOnlyEvalLockV1> {
 
 function readAiOnlyEvalLock(submissionId: string): AiOnlyEvalLockV1 | null {
   const row = readAllAiOnlyEvalLocks()[submissionId];
-  return row?.v === 1 ? row : null;
+  if (row?.v !== 1) return null;
+  const summary = stripLegacyHeuristicAutomatedSummary(row.draftSnapshot.summary);
+  return {
+    ...row,
+    executiveSummary: stripLegacyHeuristicAutomatedSummary(row.executiveSummary),
+    feedbackDraft: stripLegacyHeuristicAutomatedSummary(row.feedbackDraft),
+    draftSnapshot: { ...row.draftSnapshot, summary },
+  };
+}
+
+function scrubStoredAiOnlyEvalLocks(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const all = readAllAiOnlyEvalLocks();
+    let changed = false;
+    for (const [id, row] of Object.entries(all)) {
+      if (row?.v !== 1) continue;
+      const executiveSummary = stripLegacyHeuristicAutomatedSummary(row.executiveSummary);
+      const feedbackDraft = stripLegacyHeuristicAutomatedSummary(row.feedbackDraft);
+      const summary = stripLegacyHeuristicAutomatedSummary(row.draftSnapshot.summary);
+      if (
+        executiveSummary !== row.executiveSummary ||
+        feedbackDraft !== row.feedbackDraft ||
+        summary !== row.draftSnapshot.summary
+      ) {
+        all[id] = {
+          ...row,
+          executiveSummary,
+          feedbackDraft,
+          draftSnapshot: { ...row.draftSnapshot, summary },
+        };
+        changed = true;
+      }
+    }
+    if (changed) {
+      sessionStorage.setItem(AI_ONLY_EVAL_LOCK_STORAGE_KEY, JSON.stringify(all));
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function writeAiOnlyEvalLock(submissionId: string, lock: Omit<AiOnlyEvalLockV1, 'v'>): void {
@@ -181,16 +233,19 @@ function maybeFreezeAiOnlyEvalAfterRun(
   if (readAiOnlyEvalLock(submissionId)) return;
   writeAiOnlyEvalLock(submissionId, {
     criteria: args.criteria.map((c) => ({ ...c })),
-    executiveSummary: args.executiveSummary,
+    executiveSummary: stripLegacyHeuristicAutomatedSummary(args.executiveSummary),
     languageCorrections: args.languageCorrections.map((r) => ({ ...r })),
     documentQualityNotes: args.documentQualityNotes,
     correctHighlights: args.correctHighlights.map((h) => ({ ...h })),
     pageRewrites: args.pageRewrites.map((r) => ({ ...r })),
     documentOverviewScores: args.documentOverviewScores.map((r) => ({ ...r })),
     diagramEvaluations: args.diagramEvaluations.map((r) => ({ ...r })),
-    draftSnapshot: { ...args.draftSnapshot },
+    draftSnapshot: {
+      ...args.draftSnapshot,
+      summary: stripLegacyHeuristicAutomatedSummary(args.draftSnapshot.summary),
+    },
     inspectionText: args.inspectionText,
-    feedbackDraft: args.feedbackDraft,
+    feedbackDraft: stripLegacyHeuristicAutomatedSummary(args.feedbackDraft),
   });
 }
 
@@ -340,8 +395,7 @@ function grammarMechanicsCriterion(content: string, max: number): AICriterion {
 
 function lengthCompletenessCriterion(content: string, docType: string, max: number): AICriterion {
   const words = content.trim().split(/\s+/).filter(Boolean).length;
-  const targets: Record<string, number> = { SRS: 200, SDD: 220, SPMP: 260, STD: 170, Other: 150 };
-  const target = targets[docType] ?? targets.Other;
+  const target = 220;
   const ratio = target > 0 ? words / target : 0;
   let score = ratio < 0.12 ? Math.round(max * 0.1) : Math.round(Math.min(max, max * Math.min(1.1, ratio * 1.15)));
   if (words < 35) score = Math.min(score, Math.round(max * 0.25));
@@ -391,41 +445,14 @@ function insightDepthCriterion(content: string, max: number): AICriterion {
 }
 
 function runAIFromText(docType: string, content: string): AICriterion[] {
-  const keywordMap: Record<string, { name: string; max: number; keys: string[] }[]> = {
-    SRS: [
-      { name: 'Completeness', max: 20, keys: ['scope', 'functional', 'non-functional', 'constraints', 'assumptions'] },
-      { name: 'Clarity', max: 20, keys: ['shall', 'must', 'define', 'description', 'objective'] },
-      { name: 'Consistency', max: 20, keys: ['terminology', 'glossary', 'reference', 'section'] },
-      { name: 'Feasibility', max: 20, keys: ['timeline', 'resource', 'cost', 'risk'] },
-      { name: 'Verifiability', max: 20, keys: ['test', 'acceptance', 'criteria', 'validation'] },
-    ],
-    SDD: [
-      { name: 'Architecture Design', max: 25, keys: ['architecture', 'component', 'layer', 'diagram'] },
-      { name: 'Module Decomposition', max: 25, keys: ['module', 'responsibility', 'dependency'] },
-      { name: 'Interface Definitions', max: 25, keys: ['api', 'endpoint', 'interface', 'contract'] },
-      { name: 'Data Design', max: 25, keys: ['schema', 'table', 'entity', 'relationship', 'data flow'] },
-    ],
-    SPMP: [
-      { name: 'Project Organization', max: 20, keys: ['team', 'role', 'organization', 'communication'] },
-      { name: 'Schedule', max: 20, keys: ['milestone', 'timeline', 'deadline', 'gant'] },
-      { name: 'Risk Management', max: 20, keys: ['risk', 'mitigation', 'impact', 'probability'] },
-      { name: 'Resource Allocation', max: 20, keys: ['budget', 'resource', 'effort', 'cost'] },
-      { name: 'Quality Assurance', max: 20, keys: ['quality', 'review', 'audit', 'test plan'] },
-    ],
-    STD: [
-      { name: 'Content Quality', max: 25, keys: ['objective', 'scope', 'summary', 'analysis'] },
-      { name: 'Organization', max: 25, keys: ['introduction', 'conclusion', 'section'] },
-      { name: 'Technical Accuracy', max: 25, keys: ['requirement', 'design', 'implementation'] },
-      { name: 'Completeness', max: 25, keys: ['details', 'reference', 'appendix'] },
-    ],
-    Other: [
-      { name: 'Content Quality', max: 25, keys: ['objective', 'scope', 'summary', 'analysis'] },
-      { name: 'Organization', max: 25, keys: ['introduction', 'conclusion', 'section'] },
-      { name: 'Technical Accuracy', max: 25, keys: ['requirement', 'design', 'implementation'] },
-      { name: 'Completeness', max: 25, keys: ['details', 'reference', 'appendix'] },
-    ],
-  };
-  const criteria = keywordMap[docType] || keywordMap.Other;
+  const sppCriteria: { name: string; max: number; keys: string[] }[] = [
+    { name: 'Project scope & objectives', max: 20, keys: ['scope', 'objective', 'goal', 'deliverable', 'milestone'] },
+    { name: 'Planning & schedule', max: 20, keys: ['timeline', 'schedule', 'deadline', 'phase', 'gantt', 'milestone'] },
+    { name: 'Resources & organization', max: 20, keys: ['team', 'role', 'resource', 'budget', 'effort', 'organization'] },
+    { name: 'Risk & quality', max: 20, keys: ['risk', 'mitigation', 'quality', 'review', 'assurance', 'test'] },
+    { name: 'Documentation quality', max: 20, keys: ['section', 'reference', 'appendix', 'summary', 'conclusion'] },
+  ];
+  const criteria = sppCriteria;
   return criteria.map(c => {
     const score = scoreByKeywords(content, c.keys, c.max);
     const ratio = c.max > 0 ? score / c.max : 0;
@@ -447,31 +474,9 @@ function runFullAIDraft(docType: string, content: string): AICriterion[] {
   ];
 }
 
-function buildAIFeedback(criteria: AICriterion[]): string {
-  if (criteria.length === 0) return '';
-  const ratio = (c: AICriterion) => (c.max > 0 ? c.score / c.max : 0);
-  const strengths = criteria.filter((c) => c.max > 0 && ratio(c) >= 0.85).map((c) => c.name);
-  const improvements = criteria.filter((c) => c.max > 0 && ratio(c) < 0.75).map((c) => c.name);
-
-  const intro =
-    'This extended automated summary is generated from the rubric-aligned draft scores on this screen. It is used when the live Gemini model is unavailable or did not return usable structured JSON — treat every claim as provisional until you have reviewed the actual submission file.';
-
-  const mid = criteria
-    .map((c) => {
-      const r = ratio(c);
-      const band =
-        r >= 0.85 ? 'This criterion is scoring in a strong band.' : r >= 0.65 ? 'This criterion is mixed — room to tighten.' : 'This criterion is weak relative to its weight — expect gaps.';
-      return `${c.name} (${c.score}/${c.max}): ${band} ${c.comment}`;
-    })
-    .join('\n\n');
-
-  const tail = [
-    strengths.length ? `Strengths: ${strengths.join(', ')}.` : '',
-    improvements.length ? `Needs improvement: ${improvements.join(', ')}.` : '',
-    'Please read each rubric cell in the modal, adjust scores or comments as needed, then publish when the evaluation matches your professional judgment.',
-  ].filter(Boolean);
-
-  return [intro, mid, ...tail].join('\n\n');
+/** Heuristic fallback no longer injects a long prose block — rubric rows + Gemini summary only. */
+function buildAIFeedback(_criteria: AICriterion[]): string {
+  return '';
 }
 
 /** Snapshot persisted for students as “AI preliminary” versus teacher-adjusted `score` / `feedback`. */
@@ -490,15 +495,8 @@ function criteriaToDraftSnapshot(
   const total = criteria.reduce((s, c) => s + c.score, 0);
   const maxTotal = criteria.reduce((s, c) => s + c.max, 0);
   const scorePct = maxTotal > 0 ? Math.round((total / maxTotal) * 100) : null;
-  const exec = executiveSummary?.trim() ?? '';
-  const rubricLine = buildAIFeedback(criteria);
-  let summary = exec
-    ? executiveSummaryHasUiTail(exec)
-      ? exec
-      : rubricLine
-        ? `${exec}\n\n${rubricLine}`
-        : exec
-    : rubricLine;
+  const exec = stripLegacyHeuristicAutomatedSummary(executiveSummary?.trim() ?? '');
+  let summary = exec;
   const cor = extras?.languageCorrections ?? [];
   const qn = extras?.documentQualityNotes?.trim() ?? '';
   const ch = extras?.correctHighlights ?? [];
@@ -844,6 +842,17 @@ export default function ReviewQueue() {
   const [teacherGradeNotice, setTeacherGradeNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [syncingSheet, setSyncingSheet] = useState(false);
+  const [sheetSyncNotice, setSheetSyncNotice] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+    url?: string;
+  } | null>(null);
+  const googleSheetViewUrl = useMemo(
+    () => getGoogleSheetsConfig()?.viewUrl ?? (import.meta.env.VITE_GOOGLE_SHEETS_URL || '').trim(),
+    [sheetSyncNotice, syncingSheet]
+  );
+  const sheetSetupStatus = useMemo(() => getGoogleSheetsSetupStatus(), [sheetSyncNotice, syncingSheet]);
   /** Row-selection set for the bulk "Delete selected" toolbar above the queue. */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [resubmitSavingId, setResubmitSavingId] = useState<string | null>(null);
@@ -1013,6 +1022,7 @@ export default function ReviewQueue() {
         removeTeacherOnlyDraft(id);
       }
       await load();
+      scheduleAutoSyncGradesToSheet('delete');
     } finally {
       setDeleting(false);
     }
@@ -1032,7 +1042,7 @@ export default function ReviewQueue() {
   }, []);
 
   useSubmissionsRealtimeRefresh(() => {
-    void load({ silent: true });
+    void load({ silent: true }).then(() => scheduleAutoSyncGradesToSheet('realtime'));
   });
 
   const stats = useMemo(() => {
@@ -1077,8 +1087,29 @@ export default function ReviewQueue() {
   }, []);
 
   useEffect(() => {
+    scrubStoredAiOnlyEvalLocks();
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return onAutoSheetSync((result) => {
+      if (result.ok) {
+        setSheetSyncNotice({
+          kind: 'ok',
+          text: `Auto-synced ${result.rowsWritten} row(s) to Google Sheets.`,
+          url: result.spreadsheetUrl,
+        });
+      } else if (getGoogleSheetsConfig() && !result.message.includes('Auto-sync skipped')) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!loading && isGoogleSheetTargetConfigured() && isAutoSheetSyncEnabled()) {
+      scheduleAutoSyncGradesToSheet('grades-page-open');
+    }
+  }, [loading]);
 
   /** Grade Teacher: keep rubric + applied score + feedback steady in this browser until publish, redo, or clear. */
   useEffect(() => {
@@ -1142,9 +1173,12 @@ export default function ReviewQueue() {
     setGradeMode(intent);
     setSelected(sub);
     const teacherDraftEarly = intent === 'teacher' ? readTeacherOnlyDraft(sub.id) : null;
-    setFeedback(
-      teacherDraftEarly ? (sub.feedback?.trim() ? sub.feedback : teacherDraftEarly.feedback) : sub.feedback || ''
-    );
+    const initialFeedback = teacherDraftEarly
+      ? sub.feedback?.trim()
+        ? sub.feedback
+        : teacherDraftEarly.feedback
+      : sub.feedback || '';
+    setFeedback(stripLegacyHeuristicAutomatedSummary(initialFeedback));
     setAiCriteria([]);
     setAiExecutiveSummary('');
     setAiLanguageCorrections([]);
@@ -1208,14 +1242,18 @@ export default function ReviewQueue() {
         setInspectionText(lock.inspectionText);
         aiDraftSnapshotRef.current = lock.draftSnapshot;
         setAiCriteria(lock.criteria);
-        setAiExecutiveSummary(lock.executiveSummary);
+        setAiExecutiveSummary(stripLegacyHeuristicAutomatedSummary(lock.executiveSummary));
         setAiLanguageCorrections(lock.languageCorrections);
         setAiDocumentQualityNotes(lock.documentQualityNotes);
         setAiCorrectHighlights(lock.correctHighlights);
         setAiPageRewrites(lock.pageRewrites ?? []);
         setAiDocumentOverviewScores(lock.documentOverviewScores ?? []);
         setAiDiagramEvaluations(lock.diagramEvaluations ?? []);
-        setFeedback(sub.feedback?.trim() ? sub.feedback : lock.feedbackDraft);
+        setFeedback(
+          stripLegacyHeuristicAutomatedSummary(
+            sub.feedback?.trim() ? sub.feedback : lock.feedbackDraft
+          )
+        );
         setTeacherCriteria([]);
         setAiOnlyEvalLocked(true);
       } else {
@@ -1381,7 +1419,7 @@ export default function ReviewQueue() {
         });
         aiDraftSnapshotRef.current = snap;
         setAiCriteria(result.criteria);
-        setAiExecutiveSummary(result.executiveSummary);
+        setAiExecutiveSummary(stripLegacyHeuristicAutomatedSummary(result.executiveSummary));
         setAiLanguageCorrections(result.languageCorrections);
         setAiDocumentQualityNotes(result.documentQualityNotes);
         setAiCorrectHighlights(result.correctHighlights);
@@ -1668,7 +1706,7 @@ export default function ReviewQueue() {
     removeAiOnlyEvalLock(selected.id);
     removeTeacherOnlyDraft(selected.id);
     closeGradingModal();
-    load();
+    void load().then(() => scheduleAutoSyncGradesToSheet('grade-published'));
   }
 
   async function quickRequestResubmission(sub: Submission) {
@@ -1686,6 +1724,7 @@ export default function ReviewQueue() {
       removeAiOnlyEvalLock(sub.id);
       removeTeacherOnlyDraft(sub.id);
       await load();
+      scheduleAutoSyncGradesToSheet('resubmit');
     } finally {
       setResubmitSavingId(null);
     }
@@ -1716,28 +1755,25 @@ export default function ReviewQueue() {
     });
   }, [submissions, filter, search]);
 
-  function exportReviewedCsv() {
-    const reviewed = submissions.filter(s => s.status === 'reviewed');
-    if (reviewed.length === 0) return;
-    const headers = ['Student Name', 'Student Email', 'Submission', 'File Name', 'Score', 'Status', 'Submitted At'];
-    const rows = reviewed.map(s => [
-      s.users?.full_name ?? '',
-      s.users?.email ?? '',
-      submissionQueueTitle(s),
-      s.file_name,
-      s.score?.toString() ?? '',
-      s.status,
-      new Date(s.submitted_at).toLocaleString(),
-    ]);
-    const csv = [headers, ...rows]
-      .map(row => row.map(v => `"${(v || '').replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `reviewed-grades-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+  async function syncToGoogleSheet() {
+    if (syncingSheet) return;
+    setSheetSyncNotice(null);
+    setSyncingSheet(true);
+    try {
+      const result = await syncGradesToGoogleSheet();
+      if (!result.ok) {
+        setSheetSyncNotice({ kind: 'err', text: result.message });
+        return;
+      }
+      setSheetSyncNotice({
+        kind: 'ok',
+        text: `Synced ${result.rowsWritten} submission row${result.rowsWritten === 1 ? '' : 's'} to tab “${result.sheetName}”.`,
+        url: result.spreadsheetUrl,
+      });
+      window.open(result.spreadsheetUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+      setSyncingSheet(false);
+    }
   }
 
   const totalScore = aiCriteria.reduce((s, c) => s + c.score, 0);
@@ -1762,23 +1798,59 @@ export default function ReviewQueue() {
         title="Grading workspace"
         icon={ClipboardList}
         description={
-          <>
-            AI drafts scores and feedback; you review, adjust, then publish. Each row has two grade buttons —{' '}
-            <span className="font-semibold text-emerald-800">Grade AI</span> opens the AI step (press Run when ready),{' '}
-            <span className="font-semibold text-[#84001B]">Grade Teacher</span> jumps to the manual score — plus{' '}
-            <span className="font-semibold text-slate-800">Redo · Delete</span>. Same tools as{' '}
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">Grades</span>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
             <Link className="font-semibold text-[#84001B] hover:underline" to="/class-list">
               Class list
-            </Link>{' '}
-            and{' '}
-            <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
-              Submission roster
             </Link>
-            .
-          </>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
+            <Link className="font-semibold text-[#84001B] hover:underline" to="/student-submissions">
+              Student submissions
+            </Link>
+            <span className="text-slate-300" aria-hidden>
+              ·
+            </span>
+            <span className="text-slate-500">Google Sheets auto-sync</span>
+          </p>
         }
         actions={
           <>
+            <Link
+              to="/student-submissions"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              <Table2 className="w-3.5 h-3.5" aria-hidden />
+              Submission roster
+            </Link>
+            {googleSheetViewUrl ? (
+              <a
+                href={googleSheetViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              >
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                Open Google Sheet
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void syncToGoogleSheet()}
+              disabled={syncingSheet}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#84001B]/25 bg-[#84001B] px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#6b0014] disabled:opacity-60"
+            >
+              {syncingSheet ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden />
+              ) : (
+                <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+              )}
+              {syncingSheet ? 'Syncing…' : 'Sync to Google Sheets'}
+            </button>
             <button
               type="button"
               onClick={() => void load()}
@@ -1786,17 +1858,50 @@ export default function ReviewQueue() {
             >
               Refresh queue
             </button>
-            <button
-              type="button"
-              onClick={exportReviewedCsv}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-            >
-              <Download className="w-3.5 h-3.5" aria-hidden />
-              Export grades CSV
-            </button>
           </>
         }
       />
+
+      {sheetSetupStatus.hint && !sheetSyncNotice && (
+        <div
+          role="status"
+          className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+        >
+          <p className="leading-snug">{sheetSetupStatus.hint}</p>
+        </div>
+      )}
+
+      {sheetSyncNotice && (
+        <div
+          role="status"
+          className={`mb-4 rounded-2xl border px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-3 ${
+            sheetSyncNotice.kind === 'ok'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+              : 'border-red-200 bg-red-50 text-red-950'
+          }`}
+        >
+          <p className="min-w-0 flex-1 leading-snug">{sheetSyncNotice.text}</p>
+          <div className="flex items-center gap-2 shrink-0">
+            {sheetSyncNotice.url ? (
+              <a
+                href={sheetSyncNotice.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold underline hover:no-underline"
+              >
+                Open sheet
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setSheetSyncNotice(null)}
+              className="text-xs font-semibold opacity-70 hover:opacity-100"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
         {[
@@ -1978,7 +2083,7 @@ export default function ReviewQueue() {
               <table className="w-full min-w-[1200px] text-sm border-collapse">
                 <thead>
                   <tr className={teacherMaroonTheadClasses}>
-                    <th className="px-3 py-3 text-left min-w-[96px] text-white">Title</th>
+                    <th className="px-3 py-3 text-left min-w-[96px] text-white">Document type</th>
                     <th className="px-3 py-3 text-left min-w-[140px] text-white">File name</th>
                     <th className="px-3 py-3 text-left min-w-[120px] text-white">Student ID</th>
                     <th className="px-3 py-3 text-left min-w-[140px] text-white">Student name</th>
@@ -2701,7 +2806,7 @@ export default function ReviewQueue() {
                             criteria={aiCriteria}
                             aiScorePercent={maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : null}
                             teacherScorePercent={gradeMode === 'ai' ? null : selected.status === 'reviewed' && selected.score != null ? selected.score : null}
-                            summaryText={aiExecutiveSummary.trim() ? aiExecutiveSummary : buildAIFeedback(aiCriteria)}
+                            summaryText={aiExecutiveSummary.trim() || null}
                             documentQualityNotes={aiDocumentQualityNotes.trim() || null}
                             languageCorrections={aiLanguageCorrections}
                             correctHighlights={aiCorrectHighlights}
@@ -2711,7 +2816,7 @@ export default function ReviewQueue() {
                             showTeacherGrade={gradeMode !== 'ai'}
                             heading={gradeMode === 'ai' ? 'Grading score' : 'AI evaluator — analysis & rubric'}
                             density="comfortable"
-                            detailEvaluation="narrative"
+                            detailEvaluation="rubric"
                           />
                         </div>
                       )}

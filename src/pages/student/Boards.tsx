@@ -106,7 +106,7 @@ function submissionToCard(s: StudentSubmissionRow): Card {
   return {
     id: `sub-${s.id}`,
     title: s.assignment_title || s.file_name,
-    documentType: s.submission_doc_type || s.assignment_doc_type || 'Other',
+    documentType: s.submission_doc_type || s.assignment_doc_type || 'SPP',
     sortAt: new Date(s.submitted_at).getTime() || 0,
     meta: `Sent ${formatShortDate(s.submitted_at)}`,
     metaTone: 'sent',

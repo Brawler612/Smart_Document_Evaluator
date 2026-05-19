@@ -3,6 +3,7 @@
  */
 import { supabase } from './supabase';
 import { getInvitedStudentRosterEntry } from '../data/invitedStudentEmails';
+import { DEFAULT_DOC_TYPE, normalizeDocType as normalizeDocTypeOnly } from './documentTypes';
 import type { DocType, SubStatus } from '../types';
 
 /**
@@ -51,7 +52,7 @@ export interface TeacherSubmission {
   file_url: string | null;
   status: SubStatus;
   submitted_at: string;
-  /** Quick-submit artifact label (SRS / SDD / SPMP / STD) — shown as queue Title when set. */
+  /** Quick-submit artifact label (SPP) — shown as queue Title when set. */
   submission_doc_type: string | null;
   /** Last row update (`submissions.updated_at` when migrated; else null from API). */
   updated_at: string | null;
@@ -115,8 +116,7 @@ type BasicUserRow = {
 };
 
 function normalizeDocType(v: unknown): DocType {
-  if (v === 'SRS' || v === 'SDD' || v === 'SPMP' || v === 'STD' || v === 'Other') return v;
-  return 'Other';
+  return normalizeDocTypeOnly(v);
 }
 
 /** Same title as `ensureGeneralAssignment` in student Assignments — quick uploads without a specific task. */
@@ -157,40 +157,32 @@ export function fileNameToTitleAcronym(fileName: string): string {
   return compact.slice(0, 12).toUpperCase();
 }
 
-/** Title column in grading queue: student-chosen doc type beats assignment title; general bucket uses file-name acronym. */
+/** Document type shown in grading / roster “Title” column (SPP-only deployment). */
+export function submissionQueueDocumentType(s: {
+  submission_doc_type?: string | null;
+  assignments?: { document_type?: string | null } | null;
+}): DocType {
+  const raw = s.submission_doc_type?.trim();
+  if (raw) return normalizeDocTypeOnly(raw);
+  return normalizeDocTypeOnly(s.assignments?.document_type);
+}
+
+/** Title column in grading queue — always the document type (SPP). */
 export function submissionQueueTitle(
   s: {
     submission_doc_type?: string | null;
-    assignments?: { title?: string | null } | null;
+    assignments?: { title?: string | null; document_type?: string | null } | null;
     file_name?: string | null;
   },
-  emptyFallback = '—'
+  _emptyFallback = '—'
 ): string {
-  const d = s.submission_doc_type?.trim();
-  if (d) return d;
-  const t = s.assignments?.title?.trim() ?? '';
-  const isGeneralBucket = t === GENERAL_SUBMISSION_ASSIGNMENT_TITLE || t === '';
-
-  if (t && !isGeneralBucket) return t;
-
-  const fn = s.file_name?.trim();
-  if (isGeneralBucket && fn) {
-    const acronym = fileNameToTitleAcronym(fn);
-    if (acronym) return acronym;
-  }
-
-  if (t) return t;
-  if (fn) {
-    const acronym = fileNameToTitleAcronym(fn);
-    if (acronym) return acronym;
-  }
-  return emptyFallback;
+  return submissionQueueDocumentType(s);
 }
 
 export function gradingDocTypeForAI(sub: TeacherSubmission): string {
   const raw = sub.submission_doc_type?.trim();
-  if (raw === 'SRS' || raw === 'SDD' || raw === 'SPMP' || raw === 'STD' || raw === 'Other') return raw;
-  return sub.assignments?.document_type ?? 'Other';
+  if (raw) return normalizeDocTypeOnly(raw);
+  return normalizeDocTypeOnly(sub.assignments?.document_type);
 }
 
 export function normalizeSubStatus(v: unknown): SubStatus {
@@ -476,7 +468,7 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
         semester: optTrimmedText(row.semester),
         assignments: {
           title: 'General Submission',
-          document_type: 'Other' as DocType,
+          document_type: DEFAULT_DOC_TYPE,
           due_date: null,
         },
         users: (() => {
