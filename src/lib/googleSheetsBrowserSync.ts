@@ -32,6 +32,7 @@ function clearCachedAccessToken(): void {
   sessionStorage.removeItem(LS_ACCESS_TOKEN_EXP);
 }
 
+import { sanitizeGoogleSheetsValues } from '../../shared/googleSheetsCellLimits';
 import type { TeacherSubmission } from './teacherSubmissionLoad';
 import type { SyncGradesResult } from './syncGradesToSheet';
 
@@ -227,6 +228,8 @@ export async function writeValuesViaTeacherGoogle(
       sheetName = titles.includes(preferredTab) ? preferredTab : titles[0] ?? preferredTab;
     }
 
+    const safeValues = sanitizeGoogleSheetsValues(values);
+
     const writeSheet = async (token: string) => {
       await sheetsFetch(
         token,
@@ -236,7 +239,7 @@ export async function writeValuesViaTeacherGoogle(
       await sheetsFetch(
         token,
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${tabRange(sheetName, '!A1')}?valueInputOption=USER_ENTERED`,
-        { method: 'PUT', body: JSON.stringify({ values }) }
+        { method: 'PUT', body: JSON.stringify({ values: safeValues }) }
       );
     };
 

@@ -15,6 +15,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { google } from 'googleapis';
+import { sanitizeGoogleSheetsValues } from '../shared/googleSheetsCellLimits.js';
 
 const DEFAULT_SHEET_NAME = 'Sheet1';
 
@@ -185,11 +186,13 @@ export default async function handler(req: any, res: any) {
       range: sheetName,
     });
 
+    const safeValues = sanitizeGoogleSheetsValues(values);
+
     const response = await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,
       range: `${sheetName}!A1`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values },
+      requestBody: { values: safeValues },
     });
 
     const rowsWritten = Math.max(0, values.length - 1);
