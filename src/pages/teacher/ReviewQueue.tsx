@@ -966,13 +966,11 @@ export default function ReviewQueue() {
 
   useEffect(() => {
     return onAutoSheetSync((result) => {
-      if (result.ok) {
-        setSheetSyncNotice({
-          kind: 'ok',
-          text: `Auto-synced ${result.rowsWritten} row(s) to Google Sheets.`,
-          url: result.spreadsheetUrl,
-        });
-      } else if (getGoogleSheetsConfig() && !result.message.includes('Auto-sync skipped')) {
+      if (
+        !result.ok &&
+        getGoogleSheetsConfig() &&
+        !result.message.includes('Auto-sync skipped')
+      ) {
         setSheetSyncNotice({ kind: 'err', text: result.message });
       }
     });
@@ -1622,11 +1620,6 @@ export default function ReviewQueue() {
         setSheetSyncNotice({ kind: 'err', text: result.message });
         return;
       }
-      setSheetSyncNotice({
-        kind: 'ok',
-        text: `Synced ${result.rowsWritten} submission row${result.rowsWritten === 1 ? '' : 's'} to tab “${result.sheetName}”.`,
-        url: result.spreadsheetUrl,
-      });
       window.open(result.spreadsheetUrl, '_blank', 'noopener,noreferrer');
     } finally {
       setSyncingSheet(false);
@@ -1728,35 +1721,19 @@ export default function ReviewQueue() {
         </div>
       )}
 
-      {sheetSyncNotice && (
+      {sheetSyncNotice?.kind === 'err' && (
         <div
-          role="status"
-          className={`mb-4 rounded-2xl border px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-3 ${
-            sheetSyncNotice.kind === 'ok'
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-              : 'border-red-200 bg-red-50 text-red-950'
-          }`}
+          role="alert"
+          className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950 flex flex-wrap items-center justify-between gap-3"
         >
           <p className="min-w-0 flex-1 leading-snug">{sheetSyncNotice.text}</p>
-          <div className="flex items-center gap-2 shrink-0">
-            {sheetSyncNotice.url ? (
-              <a
-                href={sheetSyncNotice.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-semibold underline hover:no-underline"
-              >
-                Open sheet
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setSheetSyncNotice(null)}
-              className="text-xs font-semibold opacity-70 hover:opacity-100"
-            >
-              Dismiss
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setSheetSyncNotice(null)}
+            className="text-xs font-semibold opacity-70 hover:opacity-100 shrink-0"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
