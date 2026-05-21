@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { persistSubmissionUpdate } from './submissionPersist';
 import {
   resolveSubmissionTableName,
   TEACHER_LOCAL_SUBMISSION_KEY,
@@ -21,17 +21,18 @@ export async function performTeacherResubmitRequest(sub: SubRef): Promise<{ ok: 
 
   const table = await resolveSubmissionTableName();
   if (table) {
-    const { error } = await supabase.from(table).update(payload).eq('id', sub.id);
+    let persisted = await persistSubmissionUpdate(sub.id, payload);
     const missingAiCols =
-      error?.message &&
-      /ai_draft|could not find|column|PGRST204|schema cache/i.test(error.message);
-    const core = { status: payload.status, feedback: payload.feedback, score: payload.score };
-    if (error && missingAiCols) {
-      const { error: e2 } = await supabase.from(table).update(core).eq('id', sub.id);
-      if (e2) return { ok: false, message: e2.message };
-    } else if (error) {
-      return { ok: false, message: error.message };
+      !persisted.ok &&
+      /ai_draft|could not find|column|PGRST204|schema cache/i.test(persisted.message);
+    if (!persisted.ok && missingAiCols) {
+      persisted = await persistSubmissionUpdate(sub.id, {
+        status: payload.status,
+        feedback: payload.feedback,
+        score: payload.score,
+      });
     }
+    if (!persisted.ok) return { ok: false, message: persisted.message };
   } else if (sub.id.startsWith('local_')) {
     const localRaw = localStorage.getItem(TEACHER_LOCAL_SUBMISSION_KEY);
     const localRows = localRaw ? (JSON.parse(localRaw) as LocalSubmissionRow[]) : [];

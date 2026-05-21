@@ -47,6 +47,7 @@ import { SubStatus } from '../../types';
 import { formatStackedDateTime, rosterStatusChip, studentIdBadge, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
+import { persistSubmissionUpdate } from '../../lib/submissionPersist';
 import { syncAllTeacherGoogleSheets } from '../../lib/syncAllTeacherGoogleSheets';
 import {
   getGoogleSheetsConfig,
@@ -1465,6 +1466,8 @@ export default function ReviewQueue() {
               feedback: feedbackOut,
               ai_draft_score,
               ai_draft_summary,
+              /** Mirror AI publish into official `score` so Supabase + Google Sheets stay in sync (including 0). */
+              score: ai_draft_score,
             }
           : nextStatus === 'reviewed' && gradeMode === 'teacher'
             ? {
@@ -1502,11 +1505,11 @@ export default function ReviewQueue() {
 
     const table = await resolveSubmissionTableName();
     if (table) {
-      const { error } = await supabase.from(table).update(fullPayload as never).eq('id', selected.id);
+      let persisted = await persistSubmissionUpdate(selected.id, fullPayload);
       const missingAiCols =
-        error?.message &&
-        /ai_draft|could not find|column|PGRST204|schema cache/i.test(error.message);
-      if (error && missingAiCols) {
+        !persisted.ok &&
+        /ai_draft|could not find|column|PGRST204|schema cache/i.test(persisted.message);
+      if (!persisted.ok && missingAiCols) {
         if (gradeMode === 'ai') {
           alert(
             'This project’s submissions table is missing AI draft columns (ai_draft_score / ai_draft_summary). Add them with the Supabase SQL in docs, then publish again.'
@@ -1514,14 +1517,10 @@ export default function ReviewQueue() {
           setSaving(false);
           return;
         }
-        const { error: e2 } = await supabase.from(table).update(basePayload as never).eq('id', selected.id);
-        if (e2) {
-          alert(e2.message);
-          setSaving(false);
-          return;
-        }
-      } else if (error) {
-        alert(error.message);
+        persisted = await persistSubmissionUpdate(selected.id, basePayload);
+      }
+      if (!persisted.ok) {
+        alert(persisted.message);
         setSaving(false);
         return;
       }
