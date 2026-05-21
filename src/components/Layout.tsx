@@ -7,6 +7,7 @@ import StudentOnboardingTour from './student/StudentOnboardingTour';
 import InvitedStudentEmailNotifier from './student/InvitedStudentEmailNotifier';
 import UserAvatar from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
+import { useTeacherGoogleSheetsAutoSync } from '../hooks/useTeacherGoogleSheetsAutoSync';
 
 class OutletErrorBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state: { err: Error | null } = { err: null };
@@ -43,6 +44,8 @@ export default function Layout() {
   const { user } = useAuth();
   /** Student portal only — teachers and admins never see the floating Rate Us pill. */
   const isStudent = !!user && user.role !== 'teacher' && user.role !== 'admin';
+  const isTeacherOrAdmin = !!user && (user.role === 'teacher' || user.role === 'admin');
+  useTeacherGoogleSheetsAutoSync(isTeacherOrAdmin);
 
   return (
     <>
