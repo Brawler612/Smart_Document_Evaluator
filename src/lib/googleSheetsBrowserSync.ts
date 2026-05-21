@@ -1,4 +1,4 @@
-import { buildGradeSheetValues, spreadsheetEditUrl } from './gradeSheetRows';
+import { buildGradeSheetValues, padSheetValuesForFullReplace, spreadsheetEditUrl } from './gradeSheetRows';
 import { ensureGoogleSheetsConfig, getGoogleSheetsConfig, type GoogleSheetsConfig } from './googleSheetsConfig';
 
 const LS_ACCESS_TOKEN = 'sde:googleSheetsAccessToken:v1';
@@ -228,7 +228,7 @@ export async function writeValuesViaTeacherGoogle(
       sheetName = titles.includes(preferredTab) ? preferredTab : titles[0] ?? preferredTab;
     }
 
-    const safeValues = sanitizeGoogleSheetsValues(values);
+    const safeValues = sanitizeGoogleSheetsValues(padSheetValuesForFullReplace(values));
 
     const writeSheet = async (token: string) => {
       await sheetsFetch(

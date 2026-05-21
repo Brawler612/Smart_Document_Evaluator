@@ -47,9 +47,19 @@ function notify(result: SyncGradesResult): void {
  * Debounced push of the full grading queue to Google Sheets.
  * Runs only when sheet + OAuth client are already configured (env or localStorage).
  */
-export function scheduleAutoSyncGradesToSheet(_reason?: string): void {
+export function scheduleAutoSyncGradesToSheet(
+  _reason?: string,
+  options?: { immediate?: boolean }
+): void {
   if (!isAutoSheetSyncEnabled()) return;
   if (!isGoogleSheetTargetConfigured()) return;
+
+  if (options?.immediate) {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = null;
+    void runAutoSyncGradesToSheet();
+    return;
+  }
 
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {

@@ -17,6 +17,54 @@ import { createClient } from '@supabase/supabase-js';
 import { google } from 'googleapis';
 import { sanitizeGoogleSheetsValues } from '../shared/googleSheetsCellLimits.js';
 
+function effectiveGradePercent(row: Record<string, unknown>): number | null {
+  const teacher =
+    typeof row.score === 'number' ? row.score : row.score != null ? Number(row.score) : null;
+  const ai =
+    typeof row.ai_draft_score === 'number'
+      ? row.ai_draft_score
+      : row.ai_draft_score != null
+        ? Number(row.ai_draft_score)
+        : null;
+  if (teacher != null && Number.isFinite(teacher)) return teacher;
+  if (ai != null && Number.isFinite(ai)) return ai;
+  return null;
+}
+
+function scoreCell(n: number | null): string {
+  return n != null && Number.isFinite(n) ? String(n) : '';
+}
+
+function formatSheetTimestamp(iso: unknown): string {
+  if (iso == null) return '';
+  const s = String(iso).trim();
+  if (!s) return '';
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    }).format(d);
+  } catch {
+    return s;
+  }
+}
+
+function padSheetValuesForFullReplace(values: string[][], minRows = 300): string[][] {
+  if (values.length === 0) return values;
+  const colCount = values[0]!.length;
+  const out = values.map((row) => [...row]);
+  while (out.length < minRows) {
+    out.push(Array(colCount).fill(''));
+  }
+  return out;
+}
+
 const DEFAULT_SHEET_NAME = 'Sheet1';
 
 function spreadsheetEditUrl(sheetId: string): string {
@@ -146,6 +194,8 @@ export default async function handler(req: any, res: any) {
       'Document Type',
       'File Name',
       'Score',
+      'Teacher Score',
+      'AI Draft Score',
       'Status',
       'Submitted At',
       'Updated At',
@@ -156,6 +206,15 @@ export default async function handler(req: any, res: any) {
       const row = raw as Record<string, unknown>;
       const assignment = pickJoinedRecord(row.assignments);
       const user = pickJoinedRecord(row.users);
+      const teacherScore =
+        typeof row.score === 'number' ? row.score : row.score != null ? Number(row.score) : null;
+      const aiScore =
+        typeof row.ai_draft_score === 'number'
+          ? row.ai_draft_score
+          : row.ai_draft_score != null
+            ? Number(row.ai_draft_score)
+            : null;
+      const updatedRaw = row.updated_at ?? row.submitted_at;
       return [
         toString(user?.full_name ?? row.student_id ?? ''),
         toString(user?.email ?? ''),
@@ -163,10 +222,12 @@ export default async function handler(req: any, res: any) {
         toString(assignment?.title ?? row.submission_doc_type ?? row.file_name ?? ''),
         toString(assignment?.document_type ?? ''),
         toString(row.file_name ?? ''),
-        toString(row.score ?? ''),
+        scoreCell(effectiveGradePercent(row)),
+        scoreCell(Number.isFinite(teacherScore as number) ? (teacherScore as number) : null),
+        scoreCell(Number.isFinite(aiScore as number) ? (aiScore as number) : null),
         toString(row.status ?? ''),
-        toString(row.submitted_at ?? ''),
-        toString(row.updated_at ?? ''),
+        formatSheetTimestamp(row.submitted_at),
+        formatSheetTimestamp(updatedRaw),
         toString(row.file_url ?? ''),
         toString(row.feedback ?? ''),
       ];
@@ -186,7 +247,7 @@ export default async function handler(req: any, res: any) {
       range: sheetName,
     });
 
-    const safeValues = sanitizeGoogleSheetsValues(values);
+    const safeValues = sanitizeGoogleSheetsValues(padSheetValuesForFullReplace(values));
 
     const response = await sheets.spreadsheets.values.update({
       spreadsheetId: sheetId,

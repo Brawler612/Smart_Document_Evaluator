@@ -1561,7 +1561,9 @@ export default function ReviewQueue() {
     removeAiOnlyEvalLock(selected.id);
     removeTeacherOnlyDraft(selected.id);
     closeGradingModal();
-    void load().then(() => scheduleAutoSyncGradesToSheet('grade-published'));
+    void load().then(() =>
+      scheduleAutoSyncGradesToSheet('grade-published', { immediate: true })
+    );
   }
 
   async function quickRequestResubmission(sub: Submission) {
