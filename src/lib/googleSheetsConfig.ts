@@ -42,7 +42,7 @@ function readEnvClientId(): string {
 }
 
 function readEnvSheetName(): string {
-  return (import.meta.env.VITE_GOOGLE_SHEET_NAME || 'Sheet1').trim();
+  return (import.meta.env.VITE_GOOGLE_SHEET_NAME || 'Grades').trim();
 }
 
 function readEnvClassListSheetName(): string {
@@ -121,7 +121,7 @@ export function getGoogleSheetsConfig(): GoogleSheetsConfig | null {
   if (!sheetId) return null;
 
   const clientId = readEnvClientId() || localStorage.getItem(LS_CLIENT_ID)?.trim() || '';
-  const sheetName = readEnvSheetName() || localStorage.getItem(LS_SHEET_NAME)?.trim() || 'Sheet1';
+  const sheetName = readEnvSheetName() || localStorage.getItem(LS_SHEET_NAME)?.trim() || 'Grades';
   const envView = (import.meta.env.VITE_GOOGLE_SHEETS_URL || '').trim();
   const viewUrl =
     envView || `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
@@ -163,7 +163,7 @@ export function ensureGoogleSheetsConfig(): GoogleSheetsConfig | null {
     }
   }
 
-  const sheetName = readEnvSheetName() || localStorage.getItem(LS_SHEET_NAME)?.trim() || 'Sheet1';
+  const sheetName = readEnvSheetName() || localStorage.getItem(LS_SHEET_NAME)?.trim() || 'Grades';
   const viewUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
 
   return { sheetId, clientId, sheetName, viewUrl };

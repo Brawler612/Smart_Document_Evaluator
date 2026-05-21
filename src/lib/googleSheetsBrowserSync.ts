@@ -33,6 +33,7 @@ function clearCachedAccessToken(): void {
 }
 
 import { sanitizeGoogleSheetsValues } from '../../shared/googleSheetsCellLimits';
+import { withTimeout } from './syncTimeout';
 import type { TeacherSubmission } from './teacherSubmissionLoad';
 import type { SyncGradesResult } from './syncGradesToSheet';
 
@@ -96,6 +97,9 @@ function requestAccessToken(clientId: string, forceConsent = false): Promise<str
   });
 }
 
+const OAUTH_TOKEN_TIMEOUT_MS = 90_000;
+const SHEETS_HTTP_TIMEOUT_MS = 60_000;
+
 function isSheetsScopeError(message: string): boolean {
   return /403|401|insufficient|permission|scope|ACCESS_TOKEN_SCOPE/i.test(message);
 }
@@ -105,14 +109,27 @@ async function sheetsFetch<T>(
   url: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-  });
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), SHEETS_HTTP_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('Google Sheets request timed out. Try Sync again in a moment.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(abortTimer);
+  }
   const text = await res.text();
   let json: unknown = {};
   if (text) {
@@ -189,7 +206,11 @@ async function obtainSheetsAccessToken(
   }
 
   await loadGisScript();
-  const token = await requestAccessToken(clientId.trim(), Boolean(options?.forceConsent));
+  const token = await withTimeout(
+    requestAccessToken(clientId.trim(), Boolean(options?.forceConsent)),
+    OAUTH_TOKEN_TIMEOUT_MS,
+    'Google sign-in for Sheets (allow the popup if your browser blocked it)'
+  );
   cacheAccessToken(token);
   return token;
 }

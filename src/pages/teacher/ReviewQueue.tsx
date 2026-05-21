@@ -47,7 +47,7 @@ import { SubStatus } from '../../types';
 import { formatStackedDateTime, rosterStatusChip, studentIdBadge, submissionHasViewableAiScore, submissionHasViewableTeacherScore } from '../../lib/submissionRosterPresentation';
 import { DEFAULT_TEACHER_RESUBMIT_FEEDBACK, performTeacherResubmitRequest } from '../../lib/teacherResubmitRequest';
 import { deleteTeacherSubmissionsByIds } from '../../lib/teacherDeleteSubmissions';
-import { syncGradesToGoogleSheet } from '../../lib/syncGradesToSheet';
+import { syncAllTeacherGoogleSheets } from '../../lib/syncAllTeacherGoogleSheets';
 import {
   getGoogleSheetsConfig,
   getGoogleSheetsSetupStatus,
@@ -1617,12 +1617,20 @@ export default function ReviewQueue() {
     setSheetSyncNotice(null);
     setSyncingSheet(true);
     try {
-      const result = await syncGradesToGoogleSheet();
+      const result = await syncAllTeacherGoogleSheets({
+        interactiveSetup: true,
+        skipServer: true,
+      });
       if (!result.ok) {
         setSheetSyncNotice({ kind: 'err', text: result.message });
         return;
       }
       window.open(result.spreadsheetUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setSheetSyncNotice({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Google Sheets sync failed.',
+      });
     } finally {
       setSyncingSheet(false);
     }

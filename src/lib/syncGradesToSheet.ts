@@ -1,5 +1,6 @@
 import { syncGradesViaTeacherGoogle } from './googleSheetsBrowserSync';
 import { fetchTeacherSubmissionRows, type TeacherSubmission } from './teacherSubmissionLoad';
+import { withTimeout } from './syncTimeout';
 
 export type SyncGradesResult =
   | {
@@ -22,10 +23,14 @@ function isServerNotConfigured(message: string): boolean {
 async function tryServerSync(): Promise<SyncGradesResult | null> {
   let res: Response;
   try {
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 25_000);
     res = await fetch('/api/sync-grades', {
       method: 'POST',
       headers: { Accept: 'application/json' },
+      signal: controller.signal,
     });
+    clearTimeout(abortTimer);
   } catch {
     return null;
   }
@@ -81,11 +86,29 @@ async function tryServerSync(): Promise<SyncGradesResult | null> {
  */
 export async function syncGradesToGoogleSheet(
   loadRows: () => Promise<TeacherSubmission[]> = fetchTeacherSubmissionRows,
-  options?: { interactiveSetup?: boolean }
+  options?: { interactiveSetup?: boolean; skipServer?: boolean }
 ): Promise<SyncGradesResult> {
-  const server = await tryServerSync();
-  if (server) return server;
-  return syncGradesViaTeacherGoogle(loadRows, {
-    interactiveSetup: options?.interactiveSetup !== false,
-  });
+  const skipServer =
+    options?.skipServer === true ||
+    (options?.skipServer !== false &&
+      typeof import.meta !== 'undefined' &&
+      import.meta.env.DEV &&
+      import.meta.env.VITE_GOOGLE_SHEETS_USE_SERVER_SYNC !== 'true');
+
+  if (!skipServer) {
+    try {
+      const server = await tryServerSync();
+      if (server) return server;
+    } catch {
+      /* fall through to browser OAuth */
+    }
+  }
+
+  return withTimeout(
+    syncGradesViaTeacherGoogle(loadRows, {
+      interactiveSetup: options?.interactiveSetup !== false,
+    }),
+    120_000,
+    'Grades tab sync'
+  );
 }

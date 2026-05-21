@@ -73,7 +73,7 @@ export function buildGradeSheetValues(rows: TeacherSubmission[]): string[][] {
 }
 
 /** Pad with blank rows so a full-tab rewrite clears leftover cells from prior syncs. */
-export function padSheetValuesForFullReplace(values: string[][], minRows = 300): string[][] {
+export function padSheetValuesForFullReplace(values: string[][], minRows = 120): string[][] {
   if (values.length === 0) return values;
   const colCount = values[0]!.length;
   const out = values.map((row) => [...row]);

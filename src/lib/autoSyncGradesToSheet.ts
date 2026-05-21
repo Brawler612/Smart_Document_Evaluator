@@ -68,15 +68,17 @@ export function scheduleAutoSyncGradesToSheet(
   }, DEBOUNCE_MS);
 }
 
-/** Immediate sync (manual button). */
-export async function runAutoSyncGradesToSheet(): Promise<SyncGradesResult> {
+/** Immediate sync (background / debounced). */
+export async function runAutoSyncGradesToSheet(options?: {
+  bypassInflight?: boolean;
+}): Promise<SyncGradesResult> {
   if (!isGoogleSheetTargetConfigured()) {
     return syncGradesToGoogleSheet(undefined, { interactiveSetup: true });
   }
 
-  if (inflight) return inflight;
+  if (inflight && !options?.bypassInflight) return inflight;
 
-  inflight = (async () => {
+  const run = (async () => {
     const result = await syncGradesToGoogleSheet(undefined, { interactiveSetup: false });
     notify(result);
     return result;
@@ -84,5 +86,6 @@ export async function runAutoSyncGradesToSheet(): Promise<SyncGradesResult> {
     inflight = null;
   });
 
-  return inflight;
+  inflight = run;
+  return run;
 }
