@@ -157,6 +157,11 @@ export default async function handler(req: any, res: any) {
   }
 
   const joinSelectAttempts = [
+    '*, users(full_name, email, student_number, course_year, avatar_url)',
+    '*, users(full_name, email, student_number, course_year)',
+    '*, users(full_name, email, avatar_url)',
+    '*, users(full_name, email)',
+    '*',
     '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year, avatar_url)',
     '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year)',
     '*, assignments(title, document_type, due_date), users(full_name, email, avatar_url)',
@@ -187,6 +192,8 @@ export default async function handler(req: any, res: any) {
 
   const values = [
     [
+      'Submission ID',
+      'Student UUID',
       'Student Name',
       'Email',
       'Student Number',
@@ -216,6 +223,8 @@ export default async function handler(req: any, res: any) {
             : null;
       const updatedRaw = row.updated_at ?? row.submitted_at;
       return [
+        toString(row.id ?? ''),
+        toString(row.student_id ?? ''),
         toString(user?.full_name ?? row.student_id ?? ''),
         toString(user?.email ?? ''),
         toString(user?.student_number ?? ''),

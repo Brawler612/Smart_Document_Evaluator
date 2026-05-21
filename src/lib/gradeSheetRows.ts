@@ -1,6 +1,8 @@
 import type { TeacherSubmission } from './teacherSubmissionLoad';
 
 export const GRADE_SHEET_HEADERS = [
+  'Submission ID',
+  'Student UUID',
   'Student Name',
   'Email',
   'Student Number',
@@ -53,6 +55,8 @@ export function buildGradeSheetValues(rows: TeacherSubmission[]): string[][] {
       const effective = effectiveGradePercent(s);
       const updated = s.updated_at?.trim() || s.submitted_at || '';
       return [
+        s.id || '',
+        s.student_id || '',
         s.users?.full_name?.trim() || s.student_id || '',
         s.users?.email?.trim() || '',
         s.users?.student_number?.trim() || '',

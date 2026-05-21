@@ -30,6 +30,7 @@ import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from '../../lib/teacherSubmission
 import { SOLE_STAFF_EMAIL } from '../../lib/staffAccess';
 import { DEFAULT_DOC_TYPE, DOC_TYPE_COLORS, DOCUMENT_TYPES } from '../../lib/documentTypes';
 import { useAuth } from '../../context/AuthContext';
+import { isMissingColumnError } from '../../lib/supabaseSchemaHints';
 
 interface Assignment {
   id: string;
@@ -48,7 +49,7 @@ const DOC_COLORS: Record<string, string> = { ...DOC_TYPE_COLORS };
 const QUICK_DOC_TYPES = DOCUMENT_TYPES;
 
 function isMissingSubmissionDocTypeColumn(message: string | undefined): boolean {
-  return /submission_doc_type|could not find|column|pgrst204|schema cache/i.test(message ?? '');
+  return isMissingColumnError(message, 'submission_doc_type');
 }
 
 function submissionDocTypeFromAssignment(_dt: string): string {
@@ -540,12 +541,20 @@ export default function StudentAssignments() {
       });
       if (
         withAssignment.error &&
+        isMissingColumnError(withAssignment.error.message, 'assignment_id')
+      ) {
+        withAssignment = await supabase.from(subTable).insert({ ...basePayload, ...docExtras });
+      }
+      if (
+        withAssignment.error &&
         dt &&
         isMissingSubmissionDocTypeColumn(withAssignment.error.message)
       ) {
         withAssignment = await supabase.from(subTable).insert({
           ...basePayload,
-          assignment_id: assignmentId,
+          ...(isMissingColumnError(withAssignment.error.message, 'assignment_id')
+            ? {}
+            : { assignment_id: assignmentId }),
         });
       }
       if (!withAssignment.error) return;

@@ -489,7 +489,13 @@ export async function fetchTeacherSubmissionRows(): Promise<TeacherSubmission[]>
     return enrichStudentRows(mapped);
   }
 
+  /** Prefer users-only joins first — `assignment_id` / assignments FK may be absent after schema edits. */
   const joinSelectAttempts = [
+    '*, users(full_name, email, student_number, course_year, avatar_url)',
+    '*, users(full_name, email, student_number, course_year)',
+    '*, users(full_name, email, avatar_url)',
+    '*, users(full_name, email)',
+    '*',
     '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year, avatar_url)',
     '*, assignments(title, document_type, due_date), users(full_name, email, student_number, course_year)',
     '*, assignments(title, document_type, due_date), users(full_name, email, avatar_url)',

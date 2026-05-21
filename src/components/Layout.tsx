@@ -8,6 +8,7 @@ import InvitedStudentEmailNotifier from './student/InvitedStudentEmailNotifier';
 import UserAvatar from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 import { useTeacherGoogleSheetsAutoSync } from '../hooks/useTeacherGoogleSheetsAutoSync';
+import SupabaseConnectionBadge from './teacher/SupabaseConnectionBadge';
 
 class OutletErrorBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state: { err: Error | null } = { err: null };
@@ -84,6 +85,11 @@ export default function Layout() {
           <div className="page-enter flex min-h-dvh flex-1 min-h-full flex-col min-h-0 bg-white">
             <OutletErrorBoundary>
               <div className="flex min-h-full min-h-dvh flex-1 flex-col min-h-0 w-full">
+                {isTeacherOrAdmin ? (
+                  <div className="shrink-0 px-4 md:px-6 pt-3 max-w-7xl w-full mx-auto">
+                    <SupabaseConnectionBadge />
+                  </div>
+                ) : null}
                 <Outlet />
               </div>
             </OutletErrorBoundary>
