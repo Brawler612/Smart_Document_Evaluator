@@ -7,7 +7,7 @@ alter table public.submissions drop constraint if exists submissions_submission_
 alter table public.submissions
   add constraint submissions_submission_doc_type_check check (
     submission_doc_type is null
-    or submission_doc_type in ('SRS', 'SDD', 'SPMP', 'STD', 'Other')
+    or submission_doc_type in ('SRS', 'SDD', 'SPMP', 'STD', 'Other', 'SPP')
   );
 
 notify pgrst, 'reload schema';

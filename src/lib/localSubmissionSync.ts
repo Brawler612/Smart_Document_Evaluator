@@ -9,6 +9,7 @@ import {
   type LocalSubmissionRow,
 } from './teacherSubmissionLoad';
 import { ensureCurrentAuthUserProfile } from './userProfilePersistence';
+import { insertStudentSubmissionRow } from './studentSubmissionInsert';
 
 type SyncResult = { uploaded: number; failed: number };
 
@@ -25,28 +26,31 @@ function removeUploadedRows(list: LocalSubmissionRow[], uploadedLocalIds: Set<st
 }
 
 async function insertLocalSubmissionRow(table: 'submissions' | 'submission', row: LocalSubmissionRow) {
-    const base = {
-      student_id: row.student_id,
-      file_name: row.file_name,
-      file_url: row.file_url,
-      status: row.status ?? 'submitted',
-      feedback: row.feedback,
-      score: row.score,
-      ai_draft_score: row.ai_draft_score ?? null,
-      ai_draft_summary: row.ai_draft_summary ?? null,
-      submitted_at: row.submitted_at,
-      assignment_id: row.assignment_id,
-      ...(row.submission_doc_type?.trim()
-        ? { submission_doc_type: row.submission_doc_type.trim() }
-        : {}),
-    };
+  const base = {
+    student_id: row.student_id,
+    file_name: row.file_name,
+    file_url: row.file_url,
+    status: row.status ?? 'submitted',
+    feedback: row.feedback,
+    score: row.score,
+    ai_draft_score: row.ai_draft_score ?? null,
+    ai_draft_summary: row.ai_draft_summary ?? null,
+    submitted_at: row.submitted_at,
+  };
 
-  const withAssignment = await supabase.from(table).insert(base);
-  if (!withAssignment.error || !row.assignment_id) return withAssignment;
-  if (/foreign key|violates|assignment/i.test(withAssignment.error.message)) {
-    return supabase.from(table).insert({ ...base, assignment_id: null });
+  const inserted = await insertStudentSubmissionRow(table, base, {
+    submissionDocType: row.submission_doc_type,
+    assignmentId: row.assignment_id,
+  });
+
+  if (!inserted.error) return { error: null };
+  if (row.assignment_id && /foreign key|violates|assignment/i.test(inserted.error.message)) {
+    return insertStudentSubmissionRow(table, base, {
+      submissionDocType: row.submission_doc_type,
+      assignmentId: null,
+    });
   }
-  return withAssignment;
+  return inserted;
 }
 
 export async function syncLocalSubmissionsToSupabase(userId: string): Promise<{ uploaded: number; failed: number }> {

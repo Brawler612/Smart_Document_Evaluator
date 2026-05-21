@@ -3,8 +3,6 @@ import type { TeacherSubmission } from './teacherSubmissionLoad';
 import { submissionQueueDocumentType } from './teacherSubmissionLoad';
 
 export const SUBMISSION_ROSTER_SHEET_HEADERS = [
-  'Submission ID',
-  'Student UUID',
   'Student School ID',
   'Document Type',
   'File Name',
@@ -51,8 +49,6 @@ export function buildSubmissionRosterSheetValues(rows: TeacherSubmission[]): str
   return [
     [...SUBMISSION_ROSTER_SHEET_HEADERS],
     ...sorted.map((s) => [
-      s.id || '',
-      s.student_id || '',
       s.users?.student_number?.trim() || '',
       submissionQueueDocumentType(s),
       s.file_name?.trim() || '',

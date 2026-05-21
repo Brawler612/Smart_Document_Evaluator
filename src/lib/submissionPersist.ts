@@ -1,10 +1,26 @@
 import { isMissingColumnError } from './supabaseSchemaHints';
+import { isStaffEmail, resolveAppRole } from './staffAccess';
 import { supabase } from './supabase';
 import { resolveSubmissionTableName } from './teacherSubmissionLoad';
 
 export type PersistSubmissionResult =
   | { ok: true; id: string }
   | { ok: false; message: string };
+
+function missingColumnFromError(message: string): string | null {
+  const m = message.match(/'([^']+)'\s+column/i) ?? message.match(/column\s+'([^']+)'/i);
+  return m?.[1] ?? null;
+}
+
+/** Sync public.users.role so Supabase RLS (app_user_is_staff) allows grade writes. */
+async function ensureStaffDbRoleForCurrentUser(): Promise<void> {
+  const { data: authData, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !authData.user?.email) return;
+  const email = authData.user.email.trim();
+  if (!isStaffEmail(email)) return;
+  const role = resolveAppRole(email);
+  await supabase.from('users').update({ role }).eq('id', authData.user.id);
+}
 
 async function runUpdate(
   table: 'submissions' | 'submission',
@@ -18,10 +34,19 @@ async function runUpdate(
     .select('id')
     .maybeSingle();
 
-  return {
-    data: data?.id ? { id: String(data.id) } : null,
-    error: error ? { message: error.message } : null,
-  };
+  if (error) {
+    return { data: null, error: { message: error.message } };
+  }
+  if (!data?.id) {
+    return { data: null, error: null };
+  }
+  return { data: { id: String(data.id) }, error: null };
+}
+
+function stripColumn(payload: Record<string, unknown>, column: string): Record<string, unknown> {
+  const next = { ...payload };
+  delete next[column];
+  return next;
 }
 
 /**
@@ -31,6 +56,8 @@ export async function persistSubmissionUpdate(
   submissionId: string,
   payload: Record<string, unknown>
 ): Promise<PersistSubmissionResult> {
+  await ensureStaffDbRoleForCurrentUser();
+
   const table = await resolveSubmissionTableName();
   if (!table) {
     return {
@@ -40,26 +67,57 @@ export async function persistSubmissionUpdate(
     };
   }
 
-  const withTimestamp = {
-    ...payload,
-    updated_at: new Date().toISOString(),
-  };
+  const { data: authData } = await supabase.auth.getUser();
+  const signedInEmail = authData.user?.email?.trim() ?? '(not signed in)';
 
-  let result = await runUpdate(table, submissionId, withTimestamp);
+  let body: Record<string, unknown> = { ...payload };
+  let includeUpdatedAt = true;
+  let lastError: string | null = null;
 
-  if (result.error && isMissingColumnError(result.error.message, 'updated_at')) {
-    result = await runUpdate(table, submissionId, payload);
-  }
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const updatePayload: Record<string, unknown> = { ...body };
+    if (includeUpdatedAt) {
+      updatePayload.updated_at = new Date().toISOString();
+    }
 
-  if (result.error) {
-    return { ok: false, message: result.error.message };
-  }
-  if (!result.data?.id) {
+    const result = await runUpdate(table, submissionId, updatePayload);
+
+    if (!result.error && result.data?.id) {
+      return { ok: true, id: result.data.id };
+    }
+
+    if (result.error) {
+      lastError = result.error.message;
+      const col = missingColumnFromError(result.error.message);
+      if (col && isMissingColumnError(result.error.message, col)) {
+        if (col === 'updated_at') {
+          includeUpdatedAt = false;
+        } else {
+          body = stripColumn(body, col);
+        }
+        continue;
+      }
+      return { ok: false, message: result.error.message };
+    }
+
+    /** Update succeeded at HTTP level but RLS hid the row or `updated_at` blocked the write. */
+    if (includeUpdatedAt) {
+      includeUpdatedAt = false;
+      continue;
+    }
+
     return {
       ok: false,
       message:
-        'Grade was not saved to Supabase (no row updated). Sign in as the instructor account (dinaponash26@gmail.com) and confirm submissions_update_staff RLS is enabled.',
+        `Grade was not saved (no row updated). Signed in as ${signedInEmail}. ` +
+        'Use the instructor Gmail (dinaponash26@gmail.com), then run docs/supabase-fix-staff-grade-publish.sql in Supabase SQL Editor and sign out/in.',
     };
   }
-  return { ok: true, id: result.data.id };
+
+  return {
+    ok: false,
+    message:
+      lastError ??
+      'Grade could not be saved. Check Supabase connection and run docs/supabase-fix-staff-grade-publish.sql.',
+  };
 }

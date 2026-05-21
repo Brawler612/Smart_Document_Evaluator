@@ -30,7 +30,7 @@ import { GENERAL_SUBMISSION_ASSIGNMENT_TITLE } from '../../lib/teacherSubmission
 import { SOLE_STAFF_EMAIL } from '../../lib/staffAccess';
 import { DEFAULT_DOC_TYPE, DOC_TYPE_COLORS, DOCUMENT_TYPES } from '../../lib/documentTypes';
 import { useAuth } from '../../context/AuthContext';
-import { isMissingColumnError } from '../../lib/supabaseSchemaHints';
+import { insertStudentSubmissionRow } from '../../lib/studentSubmissionInsert';
 
 interface Assignment {
   id: string;
@@ -47,10 +47,6 @@ interface Assignment {
 const DOC_COLORS: Record<string, string> = { ...DOC_TYPE_COLORS };
 
 const QUICK_DOC_TYPES = DOCUMENT_TYPES;
-
-function isMissingSubmissionDocTypeColumn(message: string | undefined): boolean {
-  return isMissingColumnError(message, 'submission_doc_type');
-}
 
 function submissionDocTypeFromAssignment(_dt: string): string {
   return DEFAULT_DOC_TYPE;
@@ -481,18 +477,30 @@ export default function StudentAssignments() {
 
     if (!teacherId) return null;
 
-    const created = await supabase
+    const assignmentBase = {
+      title,
+      description: 'Auto-generated bucket for general student uploads.',
+      teacher_id: teacherId,
+      status: 'active' as const,
+      max_score: 100,
+    };
+
+    let created = await supabase
       .from(table)
-      .insert({
-        title,
-        description: 'Auto-generated bucket for general student uploads.',
-        document_type: DEFAULT_DOC_TYPE,
-        teacher_id: teacherId,
-        status: 'active',
-        max_score: 100,
-      })
+      .insert({ ...assignmentBase, document_type: DEFAULT_DOC_TYPE })
       .select('id')
       .maybeSingle();
+
+    if (
+      created.error &&
+      /assignments_document_type_check/i.test(created.error.message)
+    ) {
+      created = await supabase
+        .from(table)
+        .insert({ ...assignmentBase, document_type: 'Other' })
+        .select('id')
+        .maybeSingle();
+    }
 
     if (created.error || !created.data?.id) return null;
     return created.data.id;
@@ -530,41 +538,12 @@ export default function StudentAssignments() {
       file_url: fileUrl,
       status: 'submitted' as const,
     };
-    const dt = opts?.submissionDocType?.trim();
-    const docExtras = dt ? { submission_doc_type: dt } : {};
-
-    if (assignmentId) {
-      let withAssignment = await supabase.from(subTable).insert({
-        ...basePayload,
-        ...docExtras,
-        assignment_id: assignmentId,
-      });
-      if (
-        withAssignment.error &&
-        isMissingColumnError(withAssignment.error.message, 'assignment_id')
-      ) {
-        withAssignment = await supabase.from(subTable).insert({ ...basePayload, ...docExtras });
-      }
-      if (
-        withAssignment.error &&
-        dt &&
-        isMissingSubmissionDocTypeColumn(withAssignment.error.message)
-      ) {
-        withAssignment = await supabase.from(subTable).insert({
-          ...basePayload,
-          ...(isMissingColumnError(withAssignment.error.message, 'assignment_id')
-            ? {}
-            : { assignment_id: assignmentId }),
-        });
-      }
-      if (!withAssignment.error) return;
-    }
-    let noAssignment = await supabase.from(subTable).insert({ ...basePayload, ...docExtras });
-    if (noAssignment.error && dt && isMissingSubmissionDocTypeColumn(noAssignment.error.message)) {
-      noAssignment = await supabase.from(subTable).insert(basePayload);
-    }
-    if (noAssignment.error) {
-      throw new Error(`Submit failed: ${noAssignment.error.message}`);
+    const inserted = await insertStudentSubmissionRow(subTable, basePayload, {
+      submissionDocType: opts?.submissionDocType,
+      assignmentId,
+    });
+    if (inserted.error) {
+      throw new Error(`Submit failed: ${inserted.error.message}`);
     }
   }
 

@@ -192,8 +192,6 @@ export default async function handler(req: any, res: any) {
 
   const values = [
     [
-      'Submission ID',
-      'Student UUID',
       'Student Name',
       'Email',
       'Student Number',
@@ -223,9 +221,7 @@ export default async function handler(req: any, res: any) {
             : null;
       const updatedRaw = row.updated_at ?? row.submitted_at;
       return [
-        toString(row.id ?? ''),
-        toString(row.student_id ?? ''),
-        toString(user?.full_name ?? row.student_id ?? ''),
+        toString(user?.full_name ?? ''),
         toString(user?.email ?? ''),
         toString(user?.student_number ?? ''),
         toString(assignment?.title ?? row.submission_doc_type ?? row.file_name ?? ''),

@@ -1556,13 +1556,30 @@ export default function ReviewQueue() {
       });
       localStorage.setItem(TEACHER_LOCAL_SUBMISSION_KEY, JSON.stringify(updated));
     }
+    const publishedId = selected.id;
     setSaving(false);
     removeAiOnlyEvalLock(selected.id);
     removeTeacherOnlyDraft(selected.id);
     closeGradingModal();
-    void load().then(() =>
-      scheduleAutoSyncGradesToSheet('grade-published', { immediate: true })
-    );
+    await load();
+    try {
+      const sheetResult = await syncAllTeacherGoogleSheets({
+        interactiveSetup: false,
+        skipServer: true,
+      });
+      if (!sheetResult.ok) {
+        setSheetSyncNotice({ kind: 'err', text: sheetResult.message });
+      }
+    } catch (e) {
+      setSheetSyncNotice({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Google Sheets sync failed after publish.',
+      });
+    }
+    scheduleAutoSyncGradesToSheet('grade-published', { immediate: true });
+    if (import.meta.env.DEV) {
+      console.info('[publish] Saved submission', publishedId, 'to Supabase');
+    }
   }
 
   async function quickRequestResubmission(sub: Submission) {
