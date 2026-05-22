@@ -1,0 +1,5 @@
+#!/bin/sh
+# Strip Cursor co-author trailer so GitHub does not list cursoragent on commits.
+sed -i.bak '/^Co-authored-by: Cursor <cursoragent@cursor.com>$/d' "$1" 2>/dev/null || \
+  sed -i '' '/^Co-authored-by: Cursor <cursoragent@cursor.com>$/d' "$1" 2>/dev/null
+rm -f "$1.bak" 2>/dev/null
